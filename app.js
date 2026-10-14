@@ -1,5 +1,6 @@
 import { createClient } from "./vendor/supabase.esm.js";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
+import { mountReport, renderWall } from "./report.js";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -290,6 +291,7 @@ async function renderCampaign(token, id) {
           <div class="actions">
             <a class="btn primary" href="#/c/${esc(id)}/add">Add links</a>
             <button type="button" id="refresh">Refresh numbers</button>
+            <a class="btn" href="#/report/${encodeURIComponent(c.artist.trim())}">Client view</a>
             <button type="button" id="share-btn" aria-expanded="false" aria-controls="share-panel">Share with client</button>
             <a class="btn" href="#/c/${esc(id)}/edit">Edit details</a>
             <span class="updated" id="updated">${lastChecked ? `Numbers from ${esc(timeAgo(lastChecked))}` : ""}</span>
@@ -360,13 +362,15 @@ async function toggleSharePanel(btn, c) {
 async function drawSharePanel(panel, c) {
   panel.innerHTML = `<p class="muted small">Checking for an existing link…</p>`;
   const [{ data: links, error }, { data: camps }] = await Promise.all([
-    sb.from("share_links").select("id,artist,token,created_at,created_by").eq("revoked", false).not("artist", "is", null).order("created_at", { ascending: false }),
-    sb.from("campaigns").select("artist,song,status"),
+    sb.from("share_links").select("id,artist,token,created_at,created_by,settings").eq("revoked", false).not("artist", "is", null).order("created_at", { ascending: false }),
+    sb.from("campaigns").select("id,artist,song,status").order("created_at"),
   ]);
   if (error) { panel.innerHTML = fail(error); return; }
   const link = (links ?? []).find((l) => sameArtist(l.artist, c.artist));
   const shown = (camps ?? []).filter((x) => sameArtist(x.artist, c.artist) && x.status !== "draft");
-  const what = `The client sees ${shown.length === 1 ? "this campaign" : `all ${shown.length} of ${esc(c.artist)}'s campaigns`} (drafts are hidden): views, likes, comments, shares, sounds, countries and every post. <b>Never budgets, spend, margins or creator costs.</b>`;
+  const hidden = new Set(link?.settings?.hidden_campaigns ?? []);
+  const visible = shown.filter((x) => !hidden.has(x.id));
+  const what = `The client sees ${visible.length === 1 ? (visible[0].song ? `the ${esc(visible[0].song)} campaign` : "1 campaign") : `${visible.length} of ${esc(c.artist)}'s campaigns`}, with whatever you switch on below. Drafts are never shown. <b>Budgets, spend, margins and creator costs are never shown.</b>`;
   const draftNote = c.status === "draft" ? `<p class="small warn-note">This campaign is a draft, so it won't appear on the client link until you set it to active.</p>` : "";
   if (!link) {
     panel.innerHTML = `<h2>Share with client</h2><p class="small">${what}</p>${draftNote}
@@ -386,7 +390,9 @@ async function drawSharePanel(panel, c) {
       <button type="button" class="primary" id="share-copy">Copy link</button>
       <a class="btn" href="${esc(url)}" target="_blank" rel="noopener">Open</a></div>
     <p class="muted small">Created ${esc(date(link.created_at))}${link.created_by ? ` by ${esc(link.created_by)}` : ""}.
-      <button type="button" class="link-btn danger small" id="share-off">Turn off this link</button></p>`;
+      <button type="button" class="link-btn danger small" id="share-off">Turn off this link</button></p>
+    <div class="settings" id="share-settings"></div>`;
+  drawLinkSettings(document.getElementById("share-settings"), link, (camps ?? []).filter((x) => sameArtist(x.artist, c.artist)));
   const input = document.getElementById("share-url");
   input.onfocus = () => input.select();
   document.getElementById("share-copy").onclick = async () => {
@@ -400,6 +406,54 @@ async function drawSharePanel(panel, c) {
     toast("Link turned off");
     drawSharePanel(panel, c);
   };
+}
+
+// What a client link shows. Missing keys mean "on"; the share function enforces these on the server.
+const LINK_DEFAULTS = { overview: true, overview_chart: true, sounds: true, songs: true, songs_chart: true, countries: true, countries_chart: true, posts: true, posts_country_filter: true, show_country: true, show_followers: true };
+function drawLinkSettings(el, link, camps) {
+  const S = { ...LINK_DEFAULTS, ...(link.settings ?? {}), hidden_campaigns: [...(link.settings?.hidden_campaigns ?? [])] };
+  const row = (key, label, { sub = false, parent = null, off = false, note = "" } = {}) => {
+    const disabled = (parent && !S[parent]) || (key !== "show_country" && ["countries", "countries_chart", "posts_country_filter"].includes(key) && !S.show_country);
+    return `<label class="row${sub ? " sub" : ""}"><span>${label}${note ? ` <span class="muted small">${note}</span>` : ""}</span>
+      <span class="switch"><input type="checkbox" data-key="${key}" ${S[key] && !disabled && !off ? "checked" : ""} ${disabled ? "disabled" : ""}><span></span></span></label>`;
+  };
+  el.innerHTML = `
+    <h2 style="margin-bottom:2px">Link settings</h2>
+    <p class="muted small" style="margin-top:0">Changes apply to the link straight away. Anything switched off is never sent to the client's browser.</p>
+    <h3>Analytics</h3>
+    ${row("overview", "Overview numbers")}
+    ${row("overview_chart", "Overview chart", { sub: true, parent: "overview" })}
+    ${row("sounds", "Sound analytics")}
+    ${row("songs", "Song analytics")}
+    ${row("songs_chart", "Songs chart", { sub: true, parent: "songs" })}
+    ${row("countries", "Country analytics")}
+    ${row("countries_chart", "Countries chart", { sub: true, parent: "countries" })}
+    <h3>Posts</h3>
+    ${row("posts", "Post wall")}
+    ${row("posts_country_filter", "Country filter", { sub: true, parent: "posts" })}
+    <h3>Campaigns</h3>
+    ${camps.map((x) => x.status === "draft"
+      ? `<label class="row"><span>${esc(x.song ?? "Untitled")} <span class="muted small">draft, never shown</span></span><span class="switch"><input type="checkbox" disabled><span></span></span></label>`
+      : `<label class="row"><span>${esc(x.song ?? "Untitled")}</span><span class="switch"><input type="checkbox" data-camp="${esc(x.id)}" ${S.hidden_campaigns.includes(x.id) ? "" : "checked"}><span></span></span></label>`).join("")}
+    <h3>Creators</h3>
+    ${row("show_country", "Creator country", { note: "also used for country analytics" })}
+    ${row("show_followers", "Creator follower counts")}
+    <p class="never">Budgets, spend, margins and creator costs can't be shown on client links.</p>`;
+  const save = async () => {
+    const { error } = await sb.from("share_links").update({ settings: S, updated_at: new Date().toISOString() }).eq("id", link.id);
+    if (error) { toast(`Couldn't save: ${error.message}`); return; }
+    link.settings = { ...S };
+    toast("Link settings saved");
+    drawLinkSettings(el, link, camps);
+    const intro = el.closest(".share-panel")?.querySelector("p.small");
+    if (intro) intro.dataset.stale = "1";
+  };
+  el.querySelectorAll("[data-key]").forEach((i) => i.onchange = () => { S[i.dataset.key] = i.checked; save(); });
+  el.querySelectorAll("[data-camp]").forEach((i) => i.onchange = () => {
+    const id = i.dataset.camp;
+    S.hidden_campaigns = i.checked ? S.hidden_campaigns.filter((x) => x !== id) : [...new Set([...S.hidden_campaigns, id])];
+    save();
+  });
 }
 
 function timeAgo(iso) {
@@ -463,7 +517,7 @@ async function loadPosts(token, id) {
   let posts;
   try {
     posts = await fetchAll(() => sb.from("posts")
-      .select("id,tiktok_video_id,url,caption,published_at,cover_path,status,created_at,creator:creators(username,follower_count)")
+      .select("id,tiktok_video_id,url,caption,published_at,country_code,cover_path,status,created_at,sound:sounds(title),creator:creators(username,display_name,follower_count,is_verified,avatar_url,country_code)")
       .eq("campaign_id", id).order("created_at", { ascending: false }));
   } catch (e) { el.innerHTML = fail(e); return; }
   if (token !== routeToken) return;
@@ -477,47 +531,73 @@ async function loadPosts(token, id) {
     return data ?? [];
   })).map((s) => [s.tiktok_video_id, s]));
   const paths = posts.map((p) => p.cover_path).filter(Boolean);
-  const covers = Object.fromEntries((await inChunks(paths, 200, async (chunk) => {
+  const byPath = Object.fromEntries((await inChunks(paths, 200, async (chunk) => {
     const { data } = await sb.storage.from("covers").createSignedUrls(chunk, 3600);
     return data ?? [];
   })).filter((c) => c.signedUrl).map((c) => [c.path, c.signedUrl]));
   if (token !== routeToken) return;
 
+  const list = posts.map((p) => {
+    const st = stats[p.tiktok_video_id] ?? {};
+    return {
+      id: p.id, campaign_id: id, video_id: p.tiktok_video_id, url: p.url, caption: p.caption, published_at: p.published_at, created_at: p.created_at,
+      country: p.creator?.country_code ?? p.country_code ?? null, sound_title: p.sound?.title ?? null, gone: p.status !== "active", has_cover: !!p.cover_path,
+      creator: p.creator ? { username: p.creator.username, name: p.creator.display_name, followers: p.creator.follower_count, verified: p.creator.is_verified, avatar: p.creator.avatar_url } : null,
+      plays: st.plays ?? null, likes: st.likes ?? null, comments: st.comments ?? null, shares: st.shares ?? null, stats_date: st.stat_date ?? null,
+    };
+  });
+  const ctx = {
+    mode: "team",
+    covers: Object.fromEntries(posts.filter((p) => byPath[p.cover_path]).map((p) => [p.tiktok_video_id, byPath[p.cover_path]])),
+    postDaily: async (vid) => (await sb.from("post_daily_stats").select("stat_date,plays,likes,comments,shares").eq("tiktok_video_id", vid).order("stat_date")).data ?? [],
+    remove: async (p) => { const { error } = await sb.from("posts").delete().eq("id", p.id); if (error) toast(error.message); return !error; },
+    onRemoved: () => renderCampaign(++routeToken, id),
+    showCountry: true,
+  };
   const sortSel = document.getElementById("sort");
+  let shown = 48;
   const draw = () => {
     const by = sortSel.value;
-    const list = [...posts].sort((a, b) =>
-      by === "plays" ? (stats[b.tiktok_video_id]?.plays ?? -1) - (stats[a.tiktok_video_id]?.plays ?? -1)
+    const sorted = [...list].sort((a, b) =>
+      by === "plays" ? (b.plays ?? -1) - (a.plays ?? -1)
       : by === "newest" ? String(b.published_at ?? "").localeCompare(String(a.published_at ?? ""))
       : String(b.created_at).localeCompare(String(a.created_at)));
-    el.innerHTML = `<div class="wall">${list.map((p) => {
-      const s = stats[p.tiktok_video_id] ?? {};
-      const img = covers[p.cover_path];
-      const gone = p.status !== "active";
-      return `<article class="post${gone ? " gone" : ""}">
-        <a class="cover" href="${esc(p.url)}" target="_blank" rel="noopener" aria-label="Open on TikTok: @${esc(p.creator?.username ?? "")}">
-          ${img ? `<img src="${esc(img)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
-          ${gone ? `<span class="gone-badge">No longer on TikTok</span>` : ""}
-          <span class="plays">${compact(s.plays)}</span>
-        </a>
-        <div class="body">
-          <div class="handle">@${esc(p.creator?.username ?? "unknown")}</div>
-          <div class="line">${compact(s.likes)} likes · ${compact(s.comments)} comments · ${compact(s.shares)} shares</div>
-          <div class="line">${p.creator?.follower_count != null ? `${compact(p.creator.follower_count)} followers · ` : ""}${esc(date(p.published_at))}</div>
-          <div class="row"><span class="line">${s.stat_date ? `Stats ${esc(date(s.stat_date))}` : "No stats yet"}</span>
-            <button type="button" class="link-btn danger small" data-remove="${esc(p.id)}">Remove</button></div>
-        </div>
-      </article>`;
-    }).join("")}</div>`;
-    el.querySelectorAll("[data-remove]").forEach((b) => b.onclick = async () => {
-      if (!confirm("Remove this post from the campaign?")) return;
-      const { error } = await sb.from("posts").delete().eq("id", b.dataset.remove);
-      if (error) { toast(error.message); return; }
-      toast("Post removed"); renderCampaign(++routeToken, id);
-    });
+    renderWall(el, sorted, ctx, { shown, onMore: () => { shown += 48; draw(); } });
   };
-  sortSel.onchange = draw;
+  sortSel.onchange = () => { shown = 48; draw(); };
   draw();
+}
+
+// ---------- client view (the report as the client sees it, every setting on) ----------
+function renderReport(token, artist) {
+  const c = { artist, status: null };
+  mountReport(app, {
+    mode: "team",
+    load: async () => {
+      const { data, error } = await sb.functions.invoke("share", { body: { artist } });
+      if (error || data?.error) throw new Error(data?.error ?? error.message);
+      return data;
+    },
+    loadCovers: async (ids) => (await sb.functions.invoke("share", { body: { artist, covers: ids } })).data?.covers ?? {},
+    postDaily: async (vid) => (await sb.from("post_daily_stats").select("stat_date,plays,likes,comments,shares").eq("tiktok_video_id", vid).order("stat_date")).data ?? [],
+    remove: async (p) => {
+      const { error } = await sb.from("posts").delete().eq("campaign_id", p.campaign_id).eq("tiktok_video_id", p.video_id);
+      if (error) toast(error.message);
+      return !error;
+    },
+    header: `<div class="client-view-note">
+        <a href="#/" class="back">All campaigns</a>
+        <span>Client view: what a client link shows with every setting on. Drafts appear here but never on client links.</span>
+        <button type="button" id="rep-share" aria-expanded="false" aria-controls="share-panel">Share with client</button>
+      </div>`,
+    onHeader: (root) => {
+      if (token !== routeToken) return;
+      root.querySelector(".band")?.insertAdjacentHTML("afterend", `<section id="share-panel" class="panel share-panel" hidden></section>`);
+      const b = root.querySelector("#rep-share");
+      if (b) b.onclick = () => toggleSharePanel(b, c);
+    },
+    onError: (e) => { app.innerHTML = fail(e); },
+  });
 }
 
 // ---------- add links ----------
@@ -623,6 +703,7 @@ async function route() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   window.scrollTo(0, 0);
   if (parts[0] === "new") return renderForm(token);
+  if (parts[0] === "report" && parts[1]) return renderReport(token, decodeURIComponent(parts.slice(1).join("/")));
   if (parts[0] === "c" && parts[1]) {
     if (parts[2] === "edit") return renderForm(token, parts[1]);
     if (parts[2] === "add") return renderAdd(token, parts[1], parts[3]);
