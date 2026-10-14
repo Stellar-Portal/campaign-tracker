@@ -290,6 +290,7 @@ async function renderCampaign(token, id) {
           <div class="actions">
             <a class="btn primary" href="#/c/${esc(id)}/add">Add links</a>
             <button type="button" id="refresh">Refresh numbers</button>
+            <button type="button" id="share-btn" aria-expanded="false" aria-controls="share-panel">Share with client</button>
             <a class="btn" href="#/c/${esc(id)}/edit">Edit details</a>
             <span class="updated" id="updated">${lastChecked ? `Numbers from ${esc(timeAgo(lastChecked))}` : ""}</span>
           </div>
@@ -297,6 +298,7 @@ async function renderCampaign(token, id) {
         <div class="plays-big"><div class="n">${n(c.total_plays)}</div><div class="l">plays across ${n(c.live_posts)} live post${c.live_posts === 1 ? "" : "s"}</div></div>
       </div>
     </section>
+    <section id="share-panel" class="panel share-panel" hidden></section>
     <div class="stats">
       <div class="stat"><div class="n">${compact(c.total_likes)}</div><div class="l">Likes</div></div>
       <div class="stat"><div class="n">${compact(c.total_comments)}</div><div class="l">Comments</div></div>
@@ -321,6 +323,7 @@ async function renderCampaign(token, id) {
   drawChart(document.getElementById("chart"), daily.data ?? []);
   loadSounds(token, id);
   loadPosts(token, id);
+  document.getElementById("share-btn").onclick = (e) => toggleSharePanel(e.currentTarget, c);
 
   document.getElementById("refresh").onclick = async (e) => {
     const btn = e.currentTarget;
@@ -338,6 +341,64 @@ async function renderCampaign(token, id) {
       ? `Updated ${ok} post${ok === 1 ? "" : "s"}${gone ? `, ${gone} no longer on TikTok` : ""}${data.skipped_recent ? `. ${data.skipped_recent} were already up to date` : ""}`
       : "Everything was updated in the last hour already");
     renderCampaign(++routeToken, id);
+  };
+}
+
+// ---------- client link ----------
+// One link per artist: the client sees every non-draft campaign for that artist, with no money.
+const shareUrl = (t) => new URL(`share.html#t=${t}`, location.origin + location.pathname).toString();
+const sameArtist = (a, b) => (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
+
+async function toggleSharePanel(btn, c) {
+  const panel = document.getElementById("share-panel");
+  const open = panel.hidden;
+  panel.hidden = !open;
+  btn.setAttribute("aria-expanded", open);
+  if (open) await drawSharePanel(panel, c);
+}
+
+async function drawSharePanel(panel, c) {
+  panel.innerHTML = `<p class="muted small">Checking for an existing link…</p>`;
+  const [{ data: links, error }, { data: camps }] = await Promise.all([
+    sb.from("share_links").select("id,artist,token,created_at,created_by").eq("revoked", false).not("artist", "is", null).order("created_at", { ascending: false }),
+    sb.from("campaigns").select("artist,song,status"),
+  ]);
+  if (error) { panel.innerHTML = fail(error); return; }
+  const link = (links ?? []).find((l) => sameArtist(l.artist, c.artist));
+  const shown = (camps ?? []).filter((x) => sameArtist(x.artist, c.artist) && x.status !== "draft");
+  const what = `The client sees ${shown.length === 1 ? "this campaign" : `all ${shown.length} of ${esc(c.artist)}'s campaigns`} (drafts are hidden): views, likes, comments, shares, sounds, countries and every post. <b>Never budgets, spend, margins or creator costs.</b>`;
+  const draftNote = c.status === "draft" ? `<p class="small warn-note">This campaign is a draft, so it won't appear on the client link until you set it to active.</p>` : "";
+  if (!link) {
+    panel.innerHTML = `<h2>Share with client</h2><p class="small">${what}</p>${draftNote}
+      <div class="actions"><button type="button" class="primary" id="share-create">Create client link</button></div>`;
+    document.getElementById("share-create").onclick = async (e) => {
+      e.currentTarget.disabled = true;
+      const { error: err } = await sb.from("share_links").insert({ artist: c.artist.trim() });
+      if (err) { panel.insertAdjacentHTML("beforeend", fail(err)); e.currentTarget.disabled = false; return; }
+      toast("Client link created");
+      drawSharePanel(panel, c);
+    };
+    return;
+  }
+  const url = shareUrl(link.token);
+  panel.innerHTML = `<h2>Client link for ${esc(c.artist)}</h2><p class="small">${what}</p>${draftNote}
+    <div class="share-row"><input id="share-url" readonly value="${esc(url)}" aria-label="Client link">
+      <button type="button" class="primary" id="share-copy">Copy link</button>
+      <a class="btn" href="${esc(url)}" target="_blank" rel="noopener">Open</a></div>
+    <p class="muted small">Created ${esc(date(link.created_at))}${link.created_by ? ` by ${esc(link.created_by)}` : ""}.
+      <button type="button" class="link-btn danger small" id="share-off">Turn off this link</button></p>`;
+  const input = document.getElementById("share-url");
+  input.onfocus = () => input.select();
+  document.getElementById("share-copy").onclick = async () => {
+    try { await navigator.clipboard.writeText(url); toast("Link copied"); }
+    catch { input.select(); toast("Press Cmd+C to copy"); }
+  };
+  document.getElementById("share-off").onclick = async () => {
+    if (!confirm(`Turn off the client link for ${c.artist}? Anyone with it will see "This link isn't active". You can create a new one afterwards.`)) return;
+    const { error: err } = await sb.from("share_links").update({ revoked: true }).eq("id", link.id);
+    if (err) { toast(err.message); return; }
+    toast("Link turned off");
+    drawSharePanel(panel, c);
   };
 }
 
