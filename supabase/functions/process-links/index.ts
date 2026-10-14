@@ -26,7 +26,8 @@ const first = (o: any): string | null => {
   const list: string[] = o?.url_list ?? [];
   return list.find((u) => /\.jpe?g(\?|$)/i.test(u)) ?? list.at(-1) ?? null;
 };
-const today = () => new Date().toISOString().slice(0, 10);
+// Stellar's day is the Copenhagen calendar day (matches the daily refresh).
+const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Copenhagen" }).format(new Date());
 
 function checkUrl(raw: string): { ok: true; url: string; videoId: string | null } | { ok: false; error: string } {
   let u: URL;

@@ -50,10 +50,12 @@ async function inChunks(ids, size, fn) {
 // ---------- auth ----------
 async function renderLogin(message) {
   who.innerHTML = "";
+  document.body.classList.add("signin");
   app.innerHTML = `
-    <section class="login panel">
-      <h1>Sign in</h1>
-      <p class="muted small">For the Stellar team. Ask Sam for an account if you don't have one.</p>
+    <section class="login on-blue">
+      <img class="logo" src="assets/stellar-white.png" alt="Stellar" width="160" height="44">
+      <h1>Campaign <em>tracker</em></h1>
+      <p class="small">For the Stellar team. Ask Sam for an account if you don't have one.</p>
       <form id="login">
         <div><label for="email">Work email</label><input id="email" type="email" autocomplete="username" required></div>
         <div><label for="password">Password</label><input id="password" type="password" autocomplete="current-password" required></div>
@@ -92,7 +94,7 @@ function renderWho(user) {
 async function renderList(token) {
   app.innerHTML = `
     <div class="page-head">
-      <h1>Campaigns</h1>
+      <div><h1>Campaigns</h1><p class="voice muted" id="summary" style="margin:8px 0 0;font-size:20px">&nbsp;</p></div>
       <a class="btn primary" href="#/new">New campaign</a>
     </div>
     <div class="filters">
@@ -108,6 +110,10 @@ async function renderList(token) {
   catch (e) { document.getElementById("list").innerHTML = fail(e); return; }
   if (token !== routeToken) return;
 
+  const live = rows.filter((r) => r.status === "active");
+  document.getElementById("summary").textContent = live.length
+    ? `${live.length} active, ${compact(live.reduce((s, r) => s + Number(r.total_plays || 0), 0))} plays between them`
+    : "No active campaigns right now";
   const q = document.getElementById("q"), st = document.getElementById("st");
   const saved = sessionStorageGet("list-status");
   if (saved != null) st.value = saved;
@@ -121,14 +127,14 @@ async function renderList(token) {
           <thead><tr><th>Artist and song</th><th>Client</th><th>Runner</th><th>Dates</th><th class="num">Budget</th><th class="num">Spend</th><th class="num">Live posts</th><th class="num">Plays</th><th class="num">Cost per view</th><th>Status</th></tr></thead>
           <tbody>${shown.map((r) => `
             <tr data-id="${esc(r.id)}" tabindex="0">
-              <td><div class="artist">${esc(r.artist)}</div><div class="muted small">${esc(r.song)}</div></td>
+              <td><div class="artist">${esc(r.artist)}</div><div class="song small">${esc(r.song)}</div></td>
               <td>${esc(r.client)}</td>
               <td>${esc(r.campaign_runner)}</td>
               <td class="small">${esc(date(r.start_date))}${r.end_date ? ` to ${esc(date(r.end_date))}` : ""}</td>
               <td class="num">${money(r.budget, r.currency)}</td>
               <td class="num">${Number(r.spend) ? money(r.spend, r.currency) : "–"}</td>
               <td class="num">${n(r.live_posts)}</td>
-              <td class="num">${compact(r.total_plays)}</td>
+              <td class="num plays-cell">${compact(r.total_plays)}</td>
               <td class="num">${cpv(r.cost_per_view, r.currency)}</td>
               <td><span class="status ${esc(r.status)}">${esc(r.status)}</span>${r.invoiced ? ` <span class="status finished">invoiced</span>` : ""}</td>
             </tr>`).join("")}</tbody></table></div>`;
@@ -257,42 +263,48 @@ async function renderCampaign(token, id) {
   if (token !== routeToken) return;
   if (error || !c) { app.innerHTML = fail(error ?? "This campaign doesn't exist or was deleted."); return; }
 
-  const [markets, daily] = await Promise.all([
+  const [markets, daily, latest] = await Promise.all([
     sb.from("campaign_markets").select("market,share_percent").eq("campaign_id", id),
     sb.from("campaign_daily_stats").select("*").eq("campaign_id", id).order("stat_date"),
+    sb.from("posts").select("last_checked_at").eq("campaign_id", id).not("last_checked_at", "is", null).order("last_checked_at", { ascending: false }).limit(1),
   ]);
   if (token !== routeToken) return;
   const mk = (markets.data ?? []).map((m) => `${m.market}${m.share_percent != null ? ` ${m.share_percent}%` : ""}`).join(", ");
+  const lastChecked = latest.data?.[0]?.last_checked_at;
 
   app.innerHTML = `
-    <div class="camp-head">
-      <div>
-        <a href="#/" class="small">All campaigns</a>
-        <h1 style="margin-top:8px">${esc(c.artist)}</h1>
-        ${c.song ? `<div class="song">${esc(c.song)}</div>` : ""}
-        <div class="meta">
-          <span class="status ${esc(c.status)}">${esc(c.status)}</span>
-          ${c.client ? `<span>Client: ${esc(c.client)}</span>` : ""}
-          ${c.campaign_runner ? `<span>Runner: ${esc(c.campaign_runner)}</span>` : ""}
-          ${c.comms_owner ? `<span>Comms: ${esc(c.comms_owner)}</span>` : ""}
-          ${c.start_date ? `<span>${esc(date(c.start_date))}${c.end_date ? ` to ${esc(date(c.end_date))}` : ""}</span>` : ""}
-          ${mk ? `<span>Markets: ${esc(mk)}</span>` : ""}
+    <section class="band on-blue">
+      <div class="hero">
+        <div>
+          <a href="#/" class="back">All campaigns</a>
+          <h1>${esc(c.artist)}</h1>
+          ${c.song ? `<div class="voice">${esc(c.song)}</div>` : ""}
+          <div class="meta">
+            <span class="status">${esc(c.status)}</span>
+            ${c.client ? `<span>Client: ${esc(c.client)}</span>` : ""}
+            ${c.campaign_runner ? `<span>Runner: ${esc(c.campaign_runner)}</span>` : ""}
+            ${c.comms_owner ? `<span>Comms: ${esc(c.comms_owner)}</span>` : ""}
+            ${c.start_date ? `<span>${esc(date(c.start_date))}${c.end_date ? ` to ${esc(date(c.end_date))}` : ""}</span>` : ""}
+            ${mk ? `<span>Markets: ${esc(mk)}</span>` : ""}
+          </div>
+          <div class="actions">
+            <a class="btn primary" href="#/c/${esc(id)}/add">Add links</a>
+            <button type="button" id="refresh">Refresh numbers</button>
+            <a class="btn" href="#/c/${esc(id)}/edit">Edit details</a>
+            <span class="updated" id="updated">${lastChecked ? `Numbers from ${esc(timeAgo(lastChecked))}` : ""}</span>
+          </div>
         </div>
-        <div class="actions">
-          <a class="btn primary" href="#/c/${esc(id)}/add">Add links</a>
-          <a class="btn" href="#/c/${esc(id)}/edit">Edit details</a>
-        </div>
+        <div class="plays-big"><div class="n">${n(c.total_plays)}</div><div class="l">plays across ${n(c.live_posts)} live post${c.live_posts === 1 ? "" : "s"}</div></div>
       </div>
-      <div class="plays-big"><div class="n">${n(c.total_plays)}</div><div class="l">plays across ${n(c.live_posts)} live posts</div></div>
-    </div>
+    </section>
     <div class="stats">
       <div class="stat"><div class="n">${compact(c.total_likes)}</div><div class="l">Likes</div></div>
       <div class="stat"><div class="n">${compact(c.total_comments)}</div><div class="l">Comments</div></div>
       <div class="stat"><div class="n">${compact(c.total_shares)}</div><div class="l">Shares</div></div>
-      <div class="stat"><div class="n">${money(c.budget, c.currency)}</div><div class="l">Budget</div></div>
-      <div class="stat"><div class="n">${money(c.spend, c.currency)}</div><div class="l">Spend</div></div>
-      <div class="stat"><div class="n">${c.budget != null ? money(c.margin, c.currency) : "–"}</div><div class="l">Margin</div></div>
-      <div class="stat"><div class="n">${cpv(c.cost_per_view, c.currency)}</div><div class="l">Cost per view</div></div>
+      <div class="stat money"><div class="n">${money(c.budget, c.currency)}</div><div class="l">Budget</div></div>
+      <div class="stat money"><div class="n">${money(c.spend, c.currency)}</div><div class="l">Spend</div></div>
+      <div class="stat money"><div class="n">${c.budget != null ? money(c.margin, c.currency) : "–"}</div><div class="l">Margin</div></div>
+      <div class="stat money"><div class="n">${cpv(c.cost_per_view, c.currency)}</div><div class="l">Cost per view</div></div>
     </div>
     <div class="section-head"><h2>Plays per day</h2></div>
     <div id="chart"></div>
@@ -309,6 +321,33 @@ async function renderCampaign(token, id) {
   drawChart(document.getElementById("chart"), daily.data ?? []);
   loadSounds(token, id);
   loadPosts(token, id);
+
+  document.getElementById("refresh").onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true; btn.textContent = "Refreshing…";
+    document.getElementById("updated").textContent = "Getting the latest numbers from TikTok. This can take a minute.";
+    const { data, error } = await sb.functions.invoke("refresh-stats", { body: { campaign_id: id } });
+    if (token !== routeToken) return;
+    if (error || data?.error) {
+      btn.disabled = false; btn.textContent = "Refresh numbers";
+      document.getElementById("updated").textContent = `Couldn't refresh: ${data?.error ?? error.message}`;
+      return;
+    }
+    const ok = data.videos?.ok ?? 0, gone = data.videos?.unavailable ?? 0;
+    toast(ok || gone
+      ? `Updated ${ok} post${ok === 1 ? "" : "s"}${gone ? `, ${gone} no longer on TikTok` : ""}${data.skipped_recent ? `. ${data.skipped_recent} were already up to date` : ""}`
+      : "Everything was updated in the last hour already");
+    renderCampaign(++routeToken, id);
+  };
+}
+
+function timeAgo(iso) {
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const h = Math.round(mins / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  return new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 function drawChart(el, rows) {
@@ -317,19 +356,20 @@ function drawChart(el, rows) {
     return;
   }
   // Draw at the container's real width so text stays readable on phones.
-  const W = Math.max(280, Math.round(el.clientWidth - 32)), H = 180, P = 28;
+  const W = Math.max(280, Math.round(el.clientWidth - 32)), H = 200, P = 28;
   const max = Math.max(...rows.map((r) => Number(r.plays) || 0), 1);
   const x = (i) => P + (i / (rows.length - 1)) * (W - 2 * P);
   const y = (v) => H - P - ((Number(v) || 0) / max) * (H - 2 * P);
   const pts = rows.map((r, i) => `${x(i).toFixed(1)},${y(r.plays).toFixed(1)}`).join(" ");
   const last = rows.at(-1);
   el.innerHTML = `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Total plays per day, from ${esc(date(rows[0].stat_date))} to ${esc(date(last.stat_date))}">
-    <line x1="${P}" x2="${W - P}" y1="${H - P}" y2="${H - P}" stroke="#d6dae2"/>
-    <polyline points="${pts}" fill="none" stroke="#4b3fd1" stroke-width="2.5"/>
-    ${rows.map((r, i) => `<circle cx="${x(i)}" cy="${y(r.plays)}" r="3.5" fill="#4b3fd1"><title>${esc(date(r.stat_date))}: ${n(r.plays)} plays</title></circle>`).join("")}
-    <text x="${P}" y="${H - 8}" font-size="12" fill="#5d6474">${esc(date(rows[0].stat_date))}</text>
-    <text x="${W - P}" y="${H - 8}" font-size="12" fill="#5d6474" text-anchor="end">${esc(date(last.stat_date))}</text>
-    <text x="${W - P}" y="${y(last.plays) - 10}" font-size="13" font-weight="700" fill="#161a24" text-anchor="end">${compact(last.plays)}</text>
+    <line x1="${P}" x2="${W - P}" y1="${H - P}" y2="${H - P}" stroke="#e3e5eb"/>
+    <polygon points="${x(0).toFixed(1)},${H - P} ${pts} ${x(rows.length - 1).toFixed(1)},${H - P}" fill="#0626c7" fill-opacity="0.08"/>
+    <polyline points="${pts}" fill="none" stroke="#0626c7" stroke-width="2.5" stroke-linejoin="round"/>
+    ${rows.map((r, i) => `<circle cx="${x(i)}" cy="${y(r.plays)}" r="3.5" fill="#0626c7"><title>${esc(date(r.stat_date))}: ${n(r.plays)} plays</title></circle>`).join("")}
+    <text x="${P}" y="${H - 8}" font-size="12" fill="#6b6f7a">${esc(date(rows[0].stat_date))}</text>
+    <text x="${W - P}" y="${H - 8}" font-size="12" fill="#6b6f7a" text-anchor="end">${esc(date(last.stat_date))}</text>
+    <text x="${W - P}" y="${y(last.plays) - 10}" font-size="13" font-weight="700" fill="#282828" text-anchor="end">${compact(last.plays)}</text>
   </svg></div>`;
 }
 
@@ -352,7 +392,7 @@ async function loadSounds(token, id) {
       <div>
         <div class="t"><a href="${esc(s.sound_url)}" target="_blank" rel="noopener">${esc(s.title ?? "Untitled sound")}</a></div>
         <div class="s">${esc(s.author ?? "")}${s.matched_song_title && s.matched_song_title !== s.title ? ` · song: ${esc(s.matched_song_title)}` : ""}</div>
-        <div class="s">${counts[s.id] ? `${n(counts[s.id].video_count)} videos use it (${esc(date(counts[s.id].stat_date))})` : "Video count arrives with the daily refresh"}</div>
+        <div class="s">${counts[s.id] ? `<span class="count">${n(counts[s.id].video_count)}</span> videos use it (${esc(date(counts[s.id].stat_date))})` : "Video count arrives with the daily refresh"}</div>
       </div>
     </div>`).join("")}</div>`;
 }
@@ -392,9 +432,11 @@ async function loadPosts(token, id) {
     el.innerHTML = `<div class="wall">${list.map((p) => {
       const s = stats[p.tiktok_video_id] ?? {};
       const img = covers[p.cover_path];
-      return `<article class="post">
+      const gone = p.status !== "active";
+      return `<article class="post${gone ? " gone" : ""}">
         <a class="cover" href="${esc(p.url)}" target="_blank" rel="noopener" aria-label="Open on TikTok: @${esc(p.creator?.username ?? "")}">
           ${img ? `<img src="${esc(img)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
+          ${gone ? `<span class="gone-badge">No longer on TikTok</span>` : ""}
           <span class="plays">${compact(s.plays)}</span>
         </a>
         <div class="body">
@@ -506,10 +548,16 @@ async function route() {
   if (token !== routeToken) return;
   if (!user) return renderLogin();
   if (!(await isTeamMember())) {
-    renderWho(user);
-    app.innerHTML = `<div class="panel login"><h1>No access yet</h1><p>${esc(user.email)} isn't on the Stellar team list. Ask Sam to add this email, then sign in again.</p></div>`;
+    document.body.classList.add("signin");
+    app.innerHTML = `<section class="login no-access on-blue">
+      <img class="logo" src="assets/stellar-white.png" alt="Stellar" width="160" height="44">
+      <h1>No access <em>yet</em></h1>
+      <p>${esc(user.email)} isn't on the Stellar team list. Ask Sam to add this email, then sign in again.</p>
+      <div class="actions"><button type="button" id="signout2">Sign out</button></div></section>`;
+    document.getElementById("signout2").onclick = () => sb.auth.signOut();
     return;
   }
+  document.body.classList.remove("signin");
   renderWho(user);
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   window.scrollTo(0, 0);
