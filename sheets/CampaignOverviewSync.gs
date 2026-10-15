@@ -10,7 +10,8 @@
  * that holds a formula.
  */
 const SECRET = "PASTE_SECRET_HERE";
-const SHEET_GID = 1463586780;          // "CAMPAIGN OVERVIEW FY26/27"
+const SHEET_GID = 1649746959;          // the tab the tracker writes to
+const SHEET_NAME = "Copy of CAMPAIGN OVERVIEW FY26/27";
 const HEADER_ROW = 2;
 const FIRST_DATA_ROW = 4;              // row 3 is the worked example
 
@@ -92,8 +93,8 @@ function upsert_(body) {
 function getSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sh = ss.getSheets().find((s) => s.getSheetId() === SHEET_GID)
-    || ss.getSheets().find((s) => /campaign overview fy26\/27/i.test(s.getName()));
-  if (!sh) throw new Error("Campaign Overview FY26/27 tab not found");
+    || ss.getSheetByName(SHEET_NAME);
+  if (!sh) throw new Error('Tab "' + SHEET_NAME + '" not found');
   return sh;
 }
 function indexOf_(n, keyAt, key) { for (let i = 0; i < n; i++) if (keyAt(i) === key) return i; return -1; }
