@@ -171,6 +171,40 @@ Deno.serve(async (req) => {
       return json({ error: msg }, 502);
     }
   }
+  // Delete a campaign's row from the sheet (team member, from the platform's delete buttons).
+  if (body?.action === "delete_row") {
+    if (!(await teamMember(req))) return json({ error: "Sign in as a Stellar team member." }, 401);
+    if (!cfg?.sheet_sync_url) return json({ error: "The sheet connection isn't set up yet." }, 503);
+    const keys: string[] = [];
+    if (body.key) keys.push(String(body.key));
+    if (body.campaign_id) {
+      const [{ data: sy }, { data: c }] = await Promise.all([
+        db.from("campaign_sheet_sync").select("sheet_key,sheet_row").eq("campaign_id", body.campaign_id).maybeSingle(),
+        db.from("campaigns").select("artist,song,po_number").eq("id", body.campaign_id).maybeSingle(),
+      ]);
+      if (sy?.sheet_key) keys.push(sy.sheet_key);
+      if (c?.po_number) keys.push(sheetKey(c));
+      if (!body.row && sy?.sheet_row) body.row = sy.sheet_row;
+    }
+    try {
+      const r = await callSheet(cfg, { action: "delete_row", keys: [...new Set(keys)], row: body.row ?? null });
+      if (r.row) {
+        // Rows below moved up by one.
+        const { data: below } = await db.from("campaign_sheet_sync").select("campaign_id,sheet_row").gt("sheet_row", r.row);
+        for (const x of below ?? []) await db.from("campaign_sheet_sync").update({ sheet_row: x.sheet_row - 1 }).eq("campaign_id", x.campaign_id);
+        if (body.campaign_id) await db.from("campaign_sheet_sync").update({ sheet_row: null, sheet_key: null }).eq("campaign_id", body.campaign_id);
+      }
+      // Refresh the overview straight away.
+      try {
+        const x = await callSheet(cfg, { action: "export" });
+        const now = new Date().toISOString();
+        await db.from("overview_snapshot").update({ sheet: x.sheet, sections: x.sections, headers: x.headers, rows: x.rows, synced_at: now, last_attempt_at: now, last_error: null }).eq("id", 1);
+      } catch { /* the 5-minute refresh will catch up */ }
+      return json({ ok: true, row: r.row, note: r.note ?? null });
+    } catch (e) {
+      return json({ error: String((e as Error).message).slice(0, 300) }, 502);
+    }
+  }
   if (body?.action === "next_po") {
     if (!(await teamMember(req))) return json({ error: "Sign in as a Stellar team member." }, 401);
     if (!cfg?.sheet_sync_url) return json({ po: null, sheet_error: "not configured" });

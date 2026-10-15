@@ -38,6 +38,8 @@ const METRICS = [
   { key: "shares", label: "Shares" },
 ];
 const metricLabel = (k) => METRICS.find((m) => m.key === k).label;
+// Each number keeps one colour everywhere it is charted together.
+const METRIC_COLOR = { plays: BRAND, likes: "#eb6834", comments: "#1baf7a", shares: "#c98a00" };
 
 const ICON = {
   link: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
@@ -70,31 +72,44 @@ window.addEventListener("scroll", hideTip, { passive: true });
 // ---------- charts ----------
 // One or more stacked panels (one per metric) sharing the date axis and one crosshair.
 // Different metrics never share a y-axis: views would flatten comments to a line on the floor.
-export function chart(host, { dates, panels, empty, allowNegative = false }) {
+// independent: every series gets its own vertical scale (for different numbers on one chart,
+// e.g. views and comments); the left axis belongs to the first series, the right to the second,
+// and the tooltip always shows real values.
+export function chart(host, { dates, panels, empty, allowNegative = false, independent = false }) {
   panels = panels.map((p) => ({ ...p, series: p.series.filter((s) => s.values.some((v) => v != null)) })).filter((p) => p.series.length);
   if (dates.length < 2 || !panels.length) { host.innerHTML = `<p class="muted small chart-empty">${esc(empty)}</p>`; return; }
   const all = panels[0].series;
   const multi = all.length > 1;
   const stacked = panels.length > 1;
-  const labelled = multi && all.length <= 4 && !stacked;
+  const labelled = multi && all.length <= 4 && !stacked && !independent;
   host.innerHTML = `
     ${multi ? `<div class="legend">${all.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("")}</div>` : ""}
     ${panels.map((_, k) => `<div class="plot" data-panel="${k}"></div>`).join("")}
     <div class="chart-foot"><button type="button" class="link-btn small" data-table>Show as table</button></div>
     <div class="chart-table" hidden></div>`;
   const W = Math.max(300, Math.round(host.clientWidth || 600));
-  const H = stacked ? 150 : 260, L = 52, R = labelled ? Math.min(150, Math.round(W * 0.24)) : 16, T = stacked ? 26 : 14;
+  const H = stacked ? 150 : 280, L = 52, R = labelled ? Math.min(150, Math.round(W * 0.24)) : independent && all.length > 1 ? 52 : 16, T = stacked ? 26 : 14;
   const x = (i) => L + (i / (dates.length - 1)) * (W - L - R);
   const views = panels.map((p, k) => {
     const last = k === panels.length - 1;
     const B = last ? 30 : 10;
-    const vals = p.series.flatMap((s) => s.values).filter((v) => v != null);
-    let lo = allowNegative ? Math.min(0, ...vals) : 0, hi = Math.max(...vals, 1);
-    const step = niceStep((hi - lo) / (stacked ? 3 : 4));
-    hi = Math.ceil(hi / step) * step; lo = Math.floor(lo / step) * step;
-    const y = (v) => T + (1 - (v - lo) / (hi - lo || 1)) * (H - T - B);
-    const ticks = []; for (let v = lo; v <= hi + step / 2; v += step) ticks.push(v);
-    const path = (s) => { let d = "", pen = false; s.values.forEach((v, i) => { if (v == null) { pen = false; return; } d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`; pen = true; }); return d; };
+    const scaleOf = (vals) => {
+      let lo = allowNegative ? Math.min(0, ...vals) : 0, hi = Math.max(...vals, 1);
+      const step = niceStep((hi - lo) / (stacked ? 3 : 4));
+      hi = Math.ceil(hi / step) * step; lo = Math.floor(lo / step) * step;
+      const ticks = []; for (let v = lo; v <= hi + step / 2; v += step) ticks.push(v);
+      return { lo, hi, ticks };
+    };
+    const scales = independent
+      ? p.series.map((s) => scaleOf(s.values.filter((v) => v != null)))
+      : p.series.map(() => null).fill(scaleOf(p.series.flatMap((s) => s.values).filter((v) => v != null)));
+    const { lo, ticks } = scales[0];
+    const ys = scales.map((sc) => (v) => T + (1 - (v - sc.lo) / (sc.hi - sc.lo || 1)) * (H - T - B));
+    const y = (v, si = 0) => ys[si](v);
+    const idx = (s) => p.series.indexOf(s);
+    const path = (s) => { const si = idx(s); let d = "", pen = false; s.values.forEach((v, i) => { if (v == null) { pen = false; return; } d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(v, si).toFixed(1)}`; pen = true; }); return d; };
+    // Right axis for the second series when the scales differ.
+    const right = independent && p.series.length > 1 ? scales[1].ticks.map((v) => ({ v, at: y(v, 1) })) : [];
     const xIdx = dates.length <= 8 ? dates.map((_, i) => i) : [0, Math.round((dates.length - 1) / 2), dates.length - 1];
     let ends = [];
     if (labelled) {
@@ -105,11 +120,12 @@ export function chart(host, { dates, panels, empty, allowNegative = false }) {
     const el = host.querySelector(`[data-panel="${k}"]`);
     el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="${esc(p.label ?? "")} ${esc(p.series.map((s) => s.name).join(", "))}, ${esc(dayLong(dates[0]))} to ${esc(dayLong(dates.at(-1)))}">
       ${stacked ? `<text class="panel-label" x="${L}" y="14">${esc(p.label)}</text>` : ""}
-      <g class="grid">${ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" ${v === 0 ? 'class="zero"' : ""}/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${compact(v)}</text>`).join("")}</g>
+      <g class="grid">${ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" ${v === 0 ? 'class="zero"' : ""}/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end"${independent && multi ? ` fill="${p.series[0].color}"` : ""}>${compact(v)}</text>`).join("")}
+        ${right.map((t) => `<text x="${W - R + 8}" y="${t.at + 4}" text-anchor="start" fill="${p.series[1].color}">${compact(t.v)}</text>`).join("")}</g>
       ${last ? `<g class="xaxis">${xIdx.map((i) => `<text x="${x(i)}" y="${H - 8}" text-anchor="${i === 0 ? "start" : i === dates.length - 1 ? "end" : "middle"}">${esc(dayLabel(dates[i]))}</text>`).join("")}</g>` : ""}
       ${single ? `<path d="${path(single)}L${x(single.values.findLastIndex((v) => v != null)).toFixed(1)},${y(Math.max(lo, 0))}L${x(single.values.findIndex((v) => v != null)).toFixed(1)},${y(Math.max(lo, 0))}Z" fill="${single.color}" fill-opacity="0.06" stroke="none"/>` : ""}
       ${p.series.map((s) => `<path d="${path(s)}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`).join("")}
-      ${dates.length <= 14 ? p.series.map((s) => s.values.map((v, i) => (v == null ? "" : `<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="${s.color}"/>`)).join("")).join("") : ""}
+      ${dates.length <= 14 ? p.series.map((s) => s.values.map((v, i) => (v == null ? "" : `<circle cx="${x(i)}" cy="${y(v, idx(s))}" r="3" fill="${s.color}"/>`)).join("")).join("") : ""}
       ${ends.map((e) => `<text class="end" x="${W - R + 10}" y="${e.ty + 4}"><tspan fill="${e.s.color}">■</tspan> ${esc(truncate(shortName(e.s.name), 20))}</text>`).join("")}
       <line class="cross" x1="0" x2="0" y1="${T}" y2="${H - B}" visibility="hidden"/>
       <g class="hover-dots"></g>
@@ -129,11 +145,12 @@ export function chart(host, { dates, panels, empty, allowNegative = false }) {
       for (const v of views) {
         const s = v.el.querySelector("svg"), cross = s.querySelector(".cross");
         cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
-        s.querySelector(".hover-dots").innerHTML = v.p.series.map((se) => (se.values[i] == null ? "" : `<circle cx="${x(i)}" cy="${v.y(se.values[i])}" r="5" fill="${se.color}" stroke="#fff" stroke-width="2"/>`)).join("");
+        s.querySelector(".hover-dots").innerHTML = v.p.series.map((se, si) => (se.values[i] == null ? "" : `<circle cx="${x(i)}" cy="${v.y(se.values[i], si)}" r="5" fill="${se.color}" stroke="#fff" stroke-width="2"/>`)).join("");
       }
       const t = tip();
       t.innerHTML = `<div class="tip-date">${esc(dayLong(dates[i]))}</div>` + views.map((v) => {
-        const rows = v.p.series.map((se) => ({ se, val: se.values[i] })).filter((r) => r.val != null).sort((a, b) => b.val - a.val);
+        const rows = v.p.series.map((se) => ({ se, val: se.values[i] })).filter((r) => r.val != null);
+        if (!independent) rows.sort((a, b) => b.val - a.val);
         return `${stacked && multi ? `<div class="tip-group">${esc(v.p.label)}</div>` : ""}${rows.map((r) => `<div class="tip-row"><i style="background:${r.se.color}"></i><span>${esc(multi ? r.se.name : v.p.label ?? r.se.name)}</span><b>${n(r.val)}</b></div>`).join("")}`;
       }).join("");
       t.hidden = false;
@@ -455,22 +472,32 @@ export function mountReport(root, api) {
     const tabs = tabsAvailable();
     if (!tabs.some((t) => t[0] === state.tab)) state.tab = tabs[0]?.[0] ?? null;
     const showPosts = S.posts && (api.mode === "team" || posts.length);
+    const img = data.artist_image;
     root.innerHTML = `
-      <section class="band on-blue sh-band">
-        ${api.mode === "client" ? `<div class="sh-top"><img src="assets/stellar-blue.png" alt="Stellar" width="80" height="22"><span>Campaign report</span></div>` : ""}
-        ${api.header ?? ""}
-        <div class="hero">
-          <div>
-            <h1>${esc(data.artist)}</h1>
-            <div class="voice">${camps.length === 1 ? esc(camps[0].song ?? "1 campaign") : `${camps.length} campaigns`}${data.folder ? `<span class="folder-name">${esc(data.folder.name)}</span>` : ""}</div>
-            <div class="meta">
-              ${camps.length > 1 ? camps.map((c) => `<span class="status">${esc(c.song ?? "Untitled")}${c.status === "draft" ? " · upcoming" : ""}</span>`).join("") : camps[0]?.status === "draft" ? `<span class="status">upcoming</span>` : ""}
-              ${data.dates.length ? `<span>Tracking since ${esc(dayLong(data.dates[0]))}</span>` : ""}
-              ${lastStats ? `<span>Numbers from ${esc(dayLong(lastStats))}</span>` : ""}
+      <section class="band sh-band art-band${img ? " has-img" : ""}"${img ? ` style="--art:url('${esc(img)}')"` : ""}>
+        <div class="art-bg" aria-hidden="true"></div>
+        <div class="art-inner">
+          ${api.mode === "client" ? `<div class="sh-top"><img src="assets/stellar-white.png" alt="Stellar" width="80" height="22"><span>Campaign report</span></div>` : ""}
+          ${api.header ?? ""}
+          <div class="hero">
+            <div class="art-id">
+              <div class="art-avatar">${img ? `<img src="${esc(img)}" alt="" referrerpolicy="no-referrer">` : `<span>${esc((data.artist || "?").trim().charAt(0).toUpperCase())}</span>`}${api.avatarAction ?? ""}</div>
+              <div class="art-text">
+                <h1>${esc(data.artist)}</h1>
+                <div class="voice">${camps.length === 1 ? esc(camps[0].song ?? "1 campaign") : `${camps.length} campaigns`}${data.folder ? `<span class="folder-name">${esc(data.folder.name)}</span>` : ""}</div>
+                <div class="meta">
+                  ${camps.length > 1 ? camps.map((c) => `<span class="status">${esc(c.song ?? "Untitled")}${c.status === "draft" ? " · upcoming" : ""}</span>`).join("") : camps[0]?.status === "draft" ? `<span class="status">upcoming</span>` : ""}
+                  ${api.heroMeta ?? ""}
+                  ${data.dates.length ? `<span>Tracking since ${esc(dayLong(data.dates[0]))}</span>` : ""}
+                  ${lastStats ? `<span>Numbers from ${esc(dayLong(lastStats))}</span>` : ""}
+                </div>
+              </div>
             </div>
           </div>
+          ${api.heroActions ? `<div class="actions hero-actions">${api.heroActions}</div>` : ""}
         </div>
       </section>
+      ${api.afterHero ?? ""}
       ${camps.length === 0 ? `<div class="panel" style="margin-top:24px"><p>There's nothing to show here yet. Check back once the campaign is live.</p></div>` : `
       ${tabs.length ? `<div class="sh-controls">
         <div class="tabs" role="tablist" aria-label="Report views">
@@ -486,7 +513,7 @@ export function mountReport(root, api) {
         </div>
       </div>
       <section id="panel" role="tabpanel"></section>` : ""}
-      ${showPosts ? `
+      ${api.postsHtml ? api.postsHtml : showPosts ? `
       <div class="section-head" id="posts-head"><h2>Posts <span class="muted" style="font-weight:400" id="post-count"></span></h2></div>
       <div class="filters sh-filters">
         <input id="q" type="search" placeholder="Search captions or creators" aria-label="Search posts">
@@ -521,7 +548,8 @@ export function mountReport(root, api) {
       b.onclick = () => { state.view = b.dataset.view; root.querySelectorAll("[data-view]").forEach((x) => x.setAttribute("aria-pressed", x === b)); renderPosts(); };
     });
     if (state.tab) renderPanel();
-    if (root.querySelector("#posts")) renderPosts();
+    if (api.postsHtml) api.onPosts?.(root, data);
+    else if (root.querySelector("#posts")) renderPosts();
   }
 
   function syncRange() {
@@ -563,7 +591,7 @@ export function mountReport(root, api) {
     const posts = data.post_count ?? (data.posts ?? []).length;
     el.innerHTML = `
       <div class="stats sh-stats">
-        ${METRICS.map((m) => `<div class="stat ${state.metrics.includes(m.key) && S.overview_chart ? "on" : ""}">${S.overview_chart ? `<button type="button" class="stat-btn" data-metric="${m.key}" aria-pressed="${state.metrics.includes(m.key)}">` : "<div>"}
+        ${METRICS.map((m) => `<div class="stat ${state.metrics.includes(m.key) && S.overview_chart ? "on" : ""}" style="--mc:${METRIC_COLOR[m.key]}">${S.overview_chart ? `<button type="button" class="stat-btn" data-metric="${m.key}" aria-pressed="${state.metrics.includes(m.key)}">` : "<div>"}
           <div class="n">${n(g[m.key].end)}</div><div class="l">${m.label}</div>${sinceText(g[m.key])}${S.overview_chart ? "</button>" : "</div>"}</div>`).join("")}
         <div class="stat"><div class="n">${pct(er)}</div><div class="l">Engagement rate</div><div class="d muted">likes, comments and shares per view</div></div>
         <div class="stat"><div class="n">${n(posts)}</div><div class="l">Live posts</div><div class="d muted">by ${n(creators)} creator${creators === 1 ? "" : "s"}</div></div>
@@ -578,7 +606,8 @@ export function mountReport(root, api) {
     const ds = rangeDates();
     chart(el.querySelector("#chart"), {
       dates: ds,
-      panels: state.metrics.map((k) => ({ label: metricLabel(k), series: [{ name: metricLabel(k), color: BRAND, values: ds.map((d) => sumAt(d, k)) }] })),
+      panels: [{ label: state.metrics.map(metricLabel).join(", "), series: state.metrics.map((k) => ({ name: metricLabel(k), color: METRIC_COLOR[k], values: ds.map((d) => sumAt(d, k)) })) }],
+      independent: true,
       empty: "The chart fills in once numbers have been collected on two or more days.",
     });
   }
@@ -602,7 +631,7 @@ export function mountReport(root, api) {
     const totalEnd = growth(k0).end || 0;
     const tiles = groups.map((gr) => ({ ...gr, g: growth(k0, gr.pred) })).sort((a, b) => (b.g.end ?? 0) - (a.g.end ?? 0));
     el.innerHTML = `
-      ${showChart ? metricChips() : `<div class="metric-pick seg" role="group" aria-label="Number to show">${METRICS.map((m) => `<button type="button" data-metric1="${m.key}" aria-pressed="${k0 === m.key}">${m.label}</button>`).join("")}</div>`}
+      ${`<div class="metric-pick seg" role="group" aria-label="Number to show">${METRICS.map((m) => `<button type="button" data-metric1="${m.key}" aria-pressed="${k0 === m.key}">${m.label}</button>`).join("")}</div>`}
       <div class="tiles">
         ${tiles.map((t) => `<div class="tile"><div class="tile-name"><i style="background:${t.color}"></i><span>${esc(t.name)}</span></div>
           <div class="n">${n(t.g.end)}</div>
@@ -610,7 +639,7 @@ export function mountReport(root, api) {
           <div class="d muted">${totalEnd ? `${Math.round(((t.g.end ?? 0) / totalEnd) * 100)}% of ${metricLabel(k0).toLowerCase()}` : ""}${t.g.delta != null ? ` · ${signed(t.g.delta)}` : ""}</div></div>`).join("")}
       </div>
       ${showChart ? `<div class="chart-card">
-        <div class="chart-head"><h3>${state.metrics.map(metricLabel).join(", ")} by ${kind === "songs" ? "song" : kind === "folders" ? (folderWord() === "Markets" ? "market" : "folder") : "creator country"}</h3></div>
+        <div class="chart-head"><h3>${metricLabel(k0)} by ${kind === "songs" ? "song" : kind === "folders" ? (folderWord() === "Markets" ? "market" : "folder") : "creator country"}</h3></div>
         <div id="chart"></div>
       </div>` : ""}`;
     el.querySelectorAll("[data-metric]").forEach((b) => b.onclick = () => { toggleMetric(b.dataset.metric); renderBreakdown(el, kind); });
@@ -618,7 +647,7 @@ export function mountReport(root, api) {
     if (!showChart) return;
     chart(el.querySelector("#chart"), {
       dates: ds,
-      panels: state.metrics.map((k) => ({ label: metricLabel(k), series: groups.map((gr) => ({ name: gr.name, color: gr.color, values: ds.map((d) => sumAt(d, k, gr.pred)) })) })),
+      panels: [{ label: metricLabel(k0), series: groups.map((gr) => ({ name: gr.name, color: gr.color, values: ds.map((d) => sumAt(d, k0, gr.pred)) })) }],
       empty: "The chart fills in once numbers have been collected on two or more days.",
     });
   }

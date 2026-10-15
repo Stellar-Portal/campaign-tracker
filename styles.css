@@ -276,7 +276,8 @@ body.share .sh-band { margin-top: 0; padding-top: 20px; }
 .sh-stats .stat .n { font-size: clamp(19px, 1.8vw, 24px); }
 .stat-btn { all: unset; display: block; cursor: pointer; width: 100%; }
 .stat-btn:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 6px; border-radius: 4px; }
-.sh-stats .stat.on { box-shadow: inset 0 -2px 0 var(--accent); }
+.sh-stats .stat.on { box-shadow: inset 0 -3px 0 var(--mc, var(--accent)); }
+.sh-stats .stat.on .l::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--mc, var(--accent)); margin-right: 6px; vertical-align: 1px; }
 .sh-stats .stat.on .l { color: var(--ink); font-weight: 600; }
 .stat .d { font-size: 12px; margin-top: 4px; color: var(--good); font-weight: 600; font-variant-numeric: tabular-nums; }
 .stat .d.muted { color: var(--muted); font-weight: 400; }
@@ -527,6 +528,80 @@ tr.picked td { background: var(--accent-tint); }
 .ov-missing ul { margin: 8px 0 0; padding-left: 18px; }
 .prefill-note { background: var(--accent-tint); border: none; margin: 0 0 16px; padding: 12px 16px; }
 
+/* ---------- artist banner (team campaign page and client links) ---------- */
+.art-band { position: relative; overflow: hidden; isolation: isolate; color: #fff; border-bottom: none; background: linear-gradient(135deg, #1d1d1f 0%, #101a4a 100%); padding-bottom: 32px; }
+.art-band .art-bg { position: absolute; inset: -60px; z-index: -2; background: var(--art) center / cover no-repeat; filter: blur(40px) saturate(1.25); transform: scale(1.1); opacity: 0; }
+.art-band.has-img .art-bg { opacity: 1; }
+.art-band::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.55) 100%); }
+.art-band .back, .art-band a:not(.btn) { color: rgba(255,255,255,0.85); }
+.art-band .sh-top span { color: rgba(255,255,255,0.7); }
+.art-band .hero { align-items: center; }
+.art-id { display: flex; align-items: center; gap: 24px; min-width: 0; }
+.art-avatar { position: relative; flex: 0 0 auto; width: 112px; height: 112px; border-radius: 50%; overflow: hidden; background: rgba(255,255,255,0.14); box-shadow: 0 0 0 3px rgba(255,255,255,0.22), 0 12px 32px rgba(0,0,0,0.35); display: grid; place-items: center; font-size: 42px; font-weight: 600; color: rgba(255,255,255,0.85); }
+.art-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.art-avatar .art-edit { position: absolute; inset: auto 0 0 0; height: 34px; border: none; border-radius: 0; background: rgba(0,0,0,0.55); color: #fff; font-size: 11px; font-weight: 600; opacity: 0; transition: opacity 0.15s; padding: 0; }
+.art-avatar:hover .art-edit, .art-avatar .art-edit:focus-visible { opacity: 1; }
+.art-text { min-width: 0; }
+.art-band .hero h1 { margin-top: 0; color: #fff; text-shadow: 0 2px 18px rgba(0,0,0,0.25); }
+.art-band .hero .voice { color: rgba(255,255,255,0.82); }
+.art-band .hero .meta { color: rgba(255,255,255,0.75); }
+.art-band .status { background: rgba(255,255,255,0.16); color: #fff; }
+.art-band .sheet-line, .art-band .sheet-line.muted { color: rgba(255,255,255,0.7) !important; }
+.art-band .warn-note { color: #ffd38a; }
+.hero-actions { margin-top: 22px; }
+.art-band .hero-actions button, .art-band .hero-actions .btn { background: rgba(255,255,255,0.14); color: #fff; border-color: rgba(255,255,255,0.28); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.art-band .hero-actions button:hover, .art-band .hero-actions .btn:hover { background: rgba(255,255,255,0.24); }
+.art-band .hero-actions .primary { background: #fff; color: var(--ink); border-color: #fff; }
+.art-band .hero-actions .primary:hover { background: rgba(255,255,255,0.9); }
+.art-band .hero-actions .danger-lite { color: #ffc2bd; }
+.art-band .voice .folder-name { background: rgba(255,255,255,0.18); color: #fff; }
+.art-band .updated { color: rgba(255,255,255,0.7); }
+
+/* folder sections take the artist's blurred banner */
+.fsec-head.has-art { position: relative; isolation: isolate; overflow: hidden; color: #fff; background: #1d1d1f; border-bottom: none; }
+.fsec-head.has-art::before { content: ""; position: absolute; inset: -40px; z-index: -2; background: var(--art) center / cover; filter: blur(30px) saturate(1.2); transform: scale(1.1); }
+.fsec-head.has-art::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, rgba(0,0,0,0.55), rgba(0,0,0,0.25)); }
+.fsec-head.has-art .fsec-meta { color: rgba(255,255,255,0.75); }
+.fsec-head.has-art .fsec-meta b { color: #fff; }
+.fsec-head.has-art .badge { background: rgba(255,255,255,0.18); color: #fff; }
+.fsec-head.has-art .badge.on { background: rgba(255,255,255,0.9); color: var(--accent); }
+.fsec-head.has-art .fsec-actions button:not(.primary) { background: rgba(255,255,255,0.14); color: #fff; border-color: rgba(255,255,255,0.28); }
+.fsec-head.has-art .fsec-actions .primary { background: #fff; color: var(--ink); border-color: #fff; }
+.fsec-art { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 2px rgba(255,255,255,0.3); }
+
+/* team money strip under the banner */
+.money-strip { margin-top: 20px; }
+
+/* artist picker in the campaign form */
+.artist-pick { position: relative; }
+.pick-wrap { position: relative; }
+.artist-pick .art-chosen { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 13px; color: var(--muted); }
+.artist-pick .art-chosen img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+.art-results { position: absolute; left: 0; right: 0; top: 100%; z-index: 20; margin-top: 4px; background: var(--canvas); border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--hairline), 0 12px 32px rgba(0,0,0,0.12); overflow: hidden; max-height: 360px; overflow-y: auto; }
+.art-results button { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 12px; font-size: 14px; }
+.art-results button:hover, .art-results button[aria-selected="true"] { background: var(--parchment); }
+.art-results img, .art-results .ph { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--parchment); flex: 0 0 40px; }
+.art-results .fans { margin-left: auto; font-size: 12px; color: var(--muted); }
+.art-results .none { padding: 10px 12px; font-size: 13px; color: var(--muted); }
+
+/* confirmation dialog */
+.dlg-back { position: fixed; inset: 0; z-index: 80; background: rgba(0,0,0,0.35); display: grid; place-items: center; padding: 16px; }
+.dlg { background: var(--canvas); border-radius: var(--r-lg); box-shadow: 0 24px 64px rgba(0,0,0,0.25); width: min(460px, 100%); padding: 22px 22px 18px; }
+.dlg h3 { margin: 0 0 8px; font-size: 19px; }
+.dlg p { margin: 0 0 12px; color: var(--ink-80); font-size: 14px; }
+.dlg .check { font-weight: 400; margin: 8px 0; align-items: flex-start; }
+.dlg .check input { margin-top: 3px; }
+.dlg .actions { justify-content: flex-end; margin-top: 16px; }
+.ov-tr { display: flex; align-items: center; gap: 6px; }
+.small-n { font-size: 15px !important; color: var(--muted); }
+button.danger-solid { background: var(--bad); border-color: var(--bad); color: #fff; }
+button.danger-solid:hover { background: #a92622; }
+.row-tools { display: flex; gap: 4px; justify-content: flex-end; }
+.row-tools button, .row-tools a { all: unset; cursor: pointer; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: var(--muted); }
+.row-tools button:hover, .row-tools a:hover { background: var(--parchment); color: var(--ink); }
+.row-tools .del:hover { background: #fdecea; color: var(--bad); }
+.row-tools svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
 /* ---------- small screens ---------- */
 @media (max-width: 760px) {
   :root { --gutter: 16px; }
@@ -537,6 +612,8 @@ tr.picked td { background: var(--accent-tint); }
   .hero { grid-template-columns: 1fr; gap: 20px; }
   .hero h1 { font-size: 36px; }
   .hero .voice { font-size: 21px; }
+  .art-id { gap: 16px; }
+  .art-avatar { width: 72px; height: 72px; font-size: 28px; }
   .plays-big { text-align: left; }
   .plays-big .n { font-size: 48px; }
   .stat { border-right: none; border-bottom: 1px solid var(--divider); }

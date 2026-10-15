@@ -32,6 +32,7 @@ function doPost(e) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
+    if (body.action === "delete_row") return out(deleteRow_(body));
     return out(upsert_(body));
   } catch (err) {
     return out({ ok: false, error: String(err && err.message || err) });
@@ -96,6 +97,34 @@ function upsert_(body) {
   });
   SpreadsheetApp.flush();
   return { ok: true, row: row, key: body.key, skipped: skipped, missing: missing };
+}
+
+// Delete one campaign row, only if its Artist + Song + PO still match (so a shifted sheet can never
+// lose the wrong row). body.keys: accepted keys; body.row: where the platform last saw it.
+function deleteRow_(body) {
+  const keys = (body.keys || []).filter((k) => k && k.replace(/\|/g, "").trim());
+  if (!keys.length) throw new Error("Nothing identifies that row");
+  const sh = getSheet_();
+  const headers = sh.getRange(HEADER_ROW, 1, 1, sh.getLastColumn()).getValues()[0].map(norm_);
+  const col = (name) => headers.indexOf(norm_(name)) + 1;
+  const cA = col("Artist Name"), cS = col("Song Name (s) or Project Name"), cP = col("Stellar PO no.");
+  const n = sh.getLastRow() - FIRST_DATA_ROW + 1;
+  if (n < 1) throw new Error("The sheet has no campaigns");
+  const read = (c) => sh.getRange(FIRST_DATA_ROW, c, n, 1).getDisplayValues().map((r) => r[0]);
+  const a = read(cA), s = read(cS), p = read(cP);
+  const keyAt = (i) => key_(a[i], s[i], p[i]);
+  let idx = -1;
+  const hint = Number(body.row) - FIRST_DATA_ROW;
+  if (hint >= 0 && hint < n && keys.indexOf(keyAt(hint)) >= 0) idx = hint;
+  else {
+    const hits = [];
+    for (let i = 0; i < n; i++) if (keys.indexOf(keyAt(i)) >= 0) hits.push(i);
+    if (hits.length === 1) idx = hits[0];
+    else if (hits.length > 1) throw new Error("More than one row matches; delete it in the sheet");
+  }
+  if (idx < 0) return { ok: true, row: null, note: "Row not found (already deleted?)" };
+  sh.deleteRow(FIRST_DATA_ROW + idx);
+  return { ok: true, row: FIRST_DATA_ROW + idx };
 }
 
 // Every filled-in row of the tab, as the sheet shows it, for the platform's Campaign Overview page.

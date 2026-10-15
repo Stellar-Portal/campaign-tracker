@@ -1,7 +1,7 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015f";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261015f";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015f";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015g";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261015g";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015g";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -93,6 +93,11 @@ function renderWho(user) {
 }
 
 // ---------- Stellar OS navigation ----------
+const TOOL_ICON = {
+  edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"/></svg>',
+  del: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>',
+  sheet: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 10h16M4 15h16M10 4v16"/></svg>',
+};
 const NAV_ICON = {
   overview: '<path d="M4 5h16M4 10h16M4 15h10M4 20h7"/>',
   tracker: '<path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/>',
@@ -377,16 +382,53 @@ async function renderOverview(token) {
           <td class="small">${esc(v(r, "Start Date"))}${v(r, "Duration") ? `<div class="muted">${esc(v(r, "Duration"))}</div>` : ""}</td>
           <td class="num">${v(r, "Price") ? `${esc(v(r, "Price"))} <span class="muted small">${esc(v(r, "Currency"))}</span>` : "–"}</td>
           <td class="small">${v(r, "Invoice Status") === "Invoiced" ? `<span class="status finished">Invoiced</span>` : esc(v(r, "Invoice Status"))}${v(r, "Paid") === "Paid" ? ` <span class="status active">Paid</span>` : ""}</td>
-          <td>${r.camp
-            ? `<a class="btn small-btn" href="#/c/${esc(r.camp.id)}" data-stop>Open</a><div class="muted small">${r.camp.live_posts ? `${compact(r.camp.total_plays)} plays` : "no posts yet"}</div>`
-            : `<button type="button" class="small-btn" data-create="${r.row}">Create</button>`}</td>
+          <td><div class="ov-tr">${r.camp
+            ? `<a class="btn small-btn" href="#/c/${esc(r.camp.id)}" data-stop>Open</a>`
+            : `<button type="button" class="small-btn" data-create="${r.row}">Create</button>`}
+            <div class="row-tools">
+              ${r.camp ? `<a href="#/c/${esc(r.camp.id)}/edit" title="Edit" aria-label="Edit" data-stop>${TOOL_ICON.edit}</a>` : `<a href="${SHEET_URL}&range=A${r.row}" target="_blank" rel="noopener" title="Edit in the sheet" aria-label="Edit in the sheet" data-stop>${TOOL_ICON.sheet}</a>`}
+              <button type="button" class="del" data-ovdel="${r.row}" title="Delete" aria-label="Delete">${TOOL_ICON.del}</button>
+            </div></div>
+            ${r.camp ? `<div class="muted small">${r.camp.live_posts ? `${compact(r.camp.total_plays)} plays` : "no posts yet"}</div>` : ""}</td>
         </tr>
         ${open.has(r.row) ? `<tr class="ov-detail-row"><td colspan="9">${detail(r)}</td></tr>` : ""}`).join("")}</tbody></table></div>`;
     listEl.querySelectorAll(".ov-row").forEach((tr) => {
       const toggle = () => { const k = Number(tr.dataset.row); if (open.has(k)) open.delete(k); else open.add(k); draw(); };
-      tr.onclick = (e) => { if (e.target.closest("[data-stop],[data-create]")) return; toggle(); };
+      tr.onclick = (e) => { if (e.target.closest("[data-stop],[data-create],[data-ovdel]")) return; toggle(); };
       tr.onkeydown = (e) => { if (e.key === "Enter" && e.target === tr) toggle(); };
     });
+    listEl.querySelectorAll("[data-ovdel]").forEach((b) => (b.onclick = async () => {
+      const r = rows.find((x) => x.row === Number(b.dataset.ovdel));
+      const name = `${v(r, "Artist Name") || "this campaign"}${v(r, "Song Name (s) or Project Name") ? ` – ${v(r, "Song Name (s) or Project Name")}` : ""}`;
+      if (r.camp) {
+        // In the tracker too: one dialog covers both.
+        const ans = await confirmDialog({
+          title: `Delete ${name}?`,
+          body: "Choose what to delete. This can't be undone.",
+          checks: [
+            { id: "camp", label: "The tracker campaign, with its posts, folders and client links", checked: true },
+            { id: "sheet", label: `Row ${r.row} in the Campaign Overview sheet`, checked: true },
+          ],
+        });
+        if (!ans || (!ans.camp && !ans.sheet)) return;
+        if (ans.sheet) {
+          const { data, error } = await sb.functions.invoke("sheet-sync", { body: { action: "delete_row", campaign_id: r.camp.id, row: r.row, key: normKey(v(r, "Artist Name"), v(r, "Song Name (s) or Project Name"), v(r, "Stellar PO no.")) } });
+          if (error || data?.error) { toast(`Couldn't delete the sheet row: ${data?.error ?? error.message}`); return; }
+        }
+        if (ans.camp) {
+          const { error } = await sb.from("campaigns").delete().eq("id", r.camp.id);
+          if (error) { toast(error.message); return; }
+        }
+        toast(ans.camp && ans.sheet ? "Deleted from the tracker and the sheet" : ans.camp ? "Deleted from the tracker" : "Sheet row deleted");
+      } else {
+        const ans = await confirmDialog({ title: `Delete ${name}?`, body: `This deletes row ${r.row} from the Campaign Overview sheet. This can't be undone.`, confirm: "Delete row" });
+        if (!ans) return;
+        const { data, error } = await sb.functions.invoke("sheet-sync", { body: { action: "delete_row", row: r.row, key: normKey(v(r, "Artist Name"), v(r, "Song Name (s) or Project Name"), v(r, "Stellar PO no.")) } });
+        if (error || data?.error) { toast(`Couldn't delete the sheet row: ${data?.error ?? error.message}`); return; }
+        toast("Sheet row deleted");
+      }
+      renderOverview(++routeToken);
+    }));
     listEl.querySelectorAll("[data-create]").forEach((b) => (b.onclick = () => {
       const r = rows.find((x) => x.row === Number(b.dataset.create));
       sessionStorageSet("prefill", JSON.stringify(prefillFromRow(r)));
@@ -432,7 +474,7 @@ async function renderList(token) {
     document.getElementById("list").innerHTML = shown.length === 0
       ? `<div class="panel"><p>${rows.length === 0 ? "No campaigns yet. Create the first one to start adding links." : "No campaigns match these filters."}</p></div>`
       : `<div class="table-wrap"><table>
-          <thead><tr><th>Artist and song</th><th>Client</th><th>Runner</th><th>Dates</th><th class="num">Budget</th><th class="num">Spend</th><th class="num">Live posts</th><th class="num">Plays</th><th class="num">Cost per view</th><th>Status</th></tr></thead>
+          <thead><tr><th>Artist and song</th><th>Client</th><th>Runner</th><th>Dates</th><th class="num">Budget</th><th class="num">Spend</th><th class="num">Live posts</th><th class="num">Plays</th><th class="num">Cost per view</th><th>Status</th><th><span class="sr">Edit or delete</span></th></tr></thead>
           <tbody>${shown.map((r) => `
             <tr data-id="${esc(r.id)}" tabindex="0">
               <td><div class="artist">${esc(r.artist)}</div><div class="song small">${esc(r.song)}${r.po_number ? ` <span class="po">${esc(r.po_number)}</span>` : ""}</div></td>
@@ -445,9 +487,14 @@ async function renderList(token) {
               <td class="num plays-cell">${compact(r.total_plays)}</td>
               <td class="num">${cpv(r.cost_per_view, r.currency)}</td>
               <td><span class="status ${esc(r.status)}">${esc(statusLabel(r.status))}</span>${r.invoiced ? ` <span class="status finished">invoiced</span>` : ""}</td>
+              <td><div class="row-tools"><a href="#/c/${esc(r.id)}/edit" title="Edit" aria-label="Edit ${esc(r.artist)}" data-stop>${TOOL_ICON.edit}</a><button type="button" class="del" data-del="${esc(r.id)}" title="Delete" aria-label="Delete ${esc(r.artist)}">${TOOL_ICON.del}</button></div></td>
             </tr>`).join("")}</tbody></table></div>`;
+    document.querySelectorAll("[data-del]").forEach((b) => (b.onclick = (e) => {
+      e.stopPropagation();
+      deleteCampaignFlow(rows.find((r) => r.id === b.dataset.del), () => renderList(++routeToken));
+    }));
     document.querySelectorAll("tbody tr").forEach((tr) => {
-      tr.onclick = () => go(`#/c/${tr.dataset.id}`);
+      tr.onclick = (e) => { if (e.target.closest("[data-stop],[data-del]")) return; go(`#/c/${tr.dataset.id}`); };
       tr.onkeydown = (e) => { if (e.key === "Enter") go(`#/c/${tr.dataset.id}`); };
     });
   };
@@ -510,7 +557,9 @@ async function renderForm(token, id) {
     <form id="cf" class="panel form-sections" novalidate>
       <h2>Campaign</h2>
       <div class="form-grid">
-        <div><label for="artist">Artist</label><input id="artist" required value="${v("artist")}"></div>
+        <div class="artist-pick"><label for="artist">Artist</label><div class="pick-wrap"><input id="artist" required value="${v("artist")}" placeholder="Start typing to search">
+          <div class="art-results" id="artist-results" hidden></div></div>
+          <div class="art-chosen" id="artist-chosen"></div></div>
         <div><label for="song">Song or project</label><input id="song" value="${v("song")}"></div>
         <div><label for="po_number">PO number</label><input id="po_number" placeholder="#ST2109" value="${v("po_number")}" autocomplete="off">
           <p class="hint" id="po-hint">Shared with the Campaign Overview sheet. Artist, song and PO together identify the campaign.</p></div>
@@ -566,6 +615,25 @@ async function renderForm(token, id) {
 
   const box = document.getElementById("markets");
   const $ = (k) => document.getElementById(k);
+
+  // Artist: search the music catalogue as you type; the chosen picture brands the dashboards.
+  let artistPick = null;          // { deezer_id, image, thumb, name } chosen in this form
+  let artistSaved = null;         // what the artists table already has for this name
+  const showChosen = () => {
+    const pic = artistPick?.thumb ?? artistPick?.image ?? (artistSaved?.image_url && artistKey(artistSaved.name) === artistKey($("artist").value) ? artistSaved.image_url : null);
+    $("artist-chosen").innerHTML = pic ? `<img src="${esc(pic)}" alt="" referrerpolicy="no-referrer"><span>${artistPick ? "Picture selected" : "Picture on file"}</span>${artistPick ? ` <button type="button" class="link-btn small" id="artist-clear">Remove</button>` : ""}`
+      : $("artist").value.trim() ? `<span>No picture yet: pick the artist from the search results to add one.</span>` : "";
+    $("artist-clear")?.addEventListener("click", () => { artistPick = null; showChosen(); });
+  };
+  const loadSaved = async () => {
+    const k = artistKey($("artist").value);
+    if (!k) { artistSaved = null; showChosen(); return; }
+    const { data } = await sb.from("artists").select("name,image_url").eq("name_key", k).maybeSingle();
+    artistSaved = data ?? null; showChosen();
+  };
+  attachArtistSearch($("artist"), $("artist-results"), (a) => { $("artist").value = a.name; artistPick = a; showChosen(); });
+  $("artist").addEventListener("change", () => { if (artistPick && artistKey(artistPick.name) !== artistKey($("artist").value)) artistPick = null; loadSaved(); });
+  loadSaved();
   const budget = () => ($("budget").value === "" ? null : Number($("budget").value));
   const cur = () => $("currency").value.trim().toUpperCase() || "";
   const fmt = (x) => Number(x).toLocaleString("en-GB", { maximumFractionDigits: 2 });
@@ -665,6 +733,7 @@ async function renderForm(token, id) {
       : await sb.from("campaigns").insert(record).select("id").single();
     if (res.error) return failWith(res.error);
     const cid = res.data.id;
+    if (artistPick) await saveArtist(record.artist, artistPick);
 
     // Market splits: remove the ones taken off, then save the rest.
     const keep = ms.map((r) => r.market);
@@ -685,12 +754,7 @@ async function renderForm(token, id) {
   });
 
   const del = $("delete");
-  if (del) del.onclick = async () => {
-    if (!confirm(`Delete "${c.artist}${c.song ? ` – ${c.song}` : ""}" and all its posts? This can't be undone. Its row in the Campaign Overview sheet stays as it is.`)) return;
-    const { error } = await sb.from("campaigns").delete().eq("id", id);
-    if (error) { $("form-msg").innerHTML = fail(error); return; }
-    toast("Campaign deleted"); go("#/campaigns");
-  };
+  if (del) del.onclick = () => deleteCampaignFlow(c);
 }
 
 // One folder per market: add folders for new markets; remove folders for markets taken off,
@@ -744,15 +808,114 @@ function sheetLine(sync, c) {
 }
 
 // ---------- campaign dashboard ----------
+// ---------- small dialogs ----------
+// confirmDialog: a clean yes/no box with optional tick boxes. Resolves to { ...ticks } or null.
+function confirmDialog({ title, body = "", checks = [], confirm = "Delete", danger = true }) {
+  return new Promise((resolve) => {
+    const back = document.createElement("div");
+    back.className = "dlg-back";
+    back.innerHTML = `<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-t">
+      <h3 id="dlg-t">${esc(title)}</h3>${body ? `<p>${body}</p>` : ""}
+      ${checks.map((c) => `<label class="check"><input type="checkbox" data-k="${esc(c.id)}" ${c.checked ? "checked" : ""}><span>${c.label}</span></label>`).join("")}
+      <div class="actions"><button type="button" data-no>Cancel</button><button type="button" class="${danger ? "danger-solid" : "primary"}" data-yes>${esc(confirm)}</button></div></div>`;
+    document.body.appendChild(back);
+    const done = (v) => { back.remove(); document.removeEventListener("keydown", key); resolve(v); };
+    const key = (e) => { if (e.key === "Escape") done(null); };
+    document.addEventListener("keydown", key);
+    back.onclick = (e) => { if (e.target === back) done(null); };
+    back.querySelector("[data-no]").onclick = () => done(null);
+    back.querySelector("[data-yes]").onclick = () => done(Object.fromEntries([...back.querySelectorAll("[data-k]")].map((i) => [i.dataset.k, i.checked])));
+    back.querySelector("[data-yes]").focus();
+  });
+}
+
+// Delete a tracker campaign in one step, optionally with its row in the Campaign Overview sheet.
+async function deleteCampaignFlow(c, after = () => go("#/campaigns")) {
+  const { data: sync } = await sb.from("campaign_sheet_sync").select("sheet_row,sheet_key").eq("campaign_id", c.id).maybeSingle();
+  const inSheet = !!(sync?.sheet_key || c.po_number);
+  const ans = await confirmDialog({
+    title: `Delete ${c.artist}${c.song ? ` – ${c.song}` : ""}?`,
+    body: "Its posts, folders and client links are removed from the tracker. This can't be undone.",
+    checks: inSheet ? [{ id: "sheet", label: `Also delete its row in the Campaign Overview sheet${sync?.sheet_row ? ` (row ${sync.sheet_row})` : ""}`, checked: false }] : [],
+    confirm: "Delete campaign",
+  });
+  if (!ans) return false;
+  if (ans.sheet) {
+    const { data, error } = await sb.functions.invoke("sheet-sync", { body: { action: "delete_row", campaign_id: c.id } });
+    if (error || data?.error) { toast(`Couldn't delete the sheet row: ${data?.error ?? error.message}. Nothing was deleted.`); return false; }
+  }
+  const { error } = await sb.from("campaigns").delete().eq("id", c.id);
+  if (error) { toast(error.message); return false; }
+  toast(ans.sheet ? "Campaign and sheet row deleted" : "Campaign deleted");
+  after();
+  return true;
+}
+
+// ---------- artist pictures ----------
+const artistKey = (s) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+async function searchArtists(q) {
+  const { data, error } = await sb.functions.invoke("artist-search", { body: { q } });
+  if (error || data?.error) throw new Error(data?.error ?? error.message);
+  return data.artists ?? [];
+}
+async function saveArtist(name, pick) {
+  const row = { name: name.trim(), deezer_id: pick?.deezer_id ?? null, image_url: pick?.image ?? null, updated_at: new Date().toISOString() };
+  const { error } = await sb.from("artists").upsert(row, { onConflict: "name_key" });
+  if (error) toast(`Couldn't save the artist picture: ${error.message}`);
+  return !error;
+}
+// Live search under an input. onPick({ name, deezer_id, image, thumb }).
+function attachArtistSearch(input, box, onPick) {
+  let timer, seq = 0;
+  const close = () => { box.hidden = true; box.innerHTML = ""; };
+  input.setAttribute("autocomplete", "off");
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 2) { close(); return; }
+    timer = setTimeout(async () => {
+      const my = ++seq;
+      box.hidden = false; box.innerHTML = `<div class="none">Searching…</div>`;
+      let list = [];
+      try { list = await searchArtists(q); } catch { if (my === seq) box.innerHTML = `<div class="none">Couldn't search right now. You can still type the name.</div>`; return; }
+      if (my !== seq) return;
+      box.innerHTML = list.length
+        ? list.map((a, i) => `<button type="button" data-i="${i}">${a.thumb ? `<img src="${esc(a.thumb)}" alt="" referrerpolicy="no-referrer">` : `<span class="ph"></span>`}<span>${esc(a.name)}</span><span class="fans">${a.fans ? `${compact(a.fans)} fans` : ""}</span></button>`).join("") + `<div class="none">Not listed? Keep typing the name; you can add a picture later.</div>`
+        : `<div class="none">No match. Keep the name as typed; you can add a picture later.</div>`;
+      box.querySelectorAll("[data-i]").forEach((b) => (b.onmousedown = (e) => { e.preventDefault(); onPick(list[Number(b.dataset.i)]); close(); }));
+    }, 300);
+  });
+  input.addEventListener("blur", () => setTimeout(close, 150));
+  input.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+}
+// Dialog to choose a picture for an existing artist (campaign page).
+function artistPictureDialog(name) {
+  return new Promise((resolve) => {
+    const back = document.createElement("div");
+    back.className = "dlg-back";
+    back.innerHTML = `<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="ad-t">
+      <h3 id="ad-t">Picture for ${esc(name)}</h3>
+      <p>Search the music catalogue and pick the right artist. Their photo becomes the banner here and on client links.</p>
+      <div class="artist-pick"><input id="ad-q" value="${esc(name)}" aria-label="Search artists"><div class="art-results" id="ad-r" hidden></div></div>
+      <div class="actions"><button type="button" data-no>Cancel</button></div></div>`;
+    document.body.appendChild(back);
+    const done = (v) => { back.remove(); resolve(v); };
+    back.onclick = (e) => { if (e.target === back) done(null); };
+    back.querySelector("[data-no]").onclick = () => done(null);
+    const q = back.querySelector("#ad-q");
+    attachArtistSearch(q, back.querySelector("#ad-r"), (a) => done(a));
+    q.focus(); q.select(); q.dispatchEvent(new Event("input"));
+  });
+}
+
 async function renderCampaign(token, id) {
   app.innerHTML = `<p class="muted pad">Loading campaign…</p>`;
   const { data: c, error } = await sb.from("campaign_summary").select("*").eq("id", id).maybeSingle();
   if (token !== routeToken) return;
   if (error || !c) { app.innerHTML = fail(error ?? "This campaign doesn't exist or was deleted."); return; }
 
-  const [markets, daily, latest, sync] = await Promise.all([
+  const [markets, latest, sync] = await Promise.all([
     sb.from("campaign_markets").select("market,share_percent,amount").eq("campaign_id", id),
-    sb.from("campaign_daily_stats").select("*").eq("campaign_id", id).order("stat_date"),
     sb.from("posts").select("last_checked_at").eq("campaign_id", id).not("last_checked_at", "is", null).order("last_checked_at", { ascending: false }).limit(1),
     sb.from("campaign_sheet_sync").select("*").eq("campaign_id", id).maybeSingle(),
   ]);
@@ -761,87 +924,87 @@ async function renderCampaign(token, id) {
   const mk = (markets.data ?? []).sort((a, b) => all.findIndex((x) => x.name === a.market) - all.findIndex((x) => x.name === b.market))
     .map((m) => `${m.market}${m.amount != null ? ` ${money(m.amount, c.currency)}` : m.share_percent != null ? ` ${m.share_percent}%` : ""}`).join(", ");
   const lastChecked = latest.data?.[0]?.last_checked_at;
-
-  app.innerHTML = `
-    <section class="band on-blue">
-      <div class="hero">
-        <div>
-          <a href="#/campaigns" class="back">All campaigns</a>
-          <h1>${esc(c.artist)}</h1>
-          ${c.song ? `<div class="voice">${esc(c.song)}</div>` : ""}
-          <div class="meta">
-            <span class="status">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span>PO ${esc(c.po_number)}</span>` : ""}
-            ${c.client ? `<span>Client: ${esc(c.client)}</span>` : ""}
-            ${c.campaign_runner ? `<span>Runner: ${esc(c.campaign_runner)}</span>` : ""}
-            ${c.comms_owner ? `<span>DRI: ${esc(c.comms_owner)}</span>` : ""}
-            ${c.start_date ? `<span>${esc(date(c.start_date))}${c.end_date ? ` to ${esc(date(c.end_date))}` : ""}</span>` : ""}
-            ${mk ? `<span>Markets: ${esc(mk)}</span>` : ""}
-          </div>
-          ${sheetLine(sync.data, c)}
-          <div class="actions">
-            <a class="btn primary" href="#/c/${esc(id)}/add">Add links</a>
-            <button type="button" id="refresh">Refresh numbers</button>
-            <a class="btn" href="#/report/${encodeURIComponent(c.artist.trim())}">Client view</a>
-            <button type="button" id="share-btn" aria-expanded="false" aria-controls="share-panel">Share with client</button>
-            <a class="btn" href="#/c/${esc(id)}/edit">Edit details</a>
-            <span class="updated" id="updated">${lastChecked ? `Numbers from ${esc(timeAgo(lastChecked))}` : ""}</span>
-          </div>
-        </div>
-        <div class="plays-big"><div class="n">${n(c.total_plays)}</div><div class="l">plays across ${n(c.live_posts)} live post${c.live_posts === 1 ? "" : "s"}</div></div>
-      </div>
-    </section>
-    <section id="share-panel" class="panel share-panel" hidden></section>
-    <div class="stats">
-      <div class="stat"><div class="n">${compact(c.total_likes)}</div><div class="l">Likes</div></div>
-      <div class="stat"><div class="n">${compact(c.total_comments)}</div><div class="l">Comments</div></div>
-      <div class="stat"><div class="n">${compact(c.total_shares)}</div><div class="l">Shares</div></div>
-      <div class="stat money"><div class="n">${money(c.budget, c.currency)}</div><div class="l">Budget</div></div>
-      <div class="stat money"><div class="n">${money(c.spend, c.currency)}</div><div class="l">Spend</div></div>
-      <div class="stat money"><div class="n">${c.budget != null ? money(c.margin, c.currency) : "–"}</div><div class="l">Margin</div></div>
-      <div class="stat money"><div class="n">${cpv(c.cost_per_view, c.currency)}</div><div class="l">Cost per view</div></div>
-    </div>
-    <div class="section-head"><h2>Plays per day</h2></div>
-    <div id="chart"></div>
-    <div class="section-head"><h2>Sounds</h2></div>
-    <div id="sounds"><p class="muted">Loading sounds…</p></div>
-    <div class="section-head">
-      <h2>Posts</h2>
-      <div class="posts-tools">
-        <div class="seg" role="group" aria-label="Layout"><button type="button" data-pview="folders">Folders</button><button type="button" data-pview="grid">All posts</button></div>
-        <button type="button" id="new-folder">New folder</button>
-        <button type="button" id="pick-toggle" aria-pressed="false">Select posts</button>
-        <label class="small" style="display:flex;gap:8px;align-items:center;margin:0">Sort by
-          <select id="sort" style="width:auto"><option value="plays">Most plays</option><option value="newest">Newest first</option><option value="added">Recently added</option></select>
-        </label>
-      </div>
-    </div>
-    <div id="folders" class="folders"></div>
-    <section id="folder-panel" class="panel share-panel" hidden></section>
-    <div id="pick-bar" class="pick-bar" hidden></div>
-    <div id="posts"><p class="muted">Loading posts…</p></div>`;
-
-  drawChart(document.getElementById("chart"), daily.data ?? []);
-  loadSounds(token, id);
-  loadPosts(token, id, c);
-  document.getElementById("share-btn").onclick = (e) => toggleSharePanel(e.currentTarget, c);
-
-  document.getElementById("refresh").onclick = async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true; btn.textContent = "Refreshing…";
-    document.getElementById("updated").textContent = "Getting the latest numbers from TikTok. This can take a minute.";
-    const { data, error } = await sb.functions.invoke("refresh-stats", { body: { campaign_id: id } });
-    if (token !== routeToken) return;
-    if (error || data?.error) {
-      btn.disabled = false; btn.textContent = "Refresh numbers";
-      document.getElementById("updated").textContent = `Couldn't refresh: ${data?.error ?? error.message}`;
-      return;
-    }
-    const ok = data.videos?.ok ?? 0, gone = data.videos?.unavailable ?? 0;
-    toast(ok || gone
-      ? `Updated ${ok} post${ok === 1 ? "" : "s"}${gone ? `, ${gone} no longer on TikTok` : ""}${data.skipped_recent ? `. ${data.skipped_recent} were already up to date` : ""}`
-      : "Everything was updated in the last hour already");
-    renderCampaign(++routeToken, id);
+  const call = async (body) => {
+    const { data, error: e } = await sb.functions.invoke("share", { body: { campaign_id: id, ...body } });
+    if (e || data?.error) throw new Error(data?.error ?? e.message);
+    return data;
   };
+
+  // The campaign page is the client's report, plus the team's tools and the money (which clients never see).
+  mountReport(app, {
+    mode: "team",
+    load: () => call({}),
+    loadCovers: async (ids) => (await call({ covers: ids })).covers ?? {},
+    postDaily: async (vid) => (await sb.from("post_daily_stats").select("stat_date,plays,likes,comments,shares").eq("tiktok_video_id", vid).order("stat_date")).data ?? [],
+    remove: async (p) => { const { error: e } = await sb.from("posts").delete().eq("campaign_id", id).eq("tiktok_video_id", p.video_id); if (e) toast(e.message); return !e; },
+    header: `<a href="#/campaigns" class="back">All campaigns</a>`,
+    avatarAction: `<button type="button" class="art-edit" id="art-edit">Change</button>`,
+    heroMeta: `<span class="status">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span>PO ${esc(c.po_number)}</span>` : ""}
+      ${c.client ? `<span>${esc(c.client)}</span>` : ""}${c.comms_owner ? `<span>DRI ${esc(c.comms_owner)}</span>` : ""}
+      ${c.start_date ? `<span>${esc(date(c.start_date))}${c.end_date ? ` to ${esc(date(c.end_date))}` : ""}</span>` : ""}
+      ${mk ? `<span>${esc(mk)}</span>` : ""}`,
+    heroActions: `
+      <a class="btn primary" href="#/c/${esc(id)}/add">Add links</a>
+      <button type="button" id="refresh">Refresh numbers</button>
+      <button type="button" id="share-btn" aria-expanded="false" aria-controls="share-panel">Share with client</button>
+      <a class="btn" href="#/c/${esc(id)}/edit">Edit</a>
+      <button type="button" id="del-camp" class="danger-lite">Delete</button>
+      <span class="updated" id="updated">${lastChecked ? `Numbers from ${esc(timeAgo(lastChecked))}` : ""}</span>
+      ${sheetLine(sync.data, c)}`,
+    afterHero: `
+      <section id="share-panel" class="panel share-panel" hidden></section>
+      <div class="stats money-strip" aria-label="Money (team only)">
+        <div class="stat money"><div class="n">${money(c.budget, c.currency)}</div><div class="l">Budget</div></div>
+        <div class="stat money"><div class="n">${money(c.spend, c.currency)}</div><div class="l">Spend</div></div>
+        <div class="stat money"><div class="n">${c.budget != null ? money(c.margin, c.currency) : "–"}</div><div class="l">Margin</div></div>
+        <div class="stat money"><div class="n">${cpv(c.cost_per_view, c.currency)}</div><div class="l">Cost per view</div></div>
+        <div class="stat"><div class="n small-n">Team only</div><div class="l">Clients never see this row</div></div>
+      </div>`,
+    postsHtml: `
+      <div class="section-head">
+        <h2>Posts</h2>
+        <div class="posts-tools">
+          <div class="seg" role="group" aria-label="Layout"><button type="button" data-pview="folders">Folders</button><button type="button" data-pview="grid">All posts</button></div>
+          <button type="button" id="new-folder">New folder</button>
+          <button type="button" id="pick-toggle" aria-pressed="false">Select posts</button>
+          <label class="small" style="display:flex;gap:8px;align-items:center;margin:0">Sort by
+            <select id="sort" style="width:auto"><option value="plays">Most plays</option><option value="newest">Newest first</option><option value="added">Recently added</option></select>
+          </label>
+        </div>
+      </div>
+      <div id="folders" class="folders"></div>
+      <section id="folder-panel" class="panel share-panel" hidden></section>
+      <div id="pick-bar" class="pick-bar" hidden></div>
+      <div id="posts"><p class="muted">Loading posts…</p></div>`,
+    onPosts: (root, data) => {
+      if (token !== routeToken) return;
+      loadPosts(token, id, { ...c, artist_image: data.artist_image });
+      document.getElementById("share-btn").onclick = (e) => toggleSharePanel(e.currentTarget, c);
+      document.getElementById("del-camp").onclick = () => deleteCampaignFlow(c);
+      document.getElementById("art-edit").onclick = async () => {
+        const pick = await artistPictureDialog(c.artist);
+        if (pick && (await saveArtist(c.artist, pick))) { toast("Artist picture updated"); renderCampaign(++routeToken, id); }
+      };
+      document.getElementById("refresh").onclick = async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true; btn.textContent = "Refreshing…";
+        document.getElementById("updated").textContent = "Getting the latest numbers from TikTok. This can take a minute.";
+        const { data: r, error: err } = await sb.functions.invoke("refresh-stats", { body: { campaign_id: id } });
+        if (token !== routeToken) return;
+        if (err || r?.error) {
+          btn.disabled = false; btn.textContent = "Refresh numbers";
+          document.getElementById("updated").textContent = `Couldn't refresh: ${r?.error ?? err.message}`;
+          return;
+        }
+        const ok = r.videos?.ok ?? 0, gone = r.videos?.unavailable ?? 0;
+        toast(ok || gone
+          ? `Updated ${ok} post${ok === 1 ? "" : "s"}${gone ? `, ${gone} no longer on TikTok` : ""}${r.skipped_recent ? `. ${r.skipped_recent} were already up to date` : ""}`
+          : "Everything was updated in the last hour already");
+        renderCampaign(++routeToken, id);
+      };
+    },
+    onError: (e) => { app.innerHTML = fail(e); },
+  });
 }
 
 // ---------- client link ----------
@@ -1304,10 +1467,11 @@ async function loadPosts(token, id, camp) {
       const sounds = new Set(live.map((p) => p.sound_title).filter(Boolean)).size;
       const shut = collapsed.has(g.key);
       const fl = flash && flash.key === g.key ? flash.text : "";
+      const art = camp.artist_image;
       return `<section class="fsec${shut ? " shut" : ""}" data-key="${esc(g.key)}">
-        <header class="fsec-head">
+        <header class="fsec-head${art ? " has-art" : ""}"${art ? ` style="--art:url('${esc(art)}')"` : ""}>
           <div class="fsec-title">
-            <h3>${esc(g.name)}${g.f?.hidden ? ' <span class="badge">Hidden from clients</span>' : ""}${g.f && folderLinks[g.f.id] ? ' <span class="badge on">Client link on</span>' : ""}</h3>
+            <h3>${art ? `<img class="fsec-art" src="${esc(art)}" alt="" referrerpolicy="no-referrer">` : ""}${esc(g.name)}${g.f?.hidden ? ' <span class="badge">Hidden from clients</span>' : ""}${g.f && folderLinks[g.f.id] ? ' <span class="badge on">Client link on</span>' : ""}</h3>
             <div class="fsec-meta"><b>${compact(plays)}</b> plays · ${n(live.length)} post${live.length === 1 ? "" : "s"}${sounds ? ` · ${n(sounds)} sound${sounds === 1 ? "" : "s"}` : ""}${live.length ? ` · ${pct(plays ? live.reduce((s, p) => s + (p.likes ?? 0) + (p.comments ?? 0) + (p.shares ?? 0), 0) / plays : null)} engagement` : ""}</div>
           </div>
           <div class="fsec-actions">

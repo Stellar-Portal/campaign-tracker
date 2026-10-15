@@ -4,7 +4,8 @@
 // - A client with a link (share.html#t=<token>). No login: the token is the key. The link's
 //   settings decide what is returned, and anything switched off is left out here, on the server,
 //   so it never reaches the browser at all.
-// - A signed-in Stellar team member ({ artist }). Gets the same report with everything on.
+// - A signed-in Stellar team member ({ artist } or { campaign_id }). Gets the same report with
+//   everything on; the campaign page in the platform is this report plus the team's own tools.
 //
 // A link can cover an artist (all their campaigns), one campaign, or one folder of a campaign
 // (e.g. one market). A folder link only ever returns that folder's posts and numbers.
@@ -98,6 +99,12 @@ async function scopeFor(req: Request, body: any) {
     }
     return { mode: "client" as const, artist: link.artist ?? all[0]?.artist ?? "", campaigns, settings, folder };
   }
+  if (body?.campaign_id) {
+    const email = await teamMember(req);
+    if (!email) return "forbidden" as const;
+    const { data } = await db.from("campaigns").select("id,artist,song,start_date,end_date,status,created_at").eq("id", String(body.campaign_id));
+    return { mode: "team" as const, artist: data?.[0]?.artist ?? "", campaigns: data ?? [], settings: readSettings({}), folder: null };
+  }
   if (body?.artist) {
     const email = await teamMember(req);
     if (!email) return "forbidden" as const;
@@ -153,8 +160,12 @@ Deno.serve(async (req) => {
   }
 
   const publicSettings = scope.mode === "client" ? (({ hidden_campaigns, ...rest }) => rest)(s) : null;
+  // The artist's picture, for the banner (artists table, matched by name).
+  const artistKey = scope.artist.trim().toLowerCase().replace(/\s+/g, " ");
+  const { data: art } = artistKey ? await db.from("artists").select("image_url").eq("name_key", artistKey).maybeSingle() : { data: null };
+  const artistImage = art?.image_url ?? null;
   const campaignsOut = scope.campaigns.map((c) => ({ id: c.id, song: c.song, start_date: c.start_date, end_date: c.end_date, status: c.status }));
-  if (!ids.length) return json({ mode: scope.mode, artist: scope.artist, campaigns: [], posts: [], series: [], sounds: [], covers: {}, folders: [], folder: scope.folder ? { name: scope.folder.name } : null, settings: publicSettings });
+  if (!ids.length) return json({ mode: scope.mode, artist: scope.artist, campaigns: [], posts: [], series: [], sounds: [], covers: {}, folders: [], folder: scope.folder ? { name: scope.folder.name } : null, artist_image: artistImage, settings: publicSettings });
 
   // Folders the report may name. Hidden folders (and all folders when switched off) are left
   // out; their posts still count, just without a folder name.
@@ -250,6 +261,7 @@ Deno.serve(async (req) => {
   return json({
     mode: scope.mode,
     artist: scope.artist,
+    artist_image: artistImage,
     campaigns: campaignsOut,
     folders: folders.map((f) => ({ id: f.id, campaign_id: f.campaign_id, name: f.name, market: f.market, hidden: scope.mode === "team" ? f.hidden : undefined })),
     folder: scope.folder ? { name: scope.folder.name } : null,
