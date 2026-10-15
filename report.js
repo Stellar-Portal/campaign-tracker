@@ -39,7 +39,8 @@ const METRICS = [
 ];
 const metricLabel = (k) => METRICS.find((m) => m.key === k).label;
 // Each number keeps one colour everywhere it is charted together.
-const METRIC_COLOR = { plays: BRAND, likes: "#eb6834", comments: "#1baf7a", shares: "#c98a00" };
+// (validated categorical slots 1–4; cobalt is kept for single-series charts)
+const METRIC_COLOR = { plays: "#2a78d6", likes: "#eb6834", comments: "#1baf7a", shares: "#eda100" };
 
 const ICON = {
   link: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
@@ -72,10 +73,18 @@ window.addEventListener("scroll", hideTip, { passive: true });
 // ---------- charts ----------
 // One or more stacked panels (one per metric) sharing the date axis and one crosshair.
 // Different metrics never share a y-axis: views would flatten comments to a line on the floor.
-// independent: every series gets its own vertical scale (for different numbers on one chart,
-// e.g. views and comments); the left axis belongs to the first series, the right to the second,
-// and the tooltip always shows real values.
+// indexed: several numbers of very different size on one chart (e.g. views and comments).
+// Each line is drawn as a % of its own latest value on ONE shared 0–100% axis (no second axis,
+// which would invent a relationship); the tooltip always shows the real values.
 export function chart(host, { dates, panels, empty, allowNegative = false, independent = false }) {
+  if (independent && panels.length === 1 && panels[0].series.length > 1) {
+    // Index each series to its last value, keep the real numbers for the tooltip and table.
+    panels = [{ ...panels[0], indexed: true, series: panels[0].series.map((se) => {
+      const last = [...se.values].reverse().find((v) => v != null && v !== 0) ?? 1;
+      return { ...se, raw: se.values, values: se.values.map((v) => (v == null ? null : (v / last) * 100)) };
+    }) }];
+  }
+  independent = false;
   panels = panels.map((p) => ({ ...p, series: p.series.filter((s) => s.values.some((v) => v != null)) })).filter((p) => p.series.length);
   if (dates.length < 2 || !panels.length) { host.innerHTML = `<p class="muted small chart-empty">${esc(empty)}</p>`; return; }
   const all = panels[0].series;
@@ -88,7 +97,7 @@ export function chart(host, { dates, panels, empty, allowNegative = false, indep
     <div class="chart-foot"><button type="button" class="link-btn small" data-table>Show as table</button></div>
     <div class="chart-table" hidden></div>`;
   const W = Math.max(300, Math.round(host.clientWidth || 600));
-  const H = stacked ? 150 : 280, L = 52, R = labelled ? Math.min(150, Math.round(W * 0.24)) : independent && all.length > 1 ? 52 : 16, T = stacked ? 26 : 14;
+  const H = stacked ? 150 : 280, L = 52, R = labelled ? Math.min(150, Math.round(W * 0.24)) : 16, T = stacked ? 26 : 14;
   const x = (i) => L + (i / (dates.length - 1)) * (W - L - R);
   const views = panels.map((p, k) => {
     const last = k === panels.length - 1;
@@ -120,7 +129,7 @@ export function chart(host, { dates, panels, empty, allowNegative = false, indep
     const el = host.querySelector(`[data-panel="${k}"]`);
     el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="${esc(p.label ?? "")} ${esc(p.series.map((s) => s.name).join(", "))}, ${esc(dayLong(dates[0]))} to ${esc(dayLong(dates.at(-1)))}">
       ${stacked ? `<text class="panel-label" x="${L}" y="14">${esc(p.label)}</text>` : ""}
-      <g class="grid">${ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" ${v === 0 ? 'class="zero"' : ""}/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end"${independent && multi ? ` fill="${p.series[0].color}"` : ""}>${compact(v)}</text>`).join("")}
+      <g class="grid">${ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" ${v === 0 ? 'class="zero"' : ""}/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${p.indexed ? `${Math.round(v)}%` : compact(v)}</text>`).join("")}
         ${right.map((t) => `<text x="${W - R + 8}" y="${t.at + 4}" text-anchor="start" fill="${p.series[1].color}">${compact(t.v)}</text>`).join("")}</g>
       ${last ? `<g class="xaxis">${xIdx.map((i) => `<text x="${x(i)}" y="${H - 8}" text-anchor="${i === 0 ? "start" : i === dates.length - 1 ? "end" : "middle"}">${esc(dayLabel(dates[i]))}</text>`).join("")}</g>` : ""}
       ${single ? `<path d="${path(single)}L${x(single.values.findLastIndex((v) => v != null)).toFixed(1)},${y(Math.max(lo, 0))}L${x(single.values.findIndex((v) => v != null)).toFixed(1)},${y(Math.max(lo, 0))}Z" fill="${single.color}" fill-opacity="0.06" stroke="none"/>` : ""}
@@ -149,8 +158,8 @@ export function chart(host, { dates, panels, empty, allowNegative = false, indep
       }
       const t = tip();
       t.innerHTML = `<div class="tip-date">${esc(dayLong(dates[i]))}</div>` + views.map((v) => {
-        const rows = v.p.series.map((se) => ({ se, val: se.values[i] })).filter((r) => r.val != null);
-        if (!independent) rows.sort((a, b) => b.val - a.val);
+        const rows = v.p.series.map((se) => ({ se, val: se.raw ? se.raw[i] : se.values[i] })).filter((r) => r.val != null);
+        if (!v.p.indexed) rows.sort((a, b) => b.val - a.val);
         return `${stacked && multi ? `<div class="tip-group">${esc(v.p.label)}</div>` : ""}${rows.map((r) => `<div class="tip-row"><i style="background:${r.se.color}"></i><span>${esc(multi ? r.se.name : v.p.label ?? r.se.name)}</span><b>${n(r.val)}</b></div>`).join("")}`;
       }).join("");
       t.hidden = false;
@@ -179,7 +188,7 @@ export function chart(host, { dates, panels, empty, allowNegative = false, indep
     tbl.hidden = !tbl.hidden;
     e.currentTarget.textContent = tbl.hidden ? "Show as table" : "Hide table";
     if (tbl.hidden) return;
-    const cols = views.flatMap((v) => v.p.series.map((se) => ({ name: stacked && multi ? `${v.p.label}: ${se.name}` : stacked ? v.p.label : se.name, values: se.values })));
+    const cols = views.flatMap((v) => v.p.series.map((se) => ({ name: stacked && multi ? `${v.p.label}: ${se.name}` : stacked ? v.p.label : se.name, values: se.raw ?? se.values })));
     tbl.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Date</th>${cols.map((c) => `<th class="num">${esc(c.name)}</th>`).join("")}</tr></thead>
       <tbody>${dates.map((d, i) => `<tr><td>${esc(dayLong(d))}</td>${cols.map((c) => `<td class="num">${n(c.values[i])}</td>`).join("")}</tr>`).reverse().join("")}</tbody></table></div>`;
   };
@@ -591,14 +600,14 @@ export function mountReport(root, api) {
     const posts = data.post_count ?? (data.posts ?? []).length;
     el.innerHTML = `
       <div class="stats sh-stats">
-        ${METRICS.map((m) => `<div class="stat ${state.metrics.includes(m.key) && S.overview_chart ? "on" : ""}" style="--mc:${METRIC_COLOR[m.key]}">${S.overview_chart ? `<button type="button" class="stat-btn" data-metric="${m.key}" aria-pressed="${state.metrics.includes(m.key)}">` : "<div>"}
+        ${METRICS.map((m) => `<div class="stat ${state.metrics.includes(m.key) && S.overview_chart ? "on" : ""}" style="--mc:${state.metrics.length === 1 ? BRAND : METRIC_COLOR[m.key]}">${S.overview_chart ? `<button type="button" class="stat-btn" data-metric="${m.key}" aria-pressed="${state.metrics.includes(m.key)}">` : "<div>"}
           <div class="n">${n(g[m.key].end)}</div><div class="l">${m.label}</div>${sinceText(g[m.key])}${S.overview_chart ? "</button>" : "</div>"}</div>`).join("")}
         <div class="stat"><div class="n">${pct(er)}</div><div class="l">Engagement rate</div><div class="d muted">likes, comments and shares per view</div></div>
         <div class="stat"><div class="n">${n(posts)}</div><div class="l">Live posts</div><div class="d muted">by ${n(creators)} creator${creators === 1 ? "" : "s"}</div></div>
         ${data.follower_total != null ? `<div class="stat"><div class="n">${compact(data.follower_total)}</div><div class="l">Creators' followers</div><div class="d muted">combined reach</div></div>` : ""}
       </div>
       ${S.overview_chart ? `<div class="chart-card">
-        <div class="chart-head"><h3>${state.metrics.map(metricLabel).join(", ")} over time</h3><span class="muted small">Click the numbers above to add or remove them</span></div>
+        <div class="chart-head"><h3>${state.metrics.map(metricLabel).join(", ")} over time</h3><span class="muted small">${state.metrics.length > 1 ? "Each line is shown as a % of its latest total so they share one scale; hover for the real numbers" : "Click the numbers above to compare them on one chart"}</span></div>
         <div id="chart"></div>
       </div>` : ""}`;
     el.querySelectorAll("[data-metric]").forEach((b) => b.onclick = () => { toggleMetric(b.dataset.metric); renderOverview(el); });
@@ -606,7 +615,7 @@ export function mountReport(root, api) {
     const ds = rangeDates();
     chart(el.querySelector("#chart"), {
       dates: ds,
-      panels: [{ label: state.metrics.map(metricLabel).join(", "), series: state.metrics.map((k) => ({ name: metricLabel(k), color: METRIC_COLOR[k], values: ds.map((d) => sumAt(d, k)) })) }],
+      panels: [{ label: state.metrics.map(metricLabel).join(", "), series: state.metrics.map((k) => ({ name: metricLabel(k), color: state.metrics.length === 1 ? BRAND : METRIC_COLOR[k], values: ds.map((d) => sumAt(d, k)) })) }],
       independent: true,
       empty: "The chart fills in once numbers have been collected on two or more days.",
     });

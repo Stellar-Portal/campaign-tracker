@@ -1,7 +1,8 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015g";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261015g";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015g";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015h";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261015h";
+import { renderAnalytics } from "./analytics.js?v=20261015h";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015h";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -117,7 +118,7 @@ const NAV = [
     { key: "invoices", href: "#/invoices", label: "Invoices", icon: "invoices", soon: true },
   ]],
   ["Insights", [
-    { key: "analytics", href: "#/analytics", label: "Analytics", icon: "analytics", soon: true },
+    { key: "analytics", href: "#/analytics", label: "Analytics", icon: "analytics" },
   ]],
 ];
 function renderNav(active) {
@@ -134,7 +135,6 @@ const SOON = {
   payouts: ["PayPal payouts", "Replaces the PayPal payout sheet.", ["Who to pay this week, per campaign and creator", "PayPal batch file ready to upload", "Paid status written back to the campaign and its creator costs"]],
   "creator-payments": ["Creator payments", "Every creator deal in one place.", ["Agreed price per creator and campaign, in any currency", "What's paid and what's still owed", "Payment details kept private to the team"]],
   invoices: ["Invoices", "Client invoicing per PO number.", ["Draft, sent and paid, matching the Campaign Overview invoicing columns", "Linked to the campaign's price and invoicing entity", "Reminders for anything overdue"]],
-  analytics: ["Analytics", "Performance across every campaign.", ["Cost per view by market, client and DRI", "Best-performing creators and sounds", "Month and year totals"]],
 };
 function renderSoon(key) {
   const [title, lead, points] = SOON[key];
@@ -154,7 +154,9 @@ const sheetNumber = (v) => { const t = String(v ?? "").replace(/[^\d.\-]/g, "");
 const OV_STATUS = { Upcoming: "draft", Active: "active", "On Hold": "on_hold", Completed: "finished" };
 const ALLOC_COLUMNS = ["US", "Brazil", "Mexico", "All LATAM", "Canada", "UK", "Germany", "France", "Africa", "Other", "Japan", "Korea", "China", "India", "SEA", "Global"];
 
-// "01/07" (and "01/07/26") → an ISO date, picking the year that puts it closest to today.
+// "01/07" (and "01/07/26") → an ISO date. A tab named "…FY26/27" is a financial year from April:
+// April–December are 2026, January–March 2027. Otherwise the year closest to today.
+let OV_SHEET = "";
 function sheetDate(v) {
   const m = String(v ?? "").trim().match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
   if (!m) return null;
@@ -162,6 +164,8 @@ function sheetDate(v) {
   if (d < 1 || d > 31 || mo < 1 || mo > 12) return null;
   const pad = (x) => String(x).padStart(2, "0");
   if (m[3]) return `${m[3].length === 2 ? "20" + m[3] : m[3]}-${pad(mo)}-${pad(d)}`;
+  const fy = OV_SHEET.match(/FY\s*(\d{2})\s*\/\s*(\d{2})/i);
+  if (fy) return `20${mo >= 4 ? fy[1] : fy[2]}-${pad(mo)}-${pad(d)}`;
   const now = new Date(), y = now.getFullYear();
   const best = [y - 1, y, y + 1].map((yy) => `${yy}-${pad(mo)}-${pad(d)}`).sort((a, b) => Math.abs(Date.parse(a) - now) - Math.abs(Date.parse(b) - now))[0];
   return best;
@@ -211,6 +215,7 @@ async function renderOverview(token) {
   ]);
   if (token !== routeToken) return;
   const s = snap.data ?? {};
+  OV_SHEET = s.sheet ?? "";
   const headers = s.headers ?? [];
   // Section of each column (row 1 of the sheet is merged across each section).
   let sec = "";
@@ -1712,9 +1717,10 @@ async function route() {
   renderWho(user);
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   window.scrollTo(0, 0);
-  const section = !parts[0] || parts[0] === "overview" ? "overview" : SOON[parts[0]] ? parts[0] : "campaigns";
+  const section = !parts[0] || parts[0] === "overview" ? "overview" : SOON[parts[0]] || parts[0] === "analytics" ? parts[0] : "campaigns";
   renderNav(section);
   if (section === "overview") return renderOverview(token);
+  if (section === "analytics") return renderAnalytics(app, sb, { isCurrent: () => token === routeToken, go });
   if (SOON[parts[0]]) return renderSoon(parts[0]);
   if (parts[0] === "campaigns") return renderList(token);
   if (parts[0] === "new") return renderForm(token);
