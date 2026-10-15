@@ -91,16 +91,23 @@ async function syncOne(row: any, cfg: Record<string, string>) {
     return;
   }
   const key = sheetKey(c);
-  const res = await fetch(cfg.sheet_sync_url, {
+  // Apps Script runs the POST, then redirects to a one-time URL holding the answer; fetch that with GET.
+  let res = await fetch(cfg.sheet_sync_url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ secret: cfg.sheet_sync_secret, action: "upsert", key, prev_key: row.sheet_key, fields: buildFields(c) }),
-    redirect: "follow",
+    redirect: "manual",
   });
+  const next = res.headers.get("location");
+  if (res.status >= 300 && res.status < 400 && next) { await res.body?.cancel(); res = await fetch(next); }
   const text = await res.text();
   let j: any = null;
   try { j = JSON.parse(text); } catch { /* not JSON */ }
-  if (!res.ok || !j?.ok) throw new Error(j?.error ?? `Sheet replied ${res.status}: ${text.slice(0, 120)}`);
+  if (!res.ok || !j?.ok) {
+    // Google answers errors with an HTML page; keep just its message.
+    const plain = text.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
+    throw new Error(j?.error ?? `Sheet replied ${res.status}: ${plain.slice(0, 240)}`);
+  }
   const note = j.missing?.length ? `Columns not found in the sheet: ${j.missing.join(", ")}` : null;
   await db.from("campaign_sheet_sync").update({
     sheet_row: j.row, sheet_key: key, synced_at: new Date().toISOString(), attempts: 0, last_error: note,
