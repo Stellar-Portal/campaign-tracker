@@ -1,6 +1,7 @@
 import { createClient } from "./vendor/supabase.esm.js";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
 import { mountReport, renderWall } from "./report.js";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -99,10 +100,10 @@ async function renderList(token) {
       <a class="btn primary" href="#/new">New campaign</a>
     </div>
     <div class="filters">
-      <input id="q" type="search" placeholder="Search artist, song, client or owner" aria-label="Search campaigns">
+      <input id="q" type="search" placeholder="Search artist, song, PO, client or owner" aria-label="Search campaigns">
       <select id="st" aria-label="Status">
-        <option value="active">Active</option><option value="draft">Draft</option>
-        <option value="finished">Finished</option><option value="">All</option>
+        <option value="active">Active</option><option value="draft">Upcoming</option><option value="on_hold">On hold</option>
+        <option value="finished">Completed</option><option value="">All</option>
       </select>
     </div>
     <div id="list"><p class="muted">Loading campaigns…</p></div>`;
@@ -121,14 +122,14 @@ async function renderList(token) {
   const draw = () => {
     const term = q.value.trim().toLowerCase();
     const shown = rows.filter((r) => (!st.value || r.status === st.value) &&
-      (!term || [r.artist, r.song, r.client, r.campaign_runner, r.comms_owner].some((v) => (v ?? "").toLowerCase().includes(term))));
+      (!term || [r.artist, r.song, r.po_number, r.client, r.campaign_runner, r.comms_owner].some((v) => (v ?? "").toLowerCase().includes(term))));
     document.getElementById("list").innerHTML = shown.length === 0
       ? `<div class="panel"><p>${rows.length === 0 ? "No campaigns yet. Create the first one to start adding links." : "No campaigns match these filters."}</p></div>`
       : `<div class="table-wrap"><table>
           <thead><tr><th>Artist and song</th><th>Client</th><th>Runner</th><th>Dates</th><th class="num">Budget</th><th class="num">Spend</th><th class="num">Live posts</th><th class="num">Plays</th><th class="num">Cost per view</th><th>Status</th></tr></thead>
           <tbody>${shown.map((r) => `
             <tr data-id="${esc(r.id)}" tabindex="0">
-              <td><div class="artist">${esc(r.artist)}</div><div class="song small">${esc(r.song)}</div></td>
+              <td><div class="artist">${esc(r.artist)}</div><div class="song small">${esc(r.song)}${r.po_number ? ` <span class="po">${esc(r.po_number)}</span>` : ""}</div></td>
               <td>${esc(r.client)}</td>
               <td>${esc(r.campaign_runner)}</td>
               <td class="small">${esc(date(r.start_date))}${r.end_date ? ` to ${esc(date(r.end_date))}` : ""}</td>
@@ -137,7 +138,7 @@ async function renderList(token) {
               <td class="num">${n(r.live_posts)}</td>
               <td class="num plays-cell">${compact(r.total_plays)}</td>
               <td class="num">${cpv(r.cost_per_view, r.currency)}</td>
-              <td><span class="status ${esc(r.status)}">${esc(r.status)}</span>${r.invoiced ? ` <span class="status finished">invoiced</span>` : ""}</td>
+              <td><span class="status ${esc(r.status)}">${esc(statusLabel(r.status))}</span>${r.invoiced ? ` <span class="status finished">invoiced</span>` : ""}</td>
             </tr>`).join("")}</tbody></table></div>`;
     document.querySelectorAll("tbody tr").forEach((tr) => {
       tr.onclick = () => go(`#/c/${tr.dataset.id}`);
@@ -152,44 +153,92 @@ function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch 
 function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch { /* ignore */ } }
 
 // ---------- campaign form ----------
-const CURRENCIES = ["EUR", "USD", "DKK", "GBP", "JPY", "SGD", "IDR", "THB", "PHP", "MYR", "VND", "BRL", "MXN", "COP", "ARS", "CLP"];
+const CURRENCIES = ["USD", "EUR", "GBP", "AUD", "JPY", "DKK", "SGD", "IDR", "THB", "PHP", "MYR", "VND", "BRL", "MXN", "COP", "ARS", "CLP"];
+let MARKETS = null;   // [{ name, region, position }], the sheet's allocation columns
+async function marketList() {
+  if (!MARKETS) {
+    const { data } = await sb.from("markets").select("name,region,position").order("position");
+    MARKETS = data ?? [];
+  }
+  return MARKETS;
+}
 
 async function renderForm(token, id) {
-  let c = { status: "active", currency: "EUR", invoiced: false };
-  let markets = [];
+  let c = { status: "active", currency: "USD", invoiced: false, folders_by_market: true };
+  let rows = [];
+  let sync = null;
+  const allMarkets = await marketList();
   if (id) {
-    const [{ data, error }, m] = await Promise.all([
+    const [{ data, error }, m, s] = await Promise.all([
       sb.from("campaigns").select("*").eq("id", id).single(),
-      sb.from("campaign_markets").select("market,share_percent").eq("campaign_id", id),
+      sb.from("campaign_markets").select("market,share_percent,amount").eq("campaign_id", id),
+      sb.from("campaign_sheet_sync").select("*").eq("campaign_id", id).maybeSingle(),
     ]);
     if (token !== routeToken) return;
     if (error) { app.innerHTML = fail(error); return; }
-    c = data; markets = m.data ?? [];
+    c = data; rows = m.data ?? []; sync = s.data;
   }
+  if (token !== routeToken) return;
   const v = (k) => esc(c[k] ?? "");
+  const opt = (list, cur, blank = "Choose…") => `<option value="">${blank}</option>${list.map((x) => {
+    const [val, label] = Array.isArray(x) ? x : [x, x];
+    return `<option value="${esc(val)}" ${cur === val ? "selected" : ""}>${esc(label)}</option>`;
+  }).join("")}`;
+  const list = (idName, items) => `<datalist id="${idName}">${items.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>`;
+  // Splits are entered one way for the whole campaign: % of the budget, or amounts.
+  let mode = rows.some((r) => r.amount != null) && !rows.some((r) => r.share_percent != null) ? "amount" : "percent";
+
   app.innerHTML = `
     <div class="page-head"><h1>${id ? "Edit campaign" : "New campaign"}</h1></div>
-    <form id="cf" class="panel">
+    <form id="cf" class="panel form-sections" novalidate>
+      <h2>Campaign</h2>
       <div class="form-grid">
         <div><label for="artist">Artist</label><input id="artist" required value="${v("artist")}"></div>
-        <div><label for="song">Song</label><input id="song" value="${v("song")}"></div>
-        <div><label for="client">Client</label><input id="client" placeholder="Label or brand" value="${v("client")}"></div>
-        <div><label for="comms_owner">Comms owner</label><input id="comms_owner" value="${v("comms_owner")}"></div>
-        <div><label for="campaign_runner">Campaign runner</label><input id="campaign_runner" value="${v("campaign_runner")}"></div>
-        <div><label for="status">Status</label><select id="status">
-          ${["draft", "active", "finished"].map((s) => `<option ${c.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></div>
+        <div><label for="song">Song or project</label><input id="song" value="${v("song")}"></div>
+        <div><label for="po_number">PO number</label><input id="po_number" placeholder="#ST2109" value="${v("po_number")}" autocomplete="off">
+          <p class="hint">Shared with the Campaign Overview sheet. Artist, song and PO together identify the campaign.</p></div>
+        <div><label for="status">Status</label><select id="status">${opt(STATUSES, c.status, "").replace('<option value=""></option>', "")}</select></div>
+        <div><label for="campaign_type">Campaign type</label><input id="campaign_type" list="ctypes" value="${v("campaign_type")}" placeholder="Phase 1">${list("ctypes", CAMPAIGN_TYPES)}</div>
+        <div><label for="release_type">New release or catalogue</label><select id="release_type">${opt(RELEASE_TYPES, c.release_type)}</select></div>
         <div><label for="start_date">Start date</label><input id="start_date" type="date" value="${v("start_date")}"></div>
-        <div><label for="end_date">End date</label><input id="end_date" type="date" value="${v("end_date")}"></div>
-        <div><label for="budget">Budget</label><input id="budget" type="number" min="0" step="0.01" value="${v("budget")}"></div>
-        <div><label for="currency">Currency</label><input id="currency" list="currencies" maxlength="3" value="${v("currency")}">
-          <datalist id="currencies">${CURRENCIES.map((x) => `<option value="${x}">`).join("")}</datalist></div>
-        <div class="field-wide"><label class="check"><input id="invoiced" type="checkbox" ${c.invoiced ? "checked" : ""}> Invoiced</label></div>
-        <div class="field-wide"><label for="notes">Notes</label><textarea id="notes" style="min-height:80px">${v("notes")}</textarea></div>
+        <div><label for="end_date">End date</label><input id="end_date" type="date" value="${v("end_date")}">
+          <p class="hint">Leave empty for an ongoing campaign.</p></div>
+        <div><label for="budget">Price (budget)</label><input id="budget" type="number" min="0" step="0.01" value="${v("budget")}"></div>
+        <div><label for="currency">Currency</label><input id="currency" list="currencies" maxlength="3" value="${v("currency")}">${list("currencies", CURRENCIES)}</div>
+        <div><label for="comms_owner">Stellar DRI</label><input id="comms_owner" value="${v("comms_owner")}"></div>
+        <div><label for="campaign_runner">Campaign runner</label><input id="campaign_runner" value="${v("campaign_runner")}"></div>
       </div>
-      <h2 style="margin-top:24px">Markets</h2>
-      <p class="muted small">Add each market and its share of the budget.</p>
+
+      <h2>Client</h2>
+      <div class="form-grid">
+        <div><label for="client">Client</label><input id="client" placeholder="Label or brand" value="${v("client")}"></div>
+        <div><label for="invoicing_entity">Invoicing entity</label><input id="invoicing_entity" list="entities" value="${v("invoicing_entity")}">${list("entities", INVOICING_ENTITIES)}</div>
+        <div><label for="client_country">Client location</label><input id="client_country" list="ccountries" value="${v("client_country")}" placeholder="US">${list("ccountries", CLIENT_COUNTRIES)}</div>
+        <div><label for="client_market">Client market</label><select id="client_market">${opt(CLIENT_MARKETS, c.client_market)}</select></div>
+        <div><label for="client_contact_name">Contact name</label><input id="client_contact_name" value="${v("client_contact_name")}"></div>
+        <div><label for="client_contact_email">Contact email</label><input id="client_contact_email" type="email" value="${v("client_contact_email")}"></div>
+        <div><label for="label_type">Major, indie or other</label><select id="label_type">${opt(LABEL_TYPES, c.label_type)}</select></div>
+        <div><label for="under_nda">Under NDA</label><select id="under_nda">${opt([["yes", "Yes"], ["no", "No"]], c.under_nda === true ? "yes" : c.under_nda === false ? "no" : "")}</select></div>
+      </div>
+
+      <h2>Markets</h2>
+      <div class="split-head">
+        <p class="muted small" style="margin:0">Add each market and its share of the budget.</p>
+        <div class="seg" role="group" aria-label="Enter splits as">
+          <button type="button" data-mode="percent">%</button><button type="button" data-mode="amount">Amount</button>
+        </div>
+      </div>
       <div id="markets"></div>
-      <button type="button" id="add-market">Add market</button>
+      <div class="split-foot"><button type="button" id="add-market">Add market</button><span class="small muted" id="split-total"></span></div>
+      <label class="check folder-opt"><input id="folders_by_market" type="checkbox" ${c.folders_by_market ? "checked" : ""}>
+        <span>Create a folder for each market<br><span class="muted small">Untick to organise posts your own way, for example by creative. You can add folders on the campaign page.</span></span></label>
+
+      <h2>Notes</h2>
+      <div class="form-grid">
+        <div class="field-wide"><label class="check"><input id="invoiced" type="checkbox" ${c.invoiced ? "checked" : ""}> Invoiced</label></div>
+        <div class="field-wide"><label for="notes" class="sr">Notes</label><textarea id="notes" style="min-height:80px" placeholder="Anything the team should know">${v("notes")}</textarea></div>
+      </div>
+      ${sheetLine(sync, c)}
       <div id="form-msg"></div>
       <div class="actions">
         <button class="primary" type="submit">${id ? "Save changes" : "Create campaign"}</button>
@@ -199,62 +248,162 @@ async function renderForm(token, id) {
     </form>`;
 
   const box = document.getElementById("markets");
+  const $ = (k) => document.getElementById(k);
+  const budget = () => ($("budget").value === "" ? null : Number($("budget").value));
+  const cur = () => $("currency").value.trim().toUpperCase() || "";
+  const fmt = (x) => Number(x).toLocaleString("en-GB", { maximumFractionDigits: 2 });
+
   const addRow = (m = {}) => {
     const row = document.createElement("div");
     row.className = "markets-row";
-    row.innerHTML = `<input aria-label="Market" placeholder="Market, e.g. Indonesia" value="${esc(m.market ?? "")}">
-      <input aria-label="Share in percent" type="number" min="0" max="100" step="0.01" placeholder="%" value="${esc(m.share_percent ?? "")}">
+    const val = mode === "percent" ? (m.share_percent ?? (m.amount != null && budget() ? +(m.amount / budget() * 100).toFixed(2) : ""))
+      : (m.amount ?? (m.share_percent != null && budget() != null ? +(budget() * m.share_percent / 100).toFixed(2) : ""));
+    row.innerHTML = `<select aria-label="Market">${opt(allMarkets.map((x) => x.name), m.market ?? "", "Choose a market")}</select>
+      <input aria-label="${mode === "percent" ? "Share in percent" : "Amount"}" type="number" min="0" ${mode === "percent" ? 'max="100"' : ""} step="0.01" placeholder="${mode === "percent" ? "%" : "Amount"}" value="${esc(val)}">
+      <span class="small muted other"></span>
       <button type="button" class="link-btn danger">Remove</button>`;
-    row.querySelector("button").onclick = () => row.remove();
+    row.querySelector("button").onclick = () => { row.remove(); totals(); };
+    row.querySelectorAll("input,select").forEach((i) => (i.oninput = totals));
     box.appendChild(row);
   };
-  markets.forEach(addRow);
-  document.getElementById("add-market").onclick = () => addRow();
+  const readRows = () => [...box.querySelectorAll(".markets-row")].map((r) => {
+    const market = r.querySelector("select").value;
+    const raw = r.querySelector("input").value;
+    const x = raw === "" ? null : Number(raw);
+    const b = budget();
+    return mode === "percent"
+      ? { market, share_percent: x, amount: x != null && b != null ? Math.round(b * x) / 100 : null, _row: r }
+      : { market, amount: x, share_percent: x != null && b ? Math.round((x / b) * 10000) / 100 : null, _row: r };
+  });
+  function totals() {
+    const rs = readRows();
+    for (const r of rs) {
+      r._row.querySelector(".other").textContent = mode === "percent"
+        ? (r.amount != null ? `${fmt(r.amount)} ${cur()}` : "")
+        : (r.share_percent != null ? `${fmt(r.share_percent)}%` : "");
+    }
+    const pct = rs.reduce((s, r) => s + (r.share_percent ?? 0), 0);
+    const amt = rs.reduce((s, r) => s + (r.amount ?? 0), 0);
+    $("split-total").textContent = !rs.length ? "" : mode === "percent"
+      ? `${fmt(pct)}% allocated${budget() != null ? ` · ${fmt(amt)} of ${fmt(budget())} ${cur()}` : ""}`
+      : `${fmt(amt)}${budget() != null ? ` of ${fmt(budget())}` : ""} ${cur()} allocated${budget() ? ` · ${fmt(pct)}%` : ""}`;
+  }
+  const setMode = (m) => {
+    const current = readRows().filter((r) => r.market || r.share_percent != null || r.amount != null);
+    mode = m;
+    document.querySelectorAll("[data-mode]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === mode));
+    box.innerHTML = "";
+    current.forEach(addRow);
+    totals();
+  };
+  document.querySelectorAll("[data-mode]").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
+  document.querySelectorAll("[data-mode]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === mode));
+  rows.sort((a, b) => allMarkets.findIndex((x) => x.name === a.market) - allMarkets.findIndex((x) => x.name === b.market)).forEach(addRow);
+  if (!rows.length) addRow();
+  totals();
+  $("add-market").onclick = () => addRow();
+  $("po_number").onblur = () => { const po = normalisePO($("po_number").value); if (po) $("po_number").value = po; };
+  $("budget").oninput = totals;
+  $("currency").oninput = totals;
 
-  document.getElementById("cf").addEventListener("submit", async (e) => {
+  $("cf").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const msg = document.getElementById("form-msg");
-    const val = (k) => document.getElementById(k).value.trim();
-    const cur = val("currency").toUpperCase();
-    if (cur && !/^[A-Z]{3}$/.test(cur)) { msg.innerHTML = fail("Currency must be a three-letter code, such as EUR or USD."); return; }
-    const rows = [...box.querySelectorAll(".markets-row")].map((r) => {
-      const [m, p] = r.querySelectorAll("input");
-      return { market: m.value.trim(), share_percent: p.value === "" ? null : Number(p.value) };
-    }).filter((r) => r.market);
-    const names = rows.map((r) => r.market.toLowerCase());
-    if (new Set(names).size !== names.length) { msg.innerHTML = fail("Each market can only be listed once."); return; }
-    const total = rows.reduce((s, r) => s + (r.share_percent ?? 0), 0);
-    if (total > 100.001) { msg.innerHTML = fail(`Market shares add up to ${total}%. They can't be more than 100%.`); return; }
+    const msg = $("form-msg");
+    const val = (k) => $(k).value.trim();
+    const currency = cur();
+    if (!val("artist")) { msg.innerHTML = fail("Add the artist's name."); $("artist").focus(); return; }
+    if (currency && !/^[A-Z]{3}$/.test(currency)) { msg.innerHTML = fail("Currency must be a three-letter code, such as EUR or USD."); return; }
+    if (val("start_date") && val("end_date") && val("end_date") < val("start_date")) { msg.innerHTML = fail("The end date is before the start date."); return; }
+    const ms = readRows().filter((r) => r.market || r.share_percent != null || r.amount != null);
+    if (ms.some((r) => !r.market)) { msg.innerHTML = fail("Choose a market for each row, or remove the empty row."); return; }
+    if (new Set(ms.map((r) => r.market)).size !== ms.length) { msg.innerHTML = fail("Each market can only be listed once."); return; }
+    const pct = ms.reduce((s, r) => s + (r.share_percent ?? 0), 0);
+    const amt = ms.reduce((s, r) => s + (r.amount ?? 0), 0);
+    if (mode === "percent" && pct > 100.001) { msg.innerHTML = fail(`Market shares add up to ${fmt(pct)}%. They can't be more than 100%.`); return; }
+    if (mode === "amount" && budget() != null && amt > budget() + 0.001) { msg.innerHTML = fail(`Market amounts add up to ${fmt(amt)}, more than the ${fmt(budget())} budget.`); return; }
 
     const record = {
-      artist: val("artist"), song: val("song") || null, client: val("client") || null,
+      artist: val("artist"), song: val("song") || null, po_number: normalisePO(val("po_number")),
+      status: val("status"), campaign_type: val("campaign_type") || null, release_type: val("release_type") || null,
+      start_date: val("start_date") || null, end_date: val("end_date") || null,
+      budget: budget(), currency: currency || null,
       comms_owner: val("comms_owner") || null, campaign_runner: val("campaign_runner") || null,
-      status: val("status"), start_date: val("start_date") || null, end_date: val("end_date") || null,
-      budget: val("budget") === "" ? null : Number(val("budget")), currency: cur || null,
-      invoiced: document.getElementById("invoiced").checked, notes: val("notes") || null,
+      client: val("client") || null, invoicing_entity: val("invoicing_entity") || null, client_country: val("client_country") || null,
+      client_market: val("client_market") || null, client_contact_name: val("client_contact_name") || null,
+      client_contact_email: val("client_contact_email") || null, label_type: val("label_type") || null,
+      under_nda: val("under_nda") === "yes" ? true : val("under_nda") === "no" ? false : null,
+      folders_by_market: $("folders_by_market").checked,
+      invoiced: $("invoiced").checked, notes: val("notes") || null,
     };
-    const btn = e.submitter; btn.disabled = true;
+    const btn = e.submitter ?? document.querySelector("#cf button[type=submit]"); btn.disabled = true;
+    const failWith = (err) => {
+      btn.disabled = false;
+      msg.innerHTML = fail(err?.code === "23505" ? "Another campaign already has this artist, song and PO number." : err);
+    };
     const res = id
       ? await sb.from("campaigns").update(record).eq("id", id).select("id").single()
       : await sb.from("campaigns").insert(record).select("id").single();
-    if (res.error) { btn.disabled = false; msg.innerHTML = fail(res.error); return; }
+    if (res.error) return failWith(res.error);
     const cid = res.data.id;
-    await sb.from("campaign_markets").delete().eq("campaign_id", cid);
-    if (rows.length) {
-      const { error } = await sb.from("campaign_markets").insert(rows.map((r) => ({ ...r, campaign_id: cid })));
-      if (error) { btn.disabled = false; msg.innerHTML = fail(error); return; }
+
+    // Market splits: remove the ones taken off, then save the rest.
+    const keep = ms.map((r) => r.market);
+    let del = sb.from("campaign_markets").delete().eq("campaign_id", cid);
+    if (keep.length) del = del.not("market", "in", `(${keep.map((k) => `"${k}"`).join(",")})`);
+    const d = await del;
+    if (d.error) return failWith(d.error);
+    if (ms.length) {
+      const up = await sb.from("campaign_markets").upsert(ms.map(({ market, share_percent, amount }) => ({ campaign_id: cid, market, share_percent, amount })), { onConflict: "campaign_id,market" });
+      if (up.error) return failWith(up.error);
+    }
+    if (record.folders_by_market) {
+      const err = await syncMarketFolders(cid, keep, allMarkets);
+      if (err) return failWith(err);
     }
     toast(id ? "Changes saved" : "Campaign created");
     go(`#/c/${cid}`);
   });
 
-  const del = document.getElementById("delete");
+  const del = $("delete");
   if (del) del.onclick = async () => {
-    if (!confirm(`Delete "${c.artist}${c.song ? ` – ${c.song}` : ""}" and all its posts? This can't be undone.`)) return;
+    if (!confirm(`Delete "${c.artist}${c.song ? ` – ${c.song}` : ""}" and all its posts? This can't be undone. Its row in the Campaign Overview sheet stays as it is.`)) return;
     const { error } = await sb.from("campaigns").delete().eq("id", id);
-    if (error) { document.getElementById("form-msg").innerHTML = fail(error); return; }
+    if (error) { $("form-msg").innerHTML = fail(error); return; }
     toast("Campaign deleted"); go("#/");
   };
+}
+
+// One folder per market: add folders for new markets; remove folders for markets taken off,
+// but only when they're empty and have no client link.
+async function syncMarketFolders(cid, keep, allMarkets) {
+  const { data: folders, error } = await sb.from("campaign_folders").select("id,name,market").eq("campaign_id", cid);
+  if (error) return error;
+  const have = new Set((folders ?? []).flatMap((f) => [f.market, f.name]).filter(Boolean));
+  const add = keep.filter((m) => !have.has(m)).map((m) => ({ campaign_id: cid, name: m, market: m, position: allMarkets.find((x) => x.name === m)?.position ?? 0 }));
+  if (add.length) {
+    const r = await sb.from("campaign_folders").insert(add);
+    if (r.error) return r.error;
+  }
+  const gone = (folders ?? []).filter((f) => f.market && !keep.includes(f.market));
+  for (const f of gone) {
+    const [{ count }, { data: links }] = await Promise.all([
+      sb.from("posts").select("id", { count: "exact", head: true }).eq("folder_id", f.id),
+      sb.from("share_links").select("id").eq("folder_id", f.id).eq("revoked", false).limit(1),
+    ]);
+    if (!count && !links?.length) await sb.from("campaign_folders").delete().eq("id", f.id);
+  }
+  return null;
+}
+
+// Where this campaign stands in the Campaign Overview sheet.
+function sheetLine(sync, c) {
+  if (!c?.id) return `<p class="sheet-line small muted">Saving adds this campaign to the Campaign Overview sheet once it has a PO number.</p>`;
+  if (!c.po_number) return `<p class="sheet-line small muted">Not in the Campaign Overview sheet yet: add a PO number to send it.</p>`;
+  if (!sync) return "";
+  if (sync.due_at && !sync.synced_at) return `<p class="sheet-line small muted">Sending to the Campaign Overview sheet…</p>`;
+  if (sync.last_error && !(sync.last_error.startsWith("Columns not found") && sync.synced_at)) return `<p class="sheet-line small warn-note">Campaign Overview sheet: ${esc(sync.last_error)}${sync.due_at ? " Trying again shortly." : ""}</p>`;
+  if (sync.synced_at) return `<p class="sheet-line small muted">In the Campaign Overview sheet, row ${esc(sync.sheet_row)}. Updated ${esc(timeAgo(sync.synced_at))}${sync.due_at ? "; new changes are on their way" : ""}.</p>`;
+  return "";
 }
 
 // ---------- campaign dashboard ----------
@@ -264,13 +413,16 @@ async function renderCampaign(token, id) {
   if (token !== routeToken) return;
   if (error || !c) { app.innerHTML = fail(error ?? "This campaign doesn't exist or was deleted."); return; }
 
-  const [markets, daily, latest] = await Promise.all([
-    sb.from("campaign_markets").select("market,share_percent").eq("campaign_id", id),
+  const [markets, daily, latest, sync] = await Promise.all([
+    sb.from("campaign_markets").select("market,share_percent,amount").eq("campaign_id", id),
     sb.from("campaign_daily_stats").select("*").eq("campaign_id", id).order("stat_date"),
     sb.from("posts").select("last_checked_at").eq("campaign_id", id).not("last_checked_at", "is", null).order("last_checked_at", { ascending: false }).limit(1),
+    sb.from("campaign_sheet_sync").select("*").eq("campaign_id", id).maybeSingle(),
   ]);
   if (token !== routeToken) return;
-  const mk = (markets.data ?? []).map((m) => `${m.market}${m.share_percent != null ? ` ${m.share_percent}%` : ""}`).join(", ");
+  const all = await marketList();
+  const mk = (markets.data ?? []).sort((a, b) => all.findIndex((x) => x.name === a.market) - all.findIndex((x) => x.name === b.market))
+    .map((m) => `${m.market}${m.amount != null ? ` ${money(m.amount, c.currency)}` : m.share_percent != null ? ` ${m.share_percent}%` : ""}`).join(", ");
   const lastChecked = latest.data?.[0]?.last_checked_at;
 
   app.innerHTML = `
@@ -281,13 +433,14 @@ async function renderCampaign(token, id) {
           <h1>${esc(c.artist)}</h1>
           ${c.song ? `<div class="voice">${esc(c.song)}</div>` : ""}
           <div class="meta">
-            <span class="status">${esc(c.status)}</span>
+            <span class="status">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span>PO ${esc(c.po_number)}</span>` : ""}
             ${c.client ? `<span>Client: ${esc(c.client)}</span>` : ""}
             ${c.campaign_runner ? `<span>Runner: ${esc(c.campaign_runner)}</span>` : ""}
-            ${c.comms_owner ? `<span>Comms: ${esc(c.comms_owner)}</span>` : ""}
+            ${c.comms_owner ? `<span>DRI: ${esc(c.comms_owner)}</span>` : ""}
             ${c.start_date ? `<span>${esc(date(c.start_date))}${c.end_date ? ` to ${esc(date(c.end_date))}` : ""}</span>` : ""}
             ${mk ? `<span>Markets: ${esc(mk)}</span>` : ""}
           </div>
+          ${sheetLine(sync.data, c)}
           <div class="actions">
             <a class="btn primary" href="#/c/${esc(id)}/add">Add links</a>
             <button type="button" id="refresh">Refresh numbers</button>
@@ -316,15 +469,22 @@ async function renderCampaign(token, id) {
     <div id="sounds"><p class="muted">Loading sounds…</p></div>
     <div class="section-head">
       <h2>Posts</h2>
-      <label class="small" style="display:flex;gap:8px;align-items:center;margin:0">Sort by
-        <select id="sort" style="width:auto"><option value="plays">Most plays</option><option value="newest">Newest first</option><option value="added">Recently added</option></select>
-      </label>
+      <div class="posts-tools">
+        <button type="button" id="new-folder">New folder</button>
+        <button type="button" id="pick-toggle" aria-pressed="false">Select posts</button>
+        <label class="small" style="display:flex;gap:8px;align-items:center;margin:0">Sort by
+          <select id="sort" style="width:auto"><option value="plays">Most plays</option><option value="newest">Newest first</option><option value="added">Recently added</option></select>
+        </label>
+      </div>
     </div>
+    <div id="folders" class="folders"></div>
+    <section id="folder-panel" class="panel share-panel" hidden></section>
+    <div id="pick-bar" class="pick-bar" hidden></div>
     <div id="posts"><p class="muted">Loading posts…</p></div>`;
 
   drawChart(document.getElementById("chart"), daily.data ?? []);
   loadSounds(token, id);
-  loadPosts(token, id);
+  loadPosts(token, id, c);
   document.getElementById("share-btn").onclick = (e) => toggleSharePanel(e.currentTarget, c);
 
   document.getElementById("refresh").onclick = async (e) => {
@@ -370,8 +530,8 @@ async function drawSharePanel(panel, c) {
   const shown = (camps ?? []).filter((x) => sameArtist(x.artist, c.artist) && x.status !== "draft");
   const hidden = new Set(link?.settings?.hidden_campaigns ?? []);
   const visible = shown.filter((x) => !hidden.has(x.id));
-  const what = `The client sees ${visible.length === 1 ? (visible[0].song ? `the ${esc(visible[0].song)} campaign` : "1 campaign") : `${visible.length} of ${esc(c.artist)}'s campaigns`}, with whatever you switch on below. Drafts are never shown. <b>Budgets, spend, margins and creator costs are never shown.</b>`;
-  const draftNote = c.status === "draft" ? `<p class="small warn-note">This campaign is a draft, so it won't appear on the client link until you set it to active.</p>` : "";
+  const what = `The client sees ${visible.length === 1 ? (visible[0].song ? `the ${esc(visible[0].song)} campaign` : "1 campaign") : `${visible.length} of ${esc(c.artist)}'s campaigns`}, with whatever you switch on below. Upcoming campaigns aren't shown until they go active. <b>Budgets, spend, margins and creator costs are never shown.</b>`;
+  const draftNote = c.status === "draft" ? `<p class="small warn-note">This campaign is upcoming, so it won't appear on the client link until you set it to active.</p>` : "";
   if (!link) {
     panel.innerHTML = `<h2>Share with client</h2><p class="small">${what}</p>${draftNote}
       <div class="actions"><button type="button" class="primary" id="share-create">Create client link</button></div>`;
@@ -409,7 +569,7 @@ async function drawSharePanel(panel, c) {
 }
 
 // What a client link shows. Missing keys mean "on"; the share function enforces these on the server.
-const LINK_DEFAULTS = { overview: true, overview_chart: true, sounds: true, songs: true, songs_chart: true, countries: true, countries_chart: true, posts: true, posts_country_filter: true, show_country: true, show_followers: true };
+const LINK_DEFAULTS = { overview: true, overview_chart: true, sounds: true, songs: true, songs_chart: true, countries: true, countries_chart: true, posts: true, posts_country_filter: true, show_country: true, show_followers: true, folders: true };
 function drawLinkSettings(el, link, camps) {
   const S = { ...LINK_DEFAULTS, ...(link.settings ?? {}), hidden_campaigns: [...(link.settings?.hidden_campaigns ?? [])] };
   const row = (key, label, { sub = false, parent = null, off = false, note = "" } = {}) => {
@@ -426,14 +586,15 @@ function drawLinkSettings(el, link, camps) {
     ${row("sounds", "Sound analytics")}
     ${row("songs", "Song analytics")}
     ${row("songs_chart", "Songs chart", { sub: true, parent: "songs" })}
+    ${link.folder_id ? "" : row("folders", "Market and folder breakdown", { note: "folders hidden from clients are never named" })}
     ${row("countries", "Country analytics")}
     ${row("countries_chart", "Countries chart", { sub: true, parent: "countries" })}
     <h3>Posts</h3>
     ${row("posts", "Post wall")}
     ${row("posts_country_filter", "Country filter", { sub: true, parent: "posts" })}
-    <h3>Campaigns</h3>
+    ${camps.length ? "<h3>Campaigns</h3>" : ""}
     ${camps.map((x) => x.status === "draft"
-      ? `<label class="row"><span>${esc(x.song ?? "Untitled")} <span class="muted small">draft, never shown</span></span><span class="switch"><input type="checkbox" disabled><span></span></span></label>`
+      ? `<label class="row"><span>${esc(x.song ?? "Untitled")} <span class="muted small">upcoming, not shown yet</span></span><span class="switch"><input type="checkbox" disabled><span></span></span></label>`
       : `<label class="row"><span>${esc(x.song ?? "Untitled")}</span><span class="switch"><input type="checkbox" data-camp="${esc(x.id)}" ${S.hidden_campaigns.includes(x.id) ? "" : "checked"}><span></span></span></label>`).join("")}
     <h3>Creators</h3>
     ${row("show_country", "Creator country", { note: "also used for country analytics" })}
@@ -512,19 +673,19 @@ async function loadSounds(token, id) {
     </div>`).join("")}</div>`;
 }
 
-async function loadPosts(token, id) {
+async function loadPosts(token, id, camp) {
   const el = document.getElementById("posts");
-  let posts;
+  let posts, folders;
   try {
-    posts = await fetchAll(() => sb.from("posts")
-      .select("id,tiktok_video_id,url,caption,published_at,country_code,cover_path,status,created_at,sound:sounds(title),creator:creators(username,display_name,follower_count,is_verified,avatar_url,country_code)")
-      .eq("campaign_id", id).order("created_at", { ascending: false }));
+    [posts, { data: folders }] = await Promise.all([
+      fetchAll(() => sb.from("posts")
+        .select("id,folder_id,tiktok_video_id,url,caption,published_at,country_code,cover_path,status,created_at,sound:sounds(title),creator:creators(username,display_name,follower_count,is_verified,avatar_url,country_code)")
+        .eq("campaign_id", id).order("created_at", { ascending: false })),
+      sb.from("campaign_folders").select("id,name,market,position,hidden,created_at").eq("campaign_id", id).order("position").order("created_at"),
+    ]);
   } catch (e) { el.innerHTML = fail(e); return; }
   if (token !== routeToken) return;
-  if (!posts.length) {
-    el.innerHTML = `<div class="panel"><p>No posts yet.</p><a class="btn primary" href="#/c/${esc(id)}/add">Add links</a></div>`;
-    return;
-  }
+  folders = folders ?? [];
   const ids = [...new Set(posts.map((p) => p.tiktok_video_id))];
   const stats = Object.fromEntries((await inChunks(ids, 150, async (chunk) => {
     const { data } = await sb.from("post_latest_stats").select("*").in("tiktok_video_id", chunk);
@@ -540,12 +701,16 @@ async function loadPosts(token, id) {
   const list = posts.map((p) => {
     const st = stats[p.tiktok_video_id] ?? {};
     return {
-      id: p.id, campaign_id: id, video_id: p.tiktok_video_id, url: p.url, caption: p.caption, published_at: p.published_at, created_at: p.created_at,
+      id: p.id, campaign_id: id, folder_id: p.folder_id, video_id: p.tiktok_video_id, url: p.url, caption: p.caption, published_at: p.published_at, created_at: p.created_at,
       country: p.creator?.country_code ?? p.country_code ?? null, sound_title: p.sound?.title ?? null, gone: p.status !== "active", has_cover: !!p.cover_path,
       creator: p.creator ? { username: p.creator.username, name: p.creator.display_name, followers: p.creator.follower_count, verified: p.creator.is_verified, avatar: p.creator.avatar_url } : null,
       plays: st.plays ?? null, likes: st.likes ?? null, comments: st.comments ?? null, shares: st.shares ?? null, stats_date: st.stat_date ?? null,
     };
   });
+  const folderName = (fid) => folders.find((f) => f.id === fid)?.name ?? "";
+  let current = sessionStorageGet(`folder-${id}`) ?? "";   // "" all, "none" not in a folder, or a folder id
+  if (current && current !== "none" && !folders.some((f) => f.id === current)) current = "";
+
   const ctx = {
     mode: "team",
     covers: Object.fromEntries(posts.filter((p) => byPath[p.cover_path]).map((p) => [p.tiktok_video_id, byPath[p.cover_path]])),
@@ -553,18 +718,182 @@ async function loadPosts(token, id) {
     remove: async (p) => { const { error } = await sb.from("posts").delete().eq("id", p.id); if (error) toast(error.message); return !error; },
     onRemoved: () => renderCampaign(++routeToken, id),
     showCountry: true,
+    folders,
+    folderOf: folders.length ? (p) => folderName(p.folder_id) : null,
+    move: async (items, folderId) => {
+      const { error } = await sb.from("posts").update({ folder_id: folderId }).in("id", items.map((p) => p.id));
+      if (error) { toast(error.message); return false; }
+      for (const p of items) { const x = list.find((y) => y.id === p.id); if (x) x.folder_id = folderId; }
+      toast(`${items.length === 1 ? "Post" : `${items.length} posts`} moved to ${folderId ? folderName(folderId) : "no folder"}`);
+      drawFolders(); draw();
+      return true;
+    },
+    selected: null,
+    onSelect: () => drawPickBar(),
   };
+
   const sortSel = document.getElementById("sort");
+  const folderEl = document.getElementById("folders");
+  const panel = document.getElementById("folder-panel");
+  const pickBar = document.getElementById("pick-bar");
+  const pickBtn = document.getElementById("pick-toggle");
   let shown = 48;
+  const inView = () => list.filter((p) => !current || (current === "none" ? !p.folder_id : p.folder_id === current));
+  const sum = (ps) => ps.reduce((s, p) => s + (p.gone ? 0 : Number(p.plays ?? 0)), 0);
+
+  function drawFolders() {
+    if (!folders.length) {
+      folderEl.innerHTML = camp.folders_by_market
+        ? `<p class="muted small">Folders appear here for each market you add to the campaign.</p>`
+        : `<p class="muted small">No folders yet. Use <b>New folder</b> to group posts, for example by creative.</p>`;
+      return;
+    }
+    const loose = list.filter((p) => !p.folder_id);
+    const card = (key, name, ps, f) => `
+      <div class="folder${current === key ? " on" : ""}${f?.hidden ? " is-hidden" : ""}">
+        <button type="button" class="folder-main" data-folder="${esc(key)}" aria-pressed="${current === key}">
+          <span class="folder-name">${esc(name)}</span>
+          <span class="folder-n">${compact(sum(ps))} plays</span>
+          <span class="muted small">${n(ps.length)} post${ps.length === 1 ? "" : "s"}${f?.hidden ? " · hidden from clients" : ""}</span>
+        </button>
+        ${f ? `<button type="button" class="folder-more" data-fmenu="${esc(f.id)}" aria-label="Options for ${esc(f.name)}" title="Folder options">⋯</button>` : ""}
+      </div>`;
+    folderEl.innerHTML = `<div class="folder-row">
+      ${card("", "All posts", list)}
+      ${folders.map((f) => card(f.id, f.name, list.filter((p) => p.folder_id === f.id), f)).join("")}
+      ${loose.length ? card("none", "Not in a folder", loose) : ""}
+    </div>`;
+    folderEl.querySelectorAll("[data-folder]").forEach((b) => (b.onclick = () => {
+      current = b.dataset.folder; sessionStorageSet(`folder-${id}`, current); shown = 48;
+      drawFolders(); draw();
+    }));
+    folderEl.querySelectorAll("[data-fmenu]").forEach((b) => (b.onclick = () => openFolderPanel(folders.find((f) => f.id === b.dataset.fmenu))));
+  }
+
+  async function openFolderPanel(f) {
+    if (!panel.hidden && panel.dataset.folder === f.id) { panel.hidden = true; return; }
+    panel.hidden = false; panel.dataset.folder = f.id;
+    panel.innerHTML = `<p class="muted small">Loading…</p>`;
+    const { data: link } = await sb.from("share_links").select("id,token,created_at,created_by,settings,folder_id").eq("folder_id", f.id).eq("revoked", false).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const count = list.filter((p) => p.folder_id === f.id).length;
+    const url = link ? shareUrl(link.token) : null;
+    panel.innerHTML = `
+      <div class="folder-panel-head">
+        <h2>${esc(f.name)}</h2>
+        <button type="button" class="link-btn" id="fp-close">Close</button>
+      </div>
+      <div class="form-grid">
+        <div><label for="fp-name">Folder name</label><div class="share-row"><input id="fp-name" value="${esc(f.name)}"><button type="button" id="fp-rename">Rename</button></div></div>
+        <div><label class="row"><span>Show this folder on client links<br><span class="muted small">When off, its posts still count in the campaign's totals but aren't named as a separate ${f.market ? "market" : "folder"}.</span></span>
+          <span class="switch"><input type="checkbox" id="fp-visible" ${f.hidden ? "" : "checked"}><span></span></span></label></div>
+      </div>
+      <h3>Client link for this folder</h3>
+      <p class="small">The client sees only this folder's posts and numbers${camp.status === "draft" ? ", once the campaign is active" : ""}. <b>Budgets, spend and margins are never shown.</b></p>
+      ${link ? `<div class="share-row"><input id="fp-url" readonly value="${esc(url)}" aria-label="Folder client link">
+          <button type="button" class="primary" id="fp-copy">Copy link</button>
+          <a class="btn" href="${esc(url)}" target="_blank" rel="noopener">Open</a></div>
+        <p class="muted small">Created ${esc(date(link.created_at))}${link.created_by ? ` by ${esc(link.created_by)}` : ""}.
+          <button type="button" class="link-btn danger small" id="fp-off">Turn off this link</button></p>
+        <div class="settings" id="fp-settings"></div>`
+      : `<div class="actions"><button type="button" class="primary" id="fp-create">Create client link</button></div>`}
+      <div class="actions" style="border-top:1px solid var(--hairline);padding-top:16px;margin-top:16px">
+        <button type="button" class="danger" id="fp-delete">Delete folder</button>
+        <span class="muted small">${count ? (count === 1 ? "Its post stays in the campaign, just not in a folder." : `Its ${n(count)} posts stay in the campaign, just not in a folder.`) : "The folder is empty."}</span>
+      </div>`;
+    panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const again = () => { panel.dataset.folder = ""; openFolderPanel(f); };
+    panel.querySelector("#fp-close").onclick = () => { panel.hidden = true; };
+    panel.querySelector("#fp-rename").onclick = async () => {
+      const name = panel.querySelector("#fp-name").value.trim();
+      if (!name || name === f.name) return;
+      const { error } = await sb.from("campaign_folders").update({ name }).eq("id", f.id);
+      if (error) { toast(error.code === "23505" ? "There's already a folder with that name." : error.message); return; }
+      f.name = name; toast("Folder renamed"); drawFolders(); draw(); again();
+    };
+    panel.querySelector("#fp-visible").onchange = async (e) => {
+      const hidden = !e.target.checked;
+      const { error } = await sb.from("campaign_folders").update({ hidden }).eq("id", f.id);
+      if (error) { toast(error.message); e.target.checked = !e.target.checked; return; }
+      f.hidden = hidden; toast(hidden ? "Hidden from client links" : "Shown on client links"); drawFolders();
+    };
+    panel.querySelector("#fp-create")?.addEventListener("click", async (e) => {
+      e.currentTarget.disabled = true;
+      const { error } = await sb.from("share_links").insert({ campaign_id: id, folder_id: f.id });
+      if (error) { toast(error.message); e.currentTarget.disabled = false; return; }
+      toast("Folder link created"); again();
+    });
+    if (link) {
+      drawLinkSettings(panel.querySelector("#fp-settings"), link, []);
+      const input = panel.querySelector("#fp-url");
+      input.onfocus = () => input.select();
+      panel.querySelector("#fp-copy").onclick = async () => {
+        try { await navigator.clipboard.writeText(url); toast("Link copied"); } catch { input.select(); toast("Press Cmd+C to copy"); }
+      };
+      panel.querySelector("#fp-off").onclick = async () => {
+        if (!confirm(`Turn off the client link for ${f.name}? Anyone with it will see "This link isn't active".`)) return;
+        const { error } = await sb.from("share_links").update({ revoked: true }).eq("id", link.id);
+        if (error) { toast(error.message); return; }
+        toast("Link turned off"); again();
+      };
+    }
+    panel.querySelector("#fp-delete").onclick = async () => {
+      if (!confirm(`Delete the folder "${f.name}"?${count ? ` Its ${count} post${count === 1 ? "" : "s"} stay in the campaign.` : ""}${link ? " Its client link stops working." : ""}`)) return;
+      const { error } = await sb.from("campaign_folders").delete().eq("id", f.id);
+      if (error) { toast(error.message); return; }
+      toast("Folder deleted");
+      renderCampaign(++routeToken, id);
+    };
+  }
+
+  function drawPickBar() {
+    if (!ctx.selected) { pickBar.hidden = true; return; }
+    const k = ctx.selected.size;
+    pickBar.hidden = false;
+    pickBar.innerHTML = `<span><b>${n(k)}</b> selected</span>
+      <button type="button" class="link-btn" id="pick-all">Select all ${n(inView().length)} shown</button>
+      ${k ? `<button type="button" class="link-btn" id="pick-none">Clear</button>` : ""}
+      <span class="spacer"></span>
+      ${folders.length ? `<label class="small" for="pick-to">Move to</label>
+      <select id="pick-to" ${k ? "" : "disabled"}><option value="" disabled selected>Choose a folder</option>${folders.map((f) => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join("")}<option value="none">Not in a folder</option></select>` : `<span class="muted small">Create a folder first, then move posts into it.</span>`}`;
+    pickBar.querySelector("#pick-all").onclick = () => { inView().forEach((p) => ctx.selected.add(p.id)); draw(); drawPickBar(); };
+    pickBar.querySelector("#pick-none")?.addEventListener("click", () => { ctx.selected.clear(); draw(); drawPickBar(); });
+    const to = pickBar.querySelector("#pick-to");
+    if (to) to.onchange = async () => {
+      const items = list.filter((p) => ctx.selected.has(p.id));
+      if (await ctx.move(items, to.value === "none" ? null : to.value)) { ctx.selected.clear(); drawPickBar(); }
+    };
+  }
+  pickBtn.onclick = () => {
+    ctx.selected = ctx.selected ? null : new Set();
+    pickBtn.setAttribute("aria-pressed", !!ctx.selected);
+    pickBtn.textContent = ctx.selected ? "Done selecting" : "Select posts";
+    drawPickBar(); draw();
+  };
+  document.getElementById("new-folder").onclick = async () => {
+    const name = prompt("Folder name, for example a creative or a market:")?.trim();
+    if (!name) return;
+    const { data: f, error } = await sb.from("campaign_folders").insert({ campaign_id: id, name, position: folders.length ? Math.max(...folders.map((x) => x.position)) + 1 : 0 }).select("id,name,market,position,hidden,created_at").single();
+    if (error) { toast(error.code === "23505" ? "There's already a folder with that name." : error.message); return; }
+    folders.push(f);
+    ctx.folderOf = (p) => folderName(p.folder_id);
+    toast(`Folder "${name}" created`);
+    drawFolders(); drawPickBar(); draw();
+  };
+
   const draw = () => {
+    if (!list.length) {
+      el.innerHTML = `<div class="panel"><p>No posts yet.</p><a class="btn primary" href="#/c/${esc(id)}/add">Add links</a></div>`;
+      return;
+    }
     const by = sortSel.value;
-    const sorted = [...list].sort((a, b) =>
+    const sorted = inView().sort((a, b) =>
       by === "plays" ? (b.plays ?? -1) - (a.plays ?? -1)
       : by === "newest" ? String(b.published_at ?? "").localeCompare(String(a.published_at ?? ""))
       : String(b.created_at).localeCompare(String(a.created_at)));
     renderWall(el, sorted, ctx, { shown, onMore: () => { shown += 48; draw(); } });
   };
   sortSel.onchange = () => { shown = 48; draw(); };
+  drawFolders();
   draw();
 }
 
@@ -587,7 +916,7 @@ function renderReport(token, artist) {
     },
     header: `<div class="client-view-note">
         <a href="#/" class="back">All campaigns</a>
-        <span>Client view: what a client link shows with every setting on. Drafts appear here but never on client links.</span>
+        <span>Client view: what a client link shows with every setting on. Upcoming campaigns appear here but not on client links.</span>
         <button type="button" id="rep-share" aria-expanded="false" aria-controls="share-panel">Share with client</button>
       </div>`,
     onHeader: (root) => {
@@ -609,7 +938,10 @@ function parseLinks(text) {
 }
 
 async function renderAdd(token, id, jobId) {
-  const { data: c } = await sb.from("campaigns").select("id,artist,song").eq("id", id).maybeSingle();
+  const [{ data: c }, { data: folders }] = await Promise.all([
+    sb.from("campaigns").select("id,artist,song").eq("id", id).maybeSingle(),
+    sb.from("campaign_folders").select("id,name").eq("campaign_id", id).order("position").order("created_at"),
+  ]);
   if (token !== routeToken) return;
   if (!c) { app.innerHTML = fail("This campaign doesn't exist or was deleted."); return; }
   const title = `${esc(c.artist)}${c.song ? ` – ${esc(c.song)}` : ""}`;
@@ -622,10 +954,16 @@ async function renderAdd(token, id, jobId) {
       <label for="links">TikTok links</label>
       <textarea id="links" placeholder="Paste one or more TikTok video links. Short vm.tiktok.com links work too."></textarea>
       <p class="muted small" id="count">No links yet.</p>
+      ${folders?.length ? `<label for="folder">Folder</label>
+      <select id="folder" style="max-width:360px"><option value="">No folder</option>${folders.map((f) => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join("")}</select>
+      <p class="muted small">Every link in this batch goes into this folder. You can move posts later.</p>` : ""}
       <div id="add-msg"></div>
       <div class="actions"><button class="primary" type="submit" id="go" disabled>Add links</button></div>
     </form>`;
   const ta = document.getElementById("links"), btn = document.getElementById("go"), count = document.getElementById("count");
+  const fsel = document.getElementById("folder");
+  const lastFolder = sessionStorageGet(`folder-${id}`);
+  if (fsel && lastFolder && folders.some((f) => f.id === lastFolder)) fsel.value = lastFolder;
   const MAX = 500;
   ta.oninput = () => {
     const k = parseLinks(ta.value).length;
@@ -637,7 +975,8 @@ async function renderAdd(token, id, jobId) {
     e.preventDefault();
     const urls = parseLinks(ta.value);
     btn.disabled = true;
-    const { data: job, error } = await sb.from("link_jobs").insert({ campaign_id: id }).select("id").single();
+    const folderId = document.getElementById("folder")?.value || null;
+    const { data: job, error } = await sb.from("link_jobs").insert({ campaign_id: id, folder_id: folderId }).select("id").single();
     if (error) { btn.disabled = false; document.getElementById("add-msg").innerHTML = fail(error); return; }
     const res = await sb.from("link_job_items").insert(urls.map((url) => ({ job_id: job.id, url })));
     if (res.error) { btn.disabled = false; document.getElementById("add-msg").innerHTML = fail(res.error); return; }

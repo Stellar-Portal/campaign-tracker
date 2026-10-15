@@ -350,6 +350,54 @@ body.signin .foot { position: fixed; left: 0; bottom: 0; }
 #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: rgba(29,29,31,0.94); color: #fff; padding: 10px 18px; border-radius: var(--pill); font-size: 14px; opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 70; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 #toast.show { opacity: 1; }
 
+/* ---------- campaign form: sections, market splits, sheet status ---------- */
+.form-sections > h2 { margin: 32px 0 14px; padding-top: 24px; border-top: 1px solid var(--divider); }
+.form-sections > h2:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.hint { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+.split-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.markets-row { grid-template-columns: minmax(0, 220px) 130px minmax(0, 1fr) auto; }
+.markets-row .other { font-variant-numeric: tabular-nums; }
+.split-foot { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+.folder-opt { align-items: flex-start; font-weight: 400; margin-top: 20px; padding: 14px 16px; background: var(--parchment); border-radius: var(--r-md); }
+.folder-opt input { margin-top: 3px; }
+.folder-opt > span > span { font-weight: 400; }
+.sheet-line { margin: 18px 0 0; }
+.hero .sheet-line { margin: 12px 0 0; font-size: 12px; }
+.po { display: inline-block; margin-left: 6px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.status.on_hold { background: #fff4e0; color: var(--warn); }
+
+/* ---------- folders on the campaign page ---------- */
+.posts-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.folders { margin-bottom: 16px; }
+.folder-row { display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: thin; }
+.folder { position: relative; flex: 0 0 auto; min-width: 150px; max-width: 220px; border-radius: var(--r-md); background: var(--canvas); box-shadow: 0 0 0 1px var(--hairline); transition: box-shadow 0.15s; }
+.folder:hover { box-shadow: 0 0 0 1px #c7c7cc; }
+.folder.on { background: var(--canvas); box-shadow: 0 0 0 1.5px var(--accent); }
+.folder.is-hidden .folder-name { color: var(--muted); }
+.folder-main { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 12px 34px 12px 14px; border-radius: var(--r-md); }
+.folder-main:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 2px; }
+.folder-name { font-weight: 600; font-size: 14px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-n { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.folder-more { position: absolute; top: 6px; right: 6px; border: none; background: transparent; width: 28px; height: 28px; padding: 0; border-radius: 50%; color: var(--muted); font-size: 18px; line-height: 1; }
+.folder-more:hover { background: rgba(0,0,0,0.06); color: var(--ink); }
+.folder-panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.folder-panel-head h2 { margin: 0 0 12px; }
+#folder-panel .row { display: flex; justify-content: space-between; align-items: center; gap: 16px; font-weight: 400; font-size: 14px; margin: 26px 0 0; }
+#folder-panel h3 { margin-top: 24px; }
+.pick-bar { position: sticky; top: 8px; z-index: 5; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 16px; margin-bottom: 14px; border-radius: var(--pill); background: rgba(29,29,31,0.94); color: #fff; font-size: 14px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.pick-bar .link-btn { color: var(--accent-on-dark); }
+.pick-bar .spacer { flex: 1; }
+.pick-bar select { width: auto; padding: 6px 12px; border-radius: var(--pill); font-size: 13px; }
+.pick-bar label { color: rgba(255,255,255,0.7); }
+.pick { position: absolute; top: 8px; left: 8px; z-index: 3; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: rgba(245,245,247,0.86); cursor: pointer; }
+.pick input { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+td.pick-col .pick { position: static; background: transparent; }
+.post.picked .cover { box-shadow: 0 0 0 3px var(--accent); }
+tr.picked td { background: var(--accent-tint); }
+.post .folder-line { color: var(--accent); font-weight: 600; }
+.pm-folder select { width: auto; max-width: 180px; padding: 7px 12px; border-radius: var(--pill); font-size: 13px; }
+.voice .folder-name { display: inline-block; margin-left: 12px; padding: 2px 12px; border-radius: var(--pill); background: var(--accent-tint); color: var(--accent); font-style: normal; font-size: 0.6em; font-weight: 600; vertical-align: middle; white-space: nowrap; }
+
 /* ---------- small screens ---------- */
 @media (max-width: 760px) {
   :root { --gutter: 16px; }
@@ -368,6 +416,9 @@ body.signin .foot { position: fixed; left: 0; bottom: 0; }
   .sh-controls { flex-direction: column; align-items: stretch; }
   .tabs { justify-content: space-between; }
   .tabs button { padding: 7px 10px; flex: 1; }
+  .markets-row { grid-template-columns: minmax(0, 1fr) 100px auto; }
+  .markets-row .other { grid-column: 1 / -1; margin-top: -4px; }
+  .pick-bar { border-radius: var(--r-md); }
   .view-toggle { margin-left: 0; }
   .sh-filters input, .sh-filters select { max-width: none; flex: 1 1 140px; }
   .pm-backdrop { padding: 0; place-items: stretch; }

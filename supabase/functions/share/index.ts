@@ -6,6 +6,9 @@
 //   so it never reaches the browser at all.
 // - A signed-in Stellar team member ({ artist }). Gets the same report with everything on.
 //
+// A link can cover an artist (all their campaigns), one campaign, or one folder of a campaign
+// (e.g. one market). A folder link only ever returns that folder's posts and numbers.
+//
 // It never returns budgets, spend, margins, creator prices or creators' payment details.
 // There is deliberately no setting that could turn those on.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -39,6 +42,7 @@ const DEFAULTS = {
   countries: true, countries_chart: true,
   posts: true, posts_country_filter: true,
   show_country: true, show_followers: true,
+  folders: true,
 };
 type Settings = typeof DEFAULTS & { hidden_campaigns: string[] };
 function readSettings(raw: any): Settings {
@@ -77,7 +81,7 @@ async function scopeFor(req: Request, body: any) {
   const token = String(body?.token ?? "");
   if (token) {
     if (!/^[0-9a-f]{40,128}$/i.test(token)) return null;
-    const { data: link } = await db.from("share_links").select("artist,campaign_id,expires_at,revoked,settings").eq("token", token).maybeSingle();
+    const { data: link } = await db.from("share_links").select("artist,campaign_id,folder_id,expires_at,revoked,settings").eq("token", token).maybeSingle();
     if (!link || link.revoked || (link.expires_at && new Date(link.expires_at) < new Date())) return null;
     const settings = readSettings(link.settings);
     let q = db.from("campaigns").select("id,artist,song,start_date,end_date,status,created_at").neq("status", "draft");
@@ -85,7 +89,14 @@ async function scopeFor(req: Request, body: any) {
     const { data } = await q.order("created_at");
     const all = data ?? [];
     const campaigns = all.filter((c) => !settings.hidden_campaigns.includes(c.id));
-    return { mode: "client" as const, artist: link.artist ?? all[0]?.artist ?? "", campaigns, settings };
+    let folder: { id: string; name: string } | null = null;
+    if (link.folder_id) {
+      const { data: f } = await db.from("campaign_folders").select("id,name,campaign_id").eq("id", link.folder_id).maybeSingle();
+      if (!f || f.campaign_id !== link.campaign_id) return null;
+      folder = { id: f.id, name: f.name };
+      settings.folders = false;   // a folder link is already one folder
+    }
+    return { mode: "client" as const, artist: link.artist ?? all[0]?.artist ?? "", campaigns, settings, folder };
   }
   if (body?.artist) {
     const email = await teamMember(req);
@@ -93,7 +104,7 @@ async function scopeFor(req: Request, body: any) {
     // The team sees drafts too, so they can check a report before switching a campaign on.
     const { data } = await db.from("campaigns").select("id,artist,song,start_date,end_date,status,created_at")
       .ilike("artist", likeEscape(String(body.artist))).order("created_at");
-    return { mode: "team" as const, artist: String(body.artist).trim(), campaigns: data ?? [], settings: readSettings({}) };
+    return { mode: "team" as const, artist: String(body.artist).trim(), campaigns: data ?? [], settings: readSettings({}), folder: null };
   }
   return null;
 }
@@ -122,7 +133,9 @@ Deno.serve(async (req) => {
   if (body.post) {
     if (scope.mode === "client" && !s.posts) return json({ daily: [] });
     const vid = String(body.post);
-    const { data: owned } = await db.from("posts").select("id").in("campaign_id", ids).eq("tiktok_video_id", vid).limit(1);
+    let oq = db.from("posts").select("id").in("campaign_id", ids).eq("tiktok_video_id", vid);
+    if (scope.folder) oq = oq.eq("folder_id", scope.folder.id);
+    const { data: owned } = await oq.limit(1);
     if (!owned?.length) return json({ daily: [] });
     const { data } = await db.from("post_daily_stats").select("stat_date,plays,likes,comments,shares").eq("tiktok_video_id", vid).order("stat_date");
     return json({ daily: data ?? [] });
@@ -132,20 +145,35 @@ Deno.serve(async (req) => {
   if (Array.isArray(body.covers)) {
     if (scope.mode === "client" && !s.posts) return json({ covers: {} });
     const wanted = body.covers.slice(0, 200).map(String);
-    const { data } = await db.from("posts").select("tiktok_video_id,cover_path").in("campaign_id", ids).in("tiktok_video_id", wanted);
+    let cq = db.from("posts").select("tiktok_video_id,cover_path").in("campaign_id", ids).in("tiktok_video_id", wanted);
+    if (scope.folder) cq = cq.eq("folder_id", scope.folder.id);
+    const { data } = await cq;
     const byPath = await signCovers((data ?? []).map((p) => p.cover_path).filter(Boolean));
     return json({ covers: Object.fromEntries((data ?? []).filter((p) => byPath[p.cover_path]).map((p) => [p.tiktok_video_id, byPath[p.cover_path]])) });
   }
 
   const publicSettings = scope.mode === "client" ? (({ hidden_campaigns, ...rest }) => rest)(s) : null;
   const campaignsOut = scope.campaigns.map((c) => ({ id: c.id, song: c.song, start_date: c.start_date, end_date: c.end_date, status: c.status }));
-  if (!ids.length) return json({ mode: scope.mode, artist: scope.artist, campaigns: [], posts: [], series: [], sounds: [], covers: {}, settings: publicSettings });
+  if (!ids.length) return json({ mode: scope.mode, artist: scope.artist, campaigns: [], posts: [], series: [], sounds: [], covers: {}, folders: [], folder: scope.folder ? { name: scope.folder.name } : null, settings: publicSettings });
+
+  // Folders the report may name. Hidden folders (and all folders when switched off) are left
+  // out; their posts still count, just without a folder name.
+  let folders: any[] = [];
+  if (!scope.folder && (scope.mode === "team" || s.folders)) {
+    let fq = db.from("campaign_folders").select("id,campaign_id,name,market,position,hidden").in("campaign_id", ids).order("position").order("created_at");
+    if (scope.mode === "client") fq = fq.eq("hidden", false);
+    folders = (await fq).data ?? [];
+  }
+  const folderIds = new Set(folders.map((f) => f.id));
+  const visibleFolder = (id: string | null) => (id && folderIds.has(id) ? id : null);
 
   const posts: any[] = [];
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await db.from("posts")
-      .select("campaign_id,tiktok_video_id,url,caption,published_at,country_code,cover_path,sound_id,creator:creators(username,display_name,follower_count,avatar_url,country_code,is_verified)")
-      .in("campaign_id", ids).eq("status", "active").order("created_at").range(from, from + 999);
+    let pq = db.from("posts")
+      .select("campaign_id,folder_id,tiktok_video_id,url,caption,published_at,country_code,cover_path,sound_id,creator:creators(username,display_name,follower_count,avatar_url,country_code,is_verified)")
+      .in("campaign_id", ids).eq("status", "active");
+    if (scope.folder) pq = pq.eq("folder_id", scope.folder.id);
+    const { data, error } = await pq.order("created_at").range(from, from + 999);
     if (error) return json({ error: error.message }, 500);
     posts.push(...(data ?? []));
     if (!data || data.length < 1000) break;
@@ -157,14 +185,16 @@ Deno.serve(async (req) => {
     return data ?? [];
   })).map((r) => [r.tiktok_video_id, r]));
 
-  const { data: seriesRaw } = await db.rpc("share_series", { campaign_ids: ids });
-  // Without countries, collapse the daily rows so no country code is sent at all.
+  const { data: seriesRaw } = await db.rpc("share_series_by_folder", { campaign_ids: ids, only_folder: scope.folder?.id ?? null });
+  // Collapse the daily rows so no hidden folder id, and no country code when countries are off, is sent.
   let series = seriesRaw ?? [];
-  if (!s.show_country) {
+  {
     const merged = new Map<string, any>();
     for (const r of series) {
-      const k = `${r.stat_date}|${r.campaign_id}`;
-      const m = merged.get(k) ?? { stat_date: r.stat_date, campaign_id: r.campaign_id, country_code: null, plays: 0, likes: 0, comments: 0, shares: 0 };
+      const folder_id = visibleFolder(r.folder_id);
+      const country_code = s.show_country ? r.country_code : null;
+      const k = `${r.stat_date}|${r.campaign_id}|${folder_id}|${country_code}`;
+      const m = merged.get(k) ?? { stat_date: r.stat_date, campaign_id: r.campaign_id, folder_id, country_code, plays: 0, likes: 0, comments: 0, shares: 0 };
       for (const f of ["plays", "likes", "comments", "shares"]) m[f] += Number(r[f] ?? 0);
       merged.set(k, m);
     }
@@ -174,8 +204,9 @@ Deno.serve(async (req) => {
   let sounds: any[] = [];
   if (s.sounds || scope.mode === "team") {
     const { data: links } = await db.from("campaign_sounds").select("campaign_id,sound:sounds(id,title,author,matched_song_title,sound_url)").in("campaign_id", ids);
+    const usedSounds = new Set(posts.map((p) => p.sound_id));
     const soundMap = new Map<string, any>();
-    for (const l of links ?? []) if (l.sound) soundMap.set(l.sound.id, { ...l.sound, campaign_ids: [...(soundMap.get(l.sound.id)?.campaign_ids ?? []), l.campaign_id] });
+    for (const l of links ?? []) if (l.sound && (!scope.folder || usedSounds.has(l.sound.id))) soundMap.set(l.sound.id, { ...l.sound, campaign_ids: [...(soundMap.get(l.sound.id)?.campaign_ids ?? []), l.campaign_id] });
     const soundIds = [...soundMap.keys()];
     const soundDaily = soundIds.length
       ? (await db.from("sound_daily_stats").select("sound_id,stat_date,video_count").in("sound_id", soundIds).order("stat_date")).data ?? []
@@ -187,7 +218,7 @@ Deno.serve(async (req) => {
   let outPosts = posts.map((p) => {
     const st = latest[p.tiktok_video_id] ?? {};
     return {
-      campaign_id: p.campaign_id, video_id: p.tiktok_video_id, url: p.url, caption: p.caption, published_at: p.published_at,
+      campaign_id: p.campaign_id, folder_id: visibleFolder(p.folder_id), video_id: p.tiktok_video_id, url: p.url, caption: p.caption, published_at: p.published_at,
       country: s.show_country ? (p.creator?.country_code ?? p.country_code ?? null) : null,
       sound_id: p.sound_id, sound_title: soundTitle[p.sound_id] ?? null,
       creator: p.creator ? {
@@ -220,6 +251,8 @@ Deno.serve(async (req) => {
     mode: scope.mode,
     artist: scope.artist,
     campaigns: campaignsOut,
+    folders: folders.map((f) => ({ id: f.id, campaign_id: f.campaign_id, name: f.name, market: f.market, hidden: scope.mode === "team" ? f.hidden : undefined })),
+    folder: scope.folder ? { name: scope.folder.name } : null,
     posts: outPosts,
     post_count: postCount,
     creator_count: creatorCount,

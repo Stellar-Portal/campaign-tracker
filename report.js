@@ -179,6 +179,8 @@ export function renderWall(el, list, ctx, { shown = 48, view = "grid", onMore } 
   const page = list.slice(0, shown);
   if (!list.length) { el.innerHTML = `<div class="panel"><p class="muted">No posts match these filters.</p></div>`; return; }
   const team = ctx.mode === "team" && ctx.remove;
+  const picking = ctx.selected instanceof Set;
+  const pick = (p, i) => picking ? `<label class="pick" title="Select"><input type="checkbox" data-pick="${i}" ${ctx.selected.has(p.id) ? "checked" : ""} aria-label="Select @${esc(p.creator?.username ?? "")}'s video"></label>` : "";
   const actions = (p, i) => `<div class="card-actions">
       <button type="button" data-act="copy" data-i="${i}" title="Copy link" aria-label="Copy link to this video">${ICON.link}</button>
       <a data-act="open" href="${esc(p.url)}" target="_blank" rel="noopener" title="Open on TikTok" aria-label="Open this video on TikTok">${ICON.open}</a>
@@ -186,8 +188,9 @@ export function renderWall(el, list, ctx, { shown = 48, view = "grid", onMore } 
     </div>`;
   el.innerHTML = view === "grid"
     ? `<div class="wall sh-wall">${page.map((p, i) => `
-      <article class="post${p.gone ? " gone" : ""}">
+      <article class="post${p.gone ? " gone" : ""}${picking && ctx.selected.has(p.id) ? " picked" : ""}">
         <div class="cover-wrap">
+          ${pick(p, i)}
           <button type="button" class="cover" data-i="${i}" aria-label="Preview @${esc(p.creator?.username ?? "")}'s video">
             <img data-vid="${esc(p.video_id)}" alt="" loading="lazy" ${ctx.covers[p.video_id] ? `src="${esc(ctx.covers[p.video_id])}"` : "hidden"} onerror="this.hidden=true">
             ${p.gone ? `<span class="chip tl">No longer on TikTok</span>` : ctx.showCountry !== false && flag(p.country) ? `<span class="chip tl" title="${esc(regionName(p.country))}">${flag(p.country)}</span>` : ""}
@@ -200,13 +203,16 @@ export function renderWall(el, list, ctx, { shown = 48, view = "grid", onMore } 
           <div class="handle">@${esc(p.creator?.username ?? "unknown")}${p.creator?.verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</div>
           <div class="caption">${esc(p.caption ?? "")}</div>
           ${p.sound_title ? `<div class="line sound-line">♪ ${esc(p.sound_title)}</div>` : ""}
+          ${ctx.folderOf && ctx.folderOf(p) ? `<div class="line folder-line">${esc(ctx.folderOf(p))}</div>` : ""}
           <div class="line">${compact(p.likes)} likes · ${compact(p.comments)} comments · ${compact(p.shares)} shares</div>
         </div>
       </article>`).join("")}</div>`
-    : `<div class="table-wrap"><table class="post-table"><thead><tr><th>Post</th>${ctx.songOf ? "<th>Song</th>" : ""}${ctx.showCountry !== false ? "<th>Country</th>" : ""}<th>Posted</th><th class="num">Views</th><th class="num">Likes</th><th class="num">Comments</th><th class="num">Shares</th><th></th></tr></thead>
-      <tbody>${page.map((p, i) => `<tr>
+    : `<div class="table-wrap"><table class="post-table"><thead><tr>${picking ? '<th class="pick-col"><span class="sr">Select</span></th>' : ""}<th>Post</th>${ctx.songOf ? "<th>Song</th>" : ""}${ctx.folderOf ? "<th>Folder</th>" : ""}${ctx.showCountry !== false ? "<th>Country</th>" : ""}<th>Posted</th><th class="num">Views</th><th class="num">Likes</th><th class="num">Comments</th><th class="num">Shares</th><th></th></tr></thead>
+      <tbody>${page.map((p, i) => `<tr${picking && ctx.selected.has(p.id) ? ' class="picked"' : ""}>
+        ${picking ? `<td class="pick-col">${pick(p, i)}</td>` : ""}
         <td><button type="button" class="link-btn artist" data-i="${i}" data-act="preview">@${esc(p.creator?.username ?? "unknown")}</button><div class="muted small clamp">${esc(p.caption ?? "")}</div></td>
         ${ctx.songOf ? `<td>${esc(ctx.songOf(p))}</td>` : ""}
+        ${ctx.folderOf ? `<td>${esc(ctx.folderOf(p) || "–")}</td>` : ""}
         ${ctx.showCountry !== false ? `<td>${p.country ? `${flag(p.country)} ${esc(regionName(p.country))}` : "–"}</td>` : ""}
         <td class="small">${esc(ago(p.published_at))}</td>
         <td class="num plays-cell">${n(p.plays)}</td><td class="num">${n(p.likes)}</td><td class="num">${n(p.comments)}</td><td class="num">${n(p.shares)}</td>
@@ -215,7 +221,16 @@ export function renderWall(el, list, ctx, { shown = 48, view = "grid", onMore } 
     el.insertAdjacentHTML("beforeend", `<div class="actions" style="justify-content:center"><button type="button" data-more>${list.length - page.length <= 48 ? `Show the last ${n(list.length - page.length)}` : `Show 48 more (${n(list.length - page.length)} left)`}</button></div>`);
     el.querySelector("[data-more]").onclick = () => onMore?.();
   }
-  el.querySelectorAll(".cover, [data-act=preview]").forEach((b) => b.onclick = () => openPostModal(page, Number(b.dataset.i), ctx));
+  el.querySelectorAll(".cover, [data-act=preview]").forEach((b) => b.onclick = () => {
+    if (picking && b.classList.contains("cover")) { const box = b.parentElement.querySelector("[data-pick]"); box.checked = !box.checked; box.dispatchEvent(new Event("change")); return; }
+    openPostModal(page, Number(b.dataset.i), ctx);
+  });
+  el.querySelectorAll("[data-pick]").forEach((b) => b.onchange = () => {
+    const p = page[Number(b.dataset.pick)];
+    if (b.checked) ctx.selected.add(p.id); else ctx.selected.delete(p.id);
+    b.closest("article, tr")?.classList.toggle("picked", b.checked);
+    ctx.onSelect?.();
+  });
   el.querySelectorAll("[data-act=copy]").forEach((b) => b.onclick = (e) => { e.stopPropagation(); copyLink(page[Number(b.dataset.i)].url); });
   el.querySelectorAll("[data-act=remove]").forEach((b) => b.onclick = async (e) => {
     e.stopPropagation();
@@ -287,6 +302,7 @@ export function openPostModal(list, index, ctx) {
             <a class="btn primary" href="${esc(p.url)}" target="_blank" rel="noopener">Watch on TikTok</a>
             <button type="button" class="icon-btn" data-pm="copy" title="Copy link" aria-label="Copy link">${ICON.link}</button>
             <a class="icon-btn" href="${esc(p.url)}" target="_blank" rel="noopener" title="Open in a new tab" aria-label="Open in a new tab">${ICON.open}</a>
+            ${ctx.mode === "team" && ctx.move && ctx.folders?.length ? `<label class="pm-folder"><span class="sr">Folder</span><select data-pm="folder" aria-label="Folder"><option value="">Not in a folder</option>${ctx.folders.map((f) => `<option value="${esc(f.id)}" ${p.folder_id === f.id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select></label>` : ""}
             ${ctx.mode === "team" && ctx.remove ? `<button type="button" class="icon-btn danger" data-pm="remove" title="Remove from campaign" aria-label="Remove from campaign">${ICON.trash}</button>` : ""}
           </div>
           <div class="pm-tabs" role="tablist">
@@ -306,6 +322,7 @@ export function openPostModal(list, index, ctx) {
                 <dt>Caption</dt><dd>${esc(p.caption || "–")}</dd>
                 ${p.sound_title ? `<dt>Sound</dt><dd>♪ ${esc(p.sound_title)}</dd>` : ""}
                 ${ctx.songOf ? `<dt>Campaign</dt><dd>${esc(ctx.songOf(p) || "–")}</dd>` : ""}
+                ${ctx.folderOf && ctx.folderOf(p) ? `<dt>Folder</dt><dd>${esc(ctx.folderOf(p))}</dd>` : ""}
                 ${p.creator?.followers != null ? `<dt>Creator's followers</dt><dd>${n(p.creator.followers)}</dd>` : ""}
                 ${ctx.showCountry !== false && p.country ? `<dt>Country</dt><dd>${flag(p.country)} ${esc(regionName(p.country))}</dd>` : ""}
                 <dt>Posted</dt><dd>${p.published_at ? esc(dayLong(p.published_at.slice(0, 10))) : "–"}</dd>
@@ -321,6 +338,8 @@ export function openPostModal(list, index, ctx) {
     wrap.querySelector("[data-pm=copy]").onclick = () => copyLink(p.url);
     const rm = wrap.querySelector("[data-pm=remove]");
     if (rm) rm.onclick = async () => { if (await removePost(p, ctx)) closeModal(); };
+    const fs = wrap.querySelector("[data-pm=folder]");
+    if (fs) fs.onchange = async () => { if (await ctx.move([p], fs.value || null)) { p.folder_id = fs.value || null; } else fs.value = p.folder_id ?? ""; };
     wrap.querySelector(".pm-close").focus();
     if (tab === "performance") loadPostChart(p, ctx);
   };
@@ -368,7 +387,7 @@ async function loadPostChart(p, ctx) {
 // api: { mode, load() → payload, loadCovers(ids), postDaily(vid), remove?(post), header?: html, onHeader?(root) }
 export function mountReport(root, api) {
   let data = null;
-  const state = { tab: null, metrics: ["plays"], from: null, to: null, q: "", camp: "", creator: "", country: "", sort: "plays", view: "grid", shown: 48 };
+  const state = { tab: null, metrics: ["plays"], from: null, to: null, q: "", camp: "", folder: "", creator: "", country: "", sort: "plays", view: "grid", shown: 48 };
   const ctx = { mode: api.mode, covers: {}, loadCovers: api.loadCovers, postDaily: api.postDaily, remove: api.remove, onRemoved: null, songOf: null, showCountry: true };
   let S = {};
 
@@ -376,7 +395,7 @@ export function mountReport(root, api) {
     root.innerHTML = `<p class="muted pad">Loading the report…</p>`;
     try { data = await api.load(); }
     catch (e) { api.onError?.(e); return; }
-    S = { overview: true, overview_chart: true, sounds: true, songs: true, songs_chart: true, countries: true, countries_chart: true, posts: true, posts_country_filter: true, show_country: true, show_followers: true, ...(data.settings ?? {}) };
+    S = { overview: true, overview_chart: true, sounds: true, songs: true, songs_chart: true, countries: true, countries_chart: true, posts: true, posts_country_filter: true, show_country: true, show_followers: true, folders: true, ...(data.settings ?? {}) };
     // Same rules the server applies, so the page never offers a view whose data was withheld.
     if (!S.show_country) { S.countries = false; S.posts_country_filter = false; }
     if (!S.countries) S.countries_chart = false;
@@ -403,10 +422,16 @@ export function mountReport(root, api) {
     data.countryColor = Object.fromEntries(data.countryOrder.slice(0, 7).map((c, i) => [c, SERIES[i]]));
     (data.sounds ?? []).forEach((s, i) => { s.color = SERIES[i % SERIES.length]; });
     ctx.songOf = (data.campaigns ?? []).length > 1 ? (p) => data.campById[p.campaign_id]?.song ?? "" : null;
+    // Folders (markets or creatives). Names get the song in front when the report covers several campaigns.
+    const many = (data.campaigns ?? []).length > 1;
+    data.folders = (data.folders ?? []).map((f, i) => ({ ...f, label: many ? `${data.campById[f.campaign_id]?.song ?? "Untitled"} · ${f.name}` : f.name, color: SERIES[i % SERIES.length] }));
+    data.folderById = Object.fromEntries(data.folders.map((f) => [f.id, f]));
+    ctx.folderOf = data.folders.length && S.folders ? (p) => data.folderById[p.folder_id]?.label ?? "" : null;
     ctx.onRemoved = (p) => { data.posts = data.posts.filter((x) => !(x.video_id === p.video_id && x.campaign_id === p.campaign_id)); data.post_count = Math.max(0, (data.post_count ?? 1) - 1); renderPosts(); };
   }
 
-  const tabsAvailable = () => [["overview", "Overview", S.overview], ["sounds", "Sounds", S.sounds && (data.sounds ?? []).length], ["songs", "Songs", S.songs], ["countries", "Countries", S.countries]].filter((t) => t[2]);
+  const folderWord = () => ((data.folders ?? []).every((f) => f.market) ? "Markets" : "Folders");
+  const tabsAvailable = () => [["overview", "Overview", S.overview], ["sounds", "Sounds", S.sounds && (data.sounds ?? []).length], ["songs", "Songs", S.songs], ["folders", folderWord(), S.folders && (data.folders ?? []).length], ["countries", "Countries", S.countries]].filter((t) => t[2]);
 
   function sumAt(date, key, pred = () => true) {
     let t = 0, any = false;
@@ -437,9 +462,9 @@ export function mountReport(root, api) {
         <div class="hero">
           <div>
             <h1>${esc(data.artist)}</h1>
-            <div class="voice">${camps.length === 1 ? esc(camps[0].song ?? "1 campaign") : `${camps.length} campaigns`}</div>
+            <div class="voice">${camps.length === 1 ? esc(camps[0].song ?? "1 campaign") : `${camps.length} campaigns`}${data.folder ? `<span class="folder-name">${esc(data.folder.name)}</span>` : ""}</div>
             <div class="meta">
-              ${camps.length > 1 ? camps.map((c) => `<span class="status">${esc(c.song ?? "Untitled")}${c.status === "draft" ? " · draft" : ""}</span>`).join("") : camps[0]?.status === "draft" ? `<span class="status">draft</span>` : ""}
+              ${camps.length > 1 ? camps.map((c) => `<span class="status">${esc(c.song ?? "Untitled")}${c.status === "draft" ? " · upcoming" : ""}</span>`).join("") : camps[0]?.status === "draft" ? `<span class="status">upcoming</span>` : ""}
               ${data.dates.length ? `<span>Tracking since ${esc(dayLong(data.dates[0]))}</span>` : ""}
               ${lastStats ? `<span>Numbers from ${esc(dayLong(lastStats))}</span>` : ""}
             </div>
@@ -466,6 +491,7 @@ export function mountReport(root, api) {
       <div class="filters sh-filters">
         <input id="q" type="search" placeholder="Search captions or creators" aria-label="Search posts">
         ${camps.length > 1 ? `<select id="f-camp" aria-label="Campaign"><option value="">All songs</option>${camps.map((c) => `<option value="${esc(c.id)}">${esc(c.song ?? "Untitled")}</option>`).join("")}</select>` : ""}
+        ${ctx.folderOf ? `<select id="f-folder" aria-label="${folderWord() === "Markets" ? "Market" : "Folder"}"><option value="">All ${folderWord().toLowerCase()}</option>${data.folders.map((f) => `<option value="${esc(f.id)}">${esc(f.label)}</option>`).join("")}${posts.some((p) => !p.folder_id) ? `<option value="none">${api.mode === "client" ? "Other posts" : "Not in a folder"}</option>` : ""}</select>` : ""}
         <select id="f-creator" aria-label="Creator"><option value="">All creators</option>${[...new Set(posts.map((p) => p.creator?.username).filter(Boolean))].sort().map((u) => `<option>${esc(u)}</option>`).join("")}</select>
         ${S.posts_country_filter && S.show_country ? `<select id="f-country" aria-label="Country"><option value="">All countries</option>${[...new Set(posts.map((p) => p.country).filter(Boolean))].sort((a, b) => regionName(a).localeCompare(regionName(b))).map((c) => `<option value="${esc(c)}">${flag(c)} ${esc(regionName(c))}</option>`).join("")}</select>` : ""}
         <select id="sort" aria-label="Sort"><option value="plays">Most views</option><option value="likes">Most likes</option><option value="shares">Most shares</option><option value="er">Highest engagement</option><option value="newest">Newest first</option></select>
@@ -489,7 +515,7 @@ export function mountReport(root, api) {
     }
     syncRange();
     const bind = (id, key) => { const el = root.querySelector("#" + id); if (el) { el.value = state[key]; el.oninput = () => { state[key] = el.value; state.shown = 48; renderPosts(); }; } };
-    bind("q", "q"); bind("f-camp", "camp"); bind("f-creator", "creator"); bind("f-country", "country"); bind("sort", "sort");
+    bind("q", "q"); bind("f-camp", "camp"); bind("f-folder", "folder"); bind("f-creator", "creator"); bind("f-country", "country"); bind("sort", "sort");
     root.querySelectorAll("[data-view]").forEach((b) => {
       b.setAttribute("aria-pressed", state.view === b.dataset.view);
       b.onclick = () => { state.view = b.dataset.view; root.querySelectorAll("[data-view]").forEach((x) => x.setAttribute("aria-pressed", x === b)); renderPosts(); };
@@ -516,6 +542,7 @@ export function mountReport(root, api) {
     if (state.tab === "overview") return renderOverview(el);
     if (state.tab === "sounds") return renderSounds(el);
     if (state.tab === "songs") return renderBreakdown(el, "songs");
+    if (state.tab === "folders") return renderBreakdown(el, "folders");
     if (state.tab === "countries") return renderBreakdown(el, "countries");
   }
 
@@ -561,13 +588,16 @@ export function mountReport(root, api) {
     let groups;
     if (kind === "songs") {
       groups = (data.campaigns ?? []).map((c) => ({ id: c.id, name: c.song ?? "Untitled", color: data.campById[c.id].color, pred: (r) => r.campaign_id === c.id }));
+    } else if (kind === "folders") {
+      groups = data.folders.map((f) => ({ id: f.id, name: f.label, color: f.color, pred: (r) => r.folder_id === f.id }));
+      if ((data.series ?? []).some((r) => !r.folder_id)) groups.push({ id: "none", name: api.mode === "client" ? "Other posts" : "Not in a folder", color: "#8a8f99", pred: (r) => !r.folder_id });
     } else {
       const top = data.countryOrder.slice(0, 7);
       groups = top.map((c) => ({ id: c, name: c === "??" ? "Unknown" : `${flag(c)} ${regionName(c)}`, color: data.countryColor[c], pred: (r) => (r.country_code ?? "??") === c }));
       const rest = data.countryOrder.slice(7);
       if (rest.length) groups.push({ id: "other", name: `Other (${rest.length})`, color: "#8a8f99", pred: (r) => rest.includes(r.country_code ?? "??") });
     }
-    const showChart = kind === "songs" ? S.songs_chart : S.countries_chart;
+    const showChart = kind === "songs" ? S.songs_chart : kind === "folders" ? true : S.countries_chart;
     const k0 = state.metrics[0];
     const totalEnd = growth(k0).end || 0;
     const tiles = groups.map((gr) => ({ ...gr, g: growth(k0, gr.pred) })).sort((a, b) => (b.g.end ?? 0) - (a.g.end ?? 0));
@@ -580,7 +610,7 @@ export function mountReport(root, api) {
           <div class="d muted">${totalEnd ? `${Math.round(((t.g.end ?? 0) / totalEnd) * 100)}% of ${metricLabel(k0).toLowerCase()}` : ""}${t.g.delta != null ? ` · ${signed(t.g.delta)}` : ""}</div></div>`).join("")}
       </div>
       ${showChart ? `<div class="chart-card">
-        <div class="chart-head"><h3>${state.metrics.map(metricLabel).join(", ")} by ${kind === "songs" ? "song" : "creator country"}</h3></div>
+        <div class="chart-head"><h3>${state.metrics.map(metricLabel).join(", ")} by ${kind === "songs" ? "song" : kind === "folders" ? (folderWord() === "Markets" ? "market" : "folder") : "creator country"}</h3></div>
         <div id="chart"></div>
       </div>` : ""}`;
     el.querySelectorAll("[data-metric]").forEach((b) => b.onclick = () => { toggleMetric(b.dataset.metric); renderBreakdown(el, kind); });
@@ -631,6 +661,7 @@ export function mountReport(root, api) {
     const q = state.q.trim().toLowerCase();
     const list = (data.posts ?? []).filter((p) =>
       (!state.camp || p.campaign_id === state.camp) &&
+      (!state.folder || (state.folder === "none" ? !p.folder_id : p.folder_id === state.folder)) &&
       (!state.creator || p.creator?.username === state.creator) &&
       (!state.country || p.country === state.country) &&
       (!q || (p.caption ?? "").toLowerCase().includes(q) || (p.creator?.username ?? "").toLowerCase().includes(q) || (p.creator?.name ?? "").toLowerCase().includes(q)));

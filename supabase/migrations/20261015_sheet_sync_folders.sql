@@ -1,4 +1,6 @@
 -- Campaign Overview sheet sync, PO numbers, market splits and campaign folders.
+-- Applied 15 Oct 2026 as several migrations (markets_list, campaign_sheet_fields, campaign_folders,
+-- sheet_sync_queue, status_on_hold, sheet_sync_config, share_series_folders, campaign_summary_po).
 
 -- 1. Markets: the fixed list, matching the sheet's "Budget Allocations" columns.
 create table public.markets (
@@ -72,56 +74,8 @@ end $$;
 create trigger posts_folder_check before insert or update of folder_id, campaign_id on public.posts
   for each row execute function private.check_post_folder();
 
--- 5. Save a campaign, its market splits and its market folders in one go.
-create or replace function public.save_campaign(p_id uuid, p jsonb, p_markets jsonb)
-returns uuid language plpgsql security invoker set search_path = '' as $$
-declare cid uuid; m jsonb; pos int;
-begin
-  if not (select private.is_team_member()) then raise exception 'Not allowed'; end if;
-  if p_id is null then
-    insert into public.campaigns (artist, song, client, comms_owner, campaign_runner, status, start_date, end_date,
-      budget, currency, invoiced, notes, po_number, release_type, invoicing_entity, client_country, client_market,
-      client_contact_name, client_contact_email, label_type, under_nda, campaign_type, folders_by_market)
-    select r.artist, r.song, r.client, r.comms_owner, r.campaign_runner, coalesce(r.status,'active'), r.start_date, r.end_date,
-      r.budget, r.currency, coalesce(r.invoiced,false), r.notes, r.po_number, r.release_type, r.invoicing_entity, r.client_country, r.client_market,
-      r.client_contact_name, r.client_contact_email, r.label_type, r.under_nda, r.campaign_type, coalesce(r.folders_by_market,true)
-    from jsonb_populate_record(null::public.campaigns, p) r
-    returning id into cid;
-  else
-    update public.campaigns c set
-      artist = r.artist, song = r.song, client = r.client, comms_owner = r.comms_owner, campaign_runner = r.campaign_runner,
-      status = r.status, start_date = r.start_date, end_date = r.end_date, budget = r.budget, currency = r.currency,
-      invoiced = coalesce(r.invoiced,false), notes = r.notes, po_number = r.po_number, release_type = r.release_type,
-      invoicing_entity = r.invoicing_entity, client_country = r.client_country, client_market = r.client_market,
-      client_contact_name = r.client_contact_name, client_contact_email = r.client_contact_email, label_type = r.label_type,
-      under_nda = r.under_nda, campaign_type = r.campaign_type, folders_by_market = coalesce(r.folders_by_market,true)
-    from jsonb_populate_record(null::public.campaigns, p) r
-    where c.id = p_id returning c.id into cid;
-    if cid is null then raise exception 'Campaign not found'; end if;
-  end if;
-
-  delete from public.campaign_markets where campaign_id = cid;
-  insert into public.campaign_markets (campaign_id, market, share_percent, amount)
-  select cid, x.market, x.share_percent, x.amount
-  from jsonb_to_recordset(coalesce(p_markets,'[]'::jsonb)) as x(market text, share_percent numeric, amount numeric);
-
-  if (select folders_by_market from public.campaigns where id = cid) then
-    -- add a folder for each new market
-    insert into public.campaign_folders (campaign_id, name, market, position)
-    select cid, mk.name, mk.name, mk.position
-    from public.campaign_markets cm join public.markets mk on mk.name = cm.market
-    where cm.campaign_id = cid
-      and not exists (select 1 from public.campaign_folders f where f.campaign_id = cid and (f.market = mk.name or f.name = mk.name));
-    -- remove folders for markets taken off, but only when they're empty and not shared
-    delete from public.campaign_folders f
-    where f.campaign_id = cid and f.market is not null
-      and f.market not in (select market from public.campaign_markets where campaign_id = cid)
-      and not exists (select 1 from public.posts po where po.folder_id = f.id)
-      and not exists (select 1 from public.share_links s where s.folder_id = f.id and not s.revoked);
-  end if;
-  return cid;
-end $$;
-grant execute on function public.save_campaign(uuid, jsonb, jsonb) to authenticated;
+-- 5. (Not applied) a save_campaign() function was planned here; the form saves markets and
+--    folders itself instead (app.js: renderForm, syncMarketFolders).
 
 -- 6. Sheet sync state and queue (one row per campaign).
 create table public.campaign_sheet_sync (
@@ -136,7 +90,7 @@ create table public.campaign_sheet_sync (
 alter table public.campaign_sheet_sync enable row level security;
 create policy "team members read" on public.campaign_sheet_sync for select to authenticated using ((select private.is_team_member()));
 grant select on public.campaign_sheet_sync to authenticated;
-grant select, insert, update, delete on public.campaign_sheet_sync to service_role;
+grant select, insert, update on public.campaign_sheet_sync to service_role;
 
 create or replace function private.queue_sheet_sync() returns trigger
 language plpgsql security definer set search_path = '' as $$
@@ -186,3 +140,23 @@ select c.*,
      where m.campaign_id = c.id), '[]'::jsonb) as allocations
 from public.campaigns c;
 grant select on public.campaign_sheet_rows to service_role;
+
+-- 7. Where the sheet lives. The secret is set directly in the database, never committed.
+create table private.settings (key text primary key, value text not null);
+-- insert into private.settings values ('sheet_sync_secret', '<secret>'), ('sheet_sync_url', '<Apps Script /exec URL>');
+create or replace function public.sheet_sync_config() returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select jsonb_object_agg(key, value) from private.settings where key like 'sheet_sync_%';
+$$;
+revoke execute on function public.sheet_sync_config() from public, anon, authenticated;
+grant execute on function public.sheet_sync_config() to service_role;
+
+-- 8. Every minute, if something is waiting, call sheet-sync.
+-- select cron.schedule('sheet-sync', '* * * * *', $$ select net.http_post(url := '.../functions/v1/sheet-sync', body := '{}'::jsonb,
+--   headers := '{"Content-Type": "application/json"}'::jsonb, timeout_milliseconds := 60000)
+--   where exists (select 1 from public.campaign_sheet_sync where due_at <= now()); $$);
+
+-- 9. Daily series per campaign, folder and country, for reports (share function).
+-- See share_series_by_folder(campaign_ids uuid[], only_folder uuid) in the database; same as share_series plus folder_id.
+
+-- 10. campaign_summary gained po_number and folders_by_market (appended columns).

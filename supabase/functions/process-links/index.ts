@@ -19,7 +19,7 @@ const CONCURRENCY = 4;
 const TIKTOK_HOST = /^(?:www\.|m\.|vm\.|vt\.)?tiktok\.com$/i;
 
 type Item = { id: string; url: string };
-type Job = { id: string; campaign_id: string; submitted_by: string | null };
+type Job = { id: string; campaign_id: string; folder_id: string | null; submitted_by: string | null };
 
 // TikTok lists several versions of each image; most are HEIC, which browsers can't show. Prefer JPEG.
 const first = (o: any): string | null => {
@@ -140,6 +140,7 @@ async function processItem(item: Item, job: Job) {
 
   const { data: post, error: postErr } = await db.from("posts").insert({
     campaign_id: job.campaign_id,
+    folder_id: job.folder_id ?? null,
     creator_id: creatorId,
     sound_id: soundId,
     tiktok_video_id: videoId,
@@ -204,7 +205,7 @@ Deno.serve(async (req) => {
 
   // Claim the job atomically: only a pending job moves to running.
   const { data: job, error } = await db.from("link_jobs").update({ status: "running" })
-    .eq("id", jobId).eq("status", "pending").select("id,campaign_id,submitted_by").maybeSingle();
+    .eq("id", jobId).eq("status", "pending").select("id,campaign_id,folder_id,submitted_by").maybeSingle();
   if (error) {
     console.error("claim failed", error.message, "| keys present:", ["SUPABASE_SECRET_KEYS", "SUPABASE_SERVICE_ROLE_KEY"].filter((k) => !!Deno.env.get(k)).join(","));
     return Response.json({ error: "could not claim job" }, { status: 500 });
