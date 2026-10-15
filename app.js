@@ -1,8 +1,8 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015h";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261015h";
-import { renderAnalytics } from "./analytics.js?v=20261015h";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015h";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015i";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261015i";
+import { renderAnalytics } from "./analytics.js?v=20261015i";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015i";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -225,11 +225,14 @@ async function renderOverview(token) {
   const rows = (s.rows ?? []).map((r) => {
     const f = {};
     for (const h in firstIndex) f[h] = r.values[firstIndex[h]];
-    return { row: r.row, values: r.values, f };
+    return { row: r.row, values: r.values, f, cid: r.cid };
   });
+  // Link each sheet row to its tracker campaign: the row's hidden tag first (survives renames and
+  // re-sorting), then Artist + Song + PO, then the row the tracker last wrote.
+  const byId = new Map((camps ?? []).map((c) => [c.id, c]));
   const byKey = new Map((camps ?? []).filter((c) => c.po_number).map((c) => [normKey(c.artist, c.song, c.po_number), c]));
-  const byRow = new Map((syncs.data ?? []).filter((x) => x.sheet_row).map((x) => [x.sheet_row, (camps ?? []).find((c) => c.id === x.campaign_id)]));
-  for (const r of rows) r.camp = byKey.get(normKey(r.f["Artist Name"], r.f["Song Name (s) or Project Name"], r.f["Stellar PO no."])) ?? byRow.get(r.row) ?? null;
+  const byRow = new Map((syncs.data ?? []).filter((x) => x.sheet_row).map((x) => [x.sheet_row, byId.get(x.campaign_id)]));
+  for (const r of rows) r.camp = (r.cid && byId.get(r.cid)) || byKey.get(normKey(r.f["Artist Name"], r.f["Song Name (s) or Project Name"], r.f["Stellar PO no."])) || byRow.get(r.row) || null;
   const linked = new Set(rows.map((r) => r.camp?.id).filter(Boolean));
   const notInSheet = (camps ?? []).filter((c) => !linked.has(c.id));
 
@@ -806,6 +809,12 @@ function sheetLine(sync, c) {
   if (!c?.id) return `<p class="sheet-line small muted">Saving adds this campaign to the Campaign Overview sheet once it has a PO number.</p>`;
   if (!c.po_number) return `<p class="sheet-line small muted">Not in the Campaign Overview sheet yet: add a PO number to send it.</p>`;
   if (!sync) return "";
+  // A recent edit made directly in the sheet (or a clash with one) gets its own line.
+  const note = sync.sheet_note && sync.sheet_note_at && Date.now() - new Date(sync.sheet_note_at) < 14 * 864e5
+    ? `<p class="sheet-line small ${/same time|^Couldn/i.test(sync.sheet_note) ? "warn-note" : "muted"}">${esc(sync.sheet_note)} (${esc(timeAgo(sync.sheet_note_at))})</p>` : "";
+  return note + sheetStatus(sync);
+}
+function sheetStatus(sync) {
   if (sync.due_at && !sync.synced_at) return `<p class="sheet-line small muted">Sending to the Campaign Overview sheet…</p>`;
   if (sync.last_error && !(sync.last_error.startsWith("Columns not found") && sync.synced_at)) return `<p class="sheet-line small warn-note">Campaign Overview sheet: ${esc(sync.last_error)}${sync.due_at ? " Trying again shortly." : ""}</p>`;
   if (sync.synced_at) return `<p class="sheet-line small muted">In the Campaign Overview sheet, row ${esc(sync.sheet_row)}. Updated ${esc(timeAgo(sync.synced_at))}${sync.due_at ? "; new changes are on their way" : ""}.</p>`;

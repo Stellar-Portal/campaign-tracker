@@ -15,6 +15,29 @@ const SHEET_GID = 1649746959;          // the tab the tracker writes to
 const SHEET_NAME = "Copy of CAMPAIGN OVERVIEW FY26/27";
 const HEADER_ROW = 2;
 const FIRST_DATA_ROW = 4;              // row 3 is the worked example
+const TAG = "stellar_campaign_id";     // hidden tag on a row: which tracker campaign it belongs to.
+                                       // It moves with the row when rows are inserted, sorted or renamed.
+
+// Row of the campaign's tagged row, or 0.
+function taggedRow_(sh, id) {
+  if (!id) return 0;
+  const found = sh.createDeveloperMetadataFinder().withKey(TAG).withValue(String(id)).find();
+  for (const md of found) { const r = md.getLocation().getRow(); if (r) return r.getRow(); }
+  return 0;
+}
+// Tag a row with a campaign (removing any older tag for that campaign or on that row).
+function tagRow_(sh, row, id) {
+  if (!id) return;
+  sh.createDeveloperMetadataFinder().withKey(TAG).withValue(String(id)).find().forEach((md) => md.remove());
+  sh.getRange(row + ":" + row).createDeveloperMetadataFinder().withKey(TAG).find().forEach((md) => md.remove());
+  sh.getRange(row + ":" + row).addDeveloperMetadata(TAG, String(id));
+}
+// { rowNumber: campaignId } for every tagged row.
+function tagMap_(sh) {
+  const out = {};
+  sh.createDeveloperMetadataFinder().withKey(TAG).find().forEach((md) => { const r = md.getLocation().getRow(); if (r) out[r.getRow()] = md.getValue(); });
+  return out;
+}
 
 /** Run this once from the editor (choose "setup" and click Run) to give the script access to the sheet. */
 function setup() {
@@ -58,7 +81,9 @@ function upsert_(body) {
 
   // 1) the row we wrote last time (survives renames), 2) a row with the same key, 3) the first empty row
   let idx = -1;
-  if (body.prev_key) idx = indexOf_(n, keyAt, body.prev_key);
+  const tagged = taggedRow_(sh, body.campaign_id);
+  if (tagged >= FIRST_DATA_ROW) idx = tagged - FIRST_DATA_ROW;
+  if (idx < 0 && body.prev_key) idx = indexOf_(n, keyAt, body.prev_key);
   if (idx < 0) idx = indexOf_(n, keyAt, body.key);
   if (idx < 0) {
     for (let i = 0; i < n; i++) {
@@ -95,16 +120,21 @@ function upsert_(body) {
       cell.setValue(f === null || f === undefined ? "" : f);
     }
   });
+  tagRow_(sh, row, body.campaign_id);
   SpreadsheetApp.flush();
-  return { ok: true, row: row, key: body.key, skipped: skipped, missing: missing };
+  const after = sh.getRange(row, 1, 1, lastCol).getDisplayValues()[0];
+  const hdr = sh.getRange(HEADER_ROW, 1, 1, lastCol).getDisplayValues()[0];
+  return { ok: true, row: row, key: body.key, skipped: skipped, missing: missing, headers: hdr, values: after, sheet: sh.getName() };
 }
 
 // Delete one campaign row, only if its Artist + Song + PO still match (so a shifted sheet can never
 // lose the wrong row). body.keys: accepted keys; body.row: where the platform last saw it.
 function deleteRow_(body) {
   const keys = (body.keys || []).filter((k) => k && k.replace(/\|/g, "").trim());
-  if (!keys.length) throw new Error("Nothing identifies that row");
   const sh = getSheet_();
+  const tagged = taggedRow_(sh, body.campaign_id);
+  if (tagged >= FIRST_DATA_ROW) { sh.deleteRow(tagged); return { ok: true, row: tagged }; }
+  if (!keys.length) throw new Error("Nothing identifies that row");
   const headers = sh.getRange(HEADER_ROW, 1, 1, sh.getLastColumn()).getValues()[0].map(norm_);
   const col = (name) => headers.indexOf(norm_(name)) + 1;
   const cA = col("Artist Name"), cS = col("Song Name (s) or Project Name"), cP = col("Stellar PO no.");
@@ -137,10 +167,12 @@ function export_() {
   const values = n ? sh.getRange(FIRST_DATA_ROW, 1, n, lastCol).getDisplayValues() : [];
   const col = (name) => headers.map(norm_).indexOf(norm_(name));
   const cA = col("Artist Name"), cS = col("Song Name (s) or Project Name"), cP = col("Stellar PO no.");
+  const tags = tagMap_(sh);
   const rows = [];
   values.forEach((r, i) => {
     if (blank_(r[cA]) && blank_(r[cS]) && blank_(r[cP])) return;
-    rows.push({ row: FIRST_DATA_ROW + i, values: r });
+    const row = FIRST_DATA_ROW + i;
+    rows.push(tags[row] ? { row: row, values: r, cid: tags[row] } : { row: row, values: r });
   });
   return { ok: true, sheet: sh.getName(), sections: sections, headers: headers, rows: rows };
 }

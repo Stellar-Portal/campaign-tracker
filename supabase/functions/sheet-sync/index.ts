@@ -85,6 +85,151 @@ export function buildFields(c: any): Record<string, unknown> {
   return f;
 }
 
+// ---------- sheet → tracker ----------
+// The sheet's values for one campaign, in tracker terms. Compared with what was last seen to spot
+// edits made directly in the sheet; only the fields that changed are copied into the tracker.
+const STATUS_IN: Record<string, string> = { Upcoming: "draft", Active: "active", "On Hold": "on_hold", Completed: "finished" };
+const FIELD_LABEL: Record<string, string> = {
+  status: "status", artist: "artist", song: "song", po_number: "PO number", release_type: "type", client: "client",
+  invoicing_entity: "invoicing entity", client_country: "client location", client_market: "client market",
+  client_contact_name: "contact", client_contact_email: "contact email", label_type: "label", under_nda: "NDA",
+  comms_owner: "DRI", campaign_type: "campaign type", start_date: "start date", duration: "duration",
+  budget: "price", currency: "currency", alloc: "budget split",
+};
+function sheetDateIso(v: string, sheetName: string): string | null {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  const m = v.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+  if (!m) return null;
+  const d = Number(m[1]), mo = Number(m[2]);
+  if (d < 1 || d > 31 || mo < 1 || mo > 12) return null;
+  const pad = (x: number) => String(x).padStart(2, "0");
+  if (m[3]) return `${m[3].length === 2 ? "20" + m[3] : m[3]}-${pad(mo)}-${pad(d)}`;
+  const fy = sheetName.match(/FY\s*(\d{2})\s*\/\s*(\d{2})/i);
+  if (fy) return `20${mo >= 4 ? fy[1] : fy[2]}-${pad(mo)}-${pad(d)}`;
+  const now = Date.now(), y = new Date().getFullYear();
+  return [y - 1, y, y + 1].map((yy) => `${yy}-${pad(mo)}-${pad(d)}`).sort((a, b) => Math.abs(Date.parse(a) - now) - Math.abs(Date.parse(b) - now))[0];
+}
+function readSheetFields(headers: string[], values: string[], sheetName: string) {
+  const idx: Record<string, number> = {};
+  headers.forEach((h, i) => { const k = norm(h); if (!(k in idx)) idx[k] = i; });
+  const g = (h: string) => { const i = idx[norm(h)]; const v = i == null ? "" : String(values[i] ?? "").trim(); return v === "Select" ? "" : v; };
+  const n = (x: string) => { const t = x.replace(/[^\d.\-]/g, ""); return t && !isNaN(Number(t)) ? Number(t) : null; };
+  const pick = (v: string, allowed: string[]) => (allowed.includes(v) ? v : null);
+  const alloc: Record<string, number> = {};
+  for (const m of MARKETS) { const v = n(g(m)); if (v) alloc[m] = v; }
+  const cur = g("Currency").toUpperCase().replace("JYP", "JPY");
+  return {
+    status: STATUS_IN[g("Status")] ?? null,
+    artist: g("Artist Name") || null, song: g("Song Name (s) or Project Name") || null, po_number: g("Stellar PO no.") || null,
+    release_type: pick(g("Type (NR or Cat)"), ["New Release", "Catalogue", "Other"]),
+    client: g("Client") || null, invoicing_entity: g("Invoicing Entity") || null, client_country: g("Client Location (Country)") || null,
+    client_market: pick(g("Client Market"), ["Stellar West", "Stellar Central", "Stellar East"]),
+    client_contact_name: g("Client Contact Name") || null, client_contact_email: g("Client Contact eMail") || null,
+    label_type: pick(g("Major / Indie / Other"), ["Major", "Indie", "Other"]),
+    under_nda: g("Under NDA?") === "Yes" ? true : g("Under NDA?") === "No" ? false : null,
+    comms_owner: g("Stellar DRI") || null, campaign_type: g("Campaign Type") || null,
+    start_date: sheetDateIso(g("Start Date"), sheetName), duration: g("Duration").toLowerCase() || null,
+    budget: n(g("Price")), currency: /^[A-Z]{3}$/.test(cur) ? cur : null,
+    alloc,
+  } as Record<string, any>;
+}
+const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+function endFromDuration(start: string | null, v: string | null): string | null | undefined {
+  if (!start || !v) return undefined;
+  if (/indefinite|ongoing/i.test(v)) return null;
+  const m = v.match(/(\d+)\s*(day|week|month)/);
+  if (!m) return undefined;
+  const k = Number(m[1]), dt = new Date(start + "T00:00:00Z");
+  if (m[2] === "day") dt.setUTCDate(dt.getUTCDate() + k - 1);
+  else if (m[2] === "week") dt.setUTCDate(dt.getUTCDate() + k * 7 - 1);
+  else { dt.setUTCMonth(dt.getUTCMonth() + k); dt.setUTCDate(dt.getUTCDate() - 1); }
+  return dt.toISOString().slice(0, 10);
+}
+// Copy what changed in the sheet into the tracker campaign. Returns the labels of what changed.
+async function applyFromSheet(cid: string, prev: Record<string, any>, now: Record<string, any>): Promise<string[]> {
+  const changed = Object.keys(now).filter((k) => !same(now[k], prev[k]));
+  if (!changed.length) return [];
+  const { data: c } = await db.from("campaigns").select("*").eq("id", cid).maybeSingle();
+  if (!c) return [];
+  const upd: Record<string, unknown> = {};
+  for (const k of changed) {
+    if (k === "alloc" || k === "duration") continue;
+    if ((k === "status" || k === "artist") && !now[k]) continue;   // never blank out required fields
+    upd[k] = now[k];
+  }
+  if (changed.includes("start_date") || changed.includes("duration")) {
+    const end = endFromDuration(now.start_date ?? c.start_date, now.duration);
+    if (end !== undefined) upd.end_date = end;
+  }
+  if (Object.keys(upd).length) {
+    const { error } = await db.from("campaigns").update(upd).eq("id", cid);
+    if (error) throw new Error(error.code === "23505" ? "another campaign already has that artist, song and PO" : error.message);
+  }
+  if (changed.includes("alloc")) {
+    const budget = Number((upd.budget ?? c.budget) || 0);
+    const [{ data: cm }, { data: mk }] = await Promise.all([
+      db.from("campaign_markets").select("market,amount,share_percent").eq("campaign_id", cid),
+      db.from("markets").select("name,sheet_column,position"),
+    ]);
+    const colOf = Object.fromEntries((mk ?? []).map((m) => [m.name, m.sheet_column]));
+    const cols = new Set([...Object.keys(prev.alloc ?? {}), ...Object.keys(now.alloc ?? {})]);
+    for (const col of cols) {
+      const v = now.alloc?.[col] ?? null;
+      if (same(v, prev.alloc?.[col] ?? null)) continue;
+      const rows = (cm ?? []).filter((r) => colOf[r.market] === col);
+      const share = (a: number) => (budget ? Math.round((a / budget) * 10000) / 100 : null);
+      if (!v) { if (rows.length) await db.from("campaign_markets").delete().eq("campaign_id", cid).in("market", rows.map((r) => r.market)); continue; }
+      if (!rows.length) {
+        await db.from("campaign_markets").insert({ campaign_id: cid, market: col, amount: v, share_percent: share(v) });
+        if (c.folders_by_market) await db.from("campaign_folders").insert({ campaign_id: cid, name: col, market: col, position: (mk ?? []).find((m) => m.name === col)?.position ?? 0 });
+      } else if (rows.length === 1) {
+        await db.from("campaign_markets").update({ amount: v, share_percent: share(v) }).eq("campaign_id", cid).eq("market", rows[0].market);
+      } else {
+        // Several countries share this sheet column: scale them so they add up to the new figure.
+        const total = rows.reduce((t, r) => t + Number(r.amount ?? 0), 0) || rows.length;
+        for (const r of rows) {
+          const a = Math.round(((Number(r.amount ?? 0) || 1) / total) * v * 100) / 100;
+          await db.from("campaign_markets").update({ amount: a, share_percent: share(a) }).eq("campaign_id", cid).eq("market", r.market);
+        }
+      }
+    }
+  }
+  return changed.map((k) => FIELD_LABEL[k] ?? k);
+}
+
+// Called after every read of the sheet: bring edits made in the sheet into linked tracker campaigns.
+async function pullEdits(x: any) {
+  const [{ data: syncs }, { data: camps }] = await Promise.all([
+    db.from("campaign_sheet_sync").select("campaign_id,due_at,sheet_row,sheet_key,sheet_fields"),
+    db.from("campaigns").select("id,artist,song,po_number"),
+  ]);
+  const syncBy = new Map((syncs ?? []).map((r) => [r.campaign_id, r]));
+  const byKey = new Map((camps ?? []).filter((c) => c.po_number).map((c) => [sheetKey(c), c.id]));
+  const now = new Date().toISOString();
+  const results: string[] = [];
+  for (const r of x.rows ?? []) {
+    const fields = readSheetFields(x.headers, r.values, x.sheet ?? "");
+    const cid = r.cid ?? byKey.get([fields.artist, fields.song, fields.po_number].map(norm).join("|"));
+    const sy = cid ? syncBy.get(cid) : null;
+    if (!cid || !sy) continue;
+    if (!sy.sheet_fields) { await db.from("campaign_sheet_sync").update({ sheet_fields: fields, sheet_row: r.row }).eq("campaign_id", cid); continue; }
+    if (same(fields, sy.sheet_fields)) continue;
+    if (sy.due_at) {
+      // Also changed in the platform and not sent yet: the platform's version wins and overwrites the row.
+      await db.from("campaign_sheet_sync").update({ sheet_note: "Changed in the sheet and in the platform at the same time; the platform's version was kept.", sheet_note_at: now }).eq("campaign_id", cid);
+      continue;
+    }
+    try {
+      const labels = await applyFromSheet(cid, sy.sheet_fields, fields);
+      await db.from("campaign_sheet_sync").update({ sheet_fields: fields, sheet_row: r.row, sheet_note: labels.length ? `Updated from the sheet: ${labels.join(", ")}` : null, sheet_note_at: labels.length ? now : null }).eq("campaign_id", cid);
+      if (labels.length) results.push(`${cid}: ${labels.join(", ")}`);
+    } catch (e) {
+      await db.from("campaign_sheet_sync").update({ sheet_fields: fields, sheet_note: `Couldn't take the sheet's changes: ${String((e as Error).message).slice(0, 200)}`, sheet_note_at: now }).eq("campaign_id", cid);
+    }
+  }
+  return results;
+}
+
 // POST to the Apps Script web app. It runs the request, then redirects to a one-time URL with the answer.
 // While a new script version is being published Google briefly answers "Script function not found",
 // so a failed call is retried once after a short pause before it counts as an error.
@@ -152,10 +297,11 @@ async function syncOne(row: any, cfg: Record<string, string>) {
     return;
   }
   const key = sheetKey(c);
-  const j = await callSheet(cfg, { action: "upsert", key, prev_key: row.sheet_key, fields: buildFields(c) });
+  const j = await callSheet(cfg, { action: "upsert", campaign_id: row.campaign_id, key, prev_key: row.sheet_key, fields: buildFields(c) });
   const note = j.missing?.length ? `Columns not found in the sheet: ${j.missing.join(", ")}` : null;
   await db.from("campaign_sheet_sync").update({
     sheet_row: j.row, sheet_key: key, synced_at: new Date().toISOString(), attempts: 0, last_error: note,
+    ...(j.values && j.headers ? { sheet_fields: readSheetFields(j.headers, j.values, j.sheet ?? "") } : {}),
   }).eq("campaign_id", row.campaign_id);
 }
 
@@ -174,7 +320,8 @@ Deno.serve(async (req) => {
     try {
       const x = await callSheet(cfg, { action: "export" });
       await db.from("overview_snapshot").update({ sheet: x.sheet, sections: x.sections, headers: x.headers, rows: x.rows, synced_at: now, last_attempt_at: now, last_error: null }).eq("id", 1);
-      return json({ ok: true, rows: x.rows.length, synced_at: now });
+      const pulled = await pullEdits(x);
+      return json({ ok: true, rows: x.rows.length, synced_at: now, updated_from_sheet: pulled });
     } catch (e) {
       const msg = String((e as Error).message).slice(0, 300);
       await db.from("overview_snapshot").update({ last_attempt_at: now, last_error: msg }).eq("id", 1);
@@ -197,7 +344,7 @@ Deno.serve(async (req) => {
       if (!body.row && sy?.sheet_row) body.row = sy.sheet_row;
     }
     try {
-      const r = await callSheet(cfg, { action: "delete_row", keys: [...new Set(keys)], row: body.row ?? null });
+      const r = await callSheet(cfg, { action: "delete_row", campaign_id: body.campaign_id ?? null, keys: [...new Set(keys)], row: body.row ?? null });
       if (r.row) {
         // Rows below moved up by one.
         const { data: below } = await db.from("campaign_sheet_sync").select("campaign_id,sheet_row").gt("sheet_row", r.row);
