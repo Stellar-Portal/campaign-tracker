@@ -10,10 +10,16 @@
  * that holds a formula.
  */
 const SECRET = "PASTE_SECRET_HERE";
+const SPREADSHEET_ID = "1e3ce1Q7uW5iH4FQqN9Oo_Dw5Y51UcBx87nOAz1wp6Tk";
 const SHEET_GID = 1649746959;          // the tab the tracker writes to
 const SHEET_NAME = "Copy of CAMPAIGN OVERVIEW FY26/27";
 const HEADER_ROW = 2;
 const FIRST_DATA_ROW = 4;              // row 3 is the worked example
+
+/** Run this once from the editor (choose "setup" and click Run) to give the script access to the sheet. */
+function setup() {
+  Logger.log('Connected to tab "' + getSheet_().getName() + '". You can close this.');
+}
 
 function doPost(e) {
   let body;
@@ -91,7 +97,7 @@ function upsert_(body) {
 }
 
 function getSheet_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sh = ss.getSheets().find((s) => s.getSheetId() === SHEET_GID)
     || ss.getSheetByName(SHEET_NAME);
   if (!sh) throw new Error('Tab "' + SHEET_NAME + '" not found');
