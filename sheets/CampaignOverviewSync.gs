@@ -26,6 +26,7 @@ function doPost(e) {
   try { body = JSON.parse(e.postData.contents); } catch (err) { return out({ ok: false, error: "Bad JSON" }); }
   if (!body || body.secret !== SECRET) return out({ ok: false, error: "Not allowed" });
   if (body.action === "ping") return out({ ok: true, sheet: getSheet_().getName() });
+  if (body.action === "max_po") return out({ ok: true, max: maxPo_() });
 
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -94,6 +95,17 @@ function upsert_(body) {
   });
   SpreadsheetApp.flush();
   return { ok: true, row: row, key: body.key, skipped: skipped, missing: missing };
+}
+
+// Highest "#ST1234"-style PO number in the tab, as a number (0 if none).
+function maxPo_() {
+  const sh = getSheet_();
+  const headers = sh.getRange(HEADER_ROW, 1, 1, sh.getLastColumn()).getValues()[0].map(norm_);
+  const c = headers.indexOf(norm_("Stellar PO no.")) + 1;
+  if (!c || sh.getLastRow() < FIRST_DATA_ROW) return 0;
+  return sh.getRange(FIRST_DATA_ROW, c, sh.getLastRow() - FIRST_DATA_ROW + 1, 1).getDisplayValues()
+    .map((r) => (String(r[0]).match(/ST\s*(\d+)/i) || [])[1])
+    .filter(Boolean).map(Number).reduce((a, b) => Math.max(a, b), 0);
 }
 
 function getSheet_() {

@@ -44,7 +44,7 @@ export function buildFields(c: any): Record<string, unknown> {
   const alloc: Record<string, number> = {};
   const regions = new Set<string>();
   for (const a of c.allocations ?? []) {
-    if (a.amount != null) alloc[a.market] = Number(a.amount);
+    if (a.amount != null) alloc[a.market] = (alloc[a.market] ?? 0) + Number(a.amount);   // countries add up into their column
     regions.add(a.region);
   }
   let market = REGION_ORDER.filter((r) => regions.has(r)).join(", ");
@@ -82,20 +82,12 @@ export function buildFields(c: any): Record<string, unknown> {
   return f;
 }
 
-async function syncOne(row: any, cfg: Record<string, string>) {
-  const { data: c, error } = await db.from("campaign_sheet_rows").select("*").eq("id", row.campaign_id).maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!c) return;
-  if (!c.po_number) {
-    await db.from("campaign_sheet_sync").update({ last_error: "Add a PO number to send this campaign to the sheet." }).eq("campaign_id", row.campaign_id);
-    return;
-  }
-  const key = sheetKey(c);
-  // Apps Script runs the POST, then redirects to a one-time URL holding the answer; fetch that with GET.
+// POST to the Apps Script web app. It runs the request, then redirects to a one-time URL with the answer.
+async function callSheet(cfg: Record<string, string>, payload: Record<string, unknown>) {
   let res = await fetch(cfg.sheet_sync_url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ secret: cfg.sheet_sync_secret, action: "upsert", key, prev_key: row.sheet_key, fields: buildFields(c) }),
+    body: JSON.stringify({ secret: cfg.sheet_sync_secret, ...payload }),
     redirect: "manual",
   });
   const next = res.headers.get("location");
@@ -108,14 +100,63 @@ async function syncOne(row: any, cfg: Record<string, string>) {
     const plain = text.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
     throw new Error(j?.error ?? `Sheet replied ${res.status}: ${plain.slice(0, 240)}`);
   }
+  return j;
+}
+
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
+
+async function teamMember(req: Request): Promise<boolean> {
+  const jwt = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!jwt.startsWith("ey")) return false;
+  const { data } = await db.auth.getUser(jwt);
+  const email = data.user?.email?.toLowerCase();
+  if (!email) return false;
+  const { data: m } = await db.from("team_members").select("email").eq("email", email).maybeSingle();
+  return !!m;
+}
+
+// The next free PO: one above the highest in the sheet and in the tracker.
+async function nextPo(cfg: Record<string, string>) {
+  const { data } = await db.from("campaigns").select("po_number").not("po_number", "is", null);
+  const inTracker = (data ?? []).map((r) => Number((String(r.po_number).match(/ST\s*(\d+)/i) ?? [])[1] ?? 0)).reduce((a, b) => Math.max(a, b), 0);
+  let inSheet = 0, sheetError: string | null = null;
+  try { inSheet = Number((await callSheet(cfg, { action: "max_po" })).max) || 0; } catch (e) { sheetError = String((e as Error).message); }
+  const max = Math.max(inTracker, inSheet);
+  return { po: max ? `#ST${max + 1}` : null, from_sheet: inSheet, from_tracker: inTracker, sheet_error: sheetError };
+}
+
+async function syncOne(row: any, cfg: Record<string, string>) {
+  const { data: c, error } = await db.from("campaign_sheet_rows").select("*").eq("id", row.campaign_id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!c) return;
+  if (!c.po_number) {
+    await db.from("campaign_sheet_sync").update({ last_error: "Add a PO number to send this campaign to the sheet." }).eq("campaign_id", row.campaign_id);
+    return;
+  }
+  const key = sheetKey(c);
+  const j = await callSheet(cfg, { action: "upsert", key, prev_key: row.sheet_key, fields: buildFields(c) });
   const note = j.missing?.length ? `Columns not found in the sheet: ${j.missing.join(", ")}` : null;
   await db.from("campaign_sheet_sync").update({
     sheet_row: j.row, sheet_key: key, synced_at: new Date().toISOString(), attempts: 0, last_error: note,
   }).eq("campaign_id", row.campaign_id);
 }
 
-Deno.serve(async () => {
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   const { data: cfg } = await db.rpc("sheet_sync_config");
+  // A signed-in team member asking for the next PO number (new campaign form).
+  let body: any = {};
+  try { body = await req.json(); } catch { /* scheduled calls send {} */ }
+  if (body?.action === "next_po") {
+    if (!(await teamMember(req))) return json({ error: "Sign in as a Stellar team member." }, 401);
+    if (!cfg?.sheet_sync_url) return json({ po: null, sheet_error: "not configured" });
+    return json(await nextPo(cfg));
+  }
   const { data: rows, error } = await db.rpc("claim_sheet_sync", { n: 20 });
   if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500 });
   if (!rows?.length) return new Response(JSON.stringify({ synced: 0 }));

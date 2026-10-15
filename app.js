@@ -1,7 +1,7 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
-import { mountReport, renderWall } from "./report.js";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015b";
+import { mountReport, renderWall } from "./report.js?v=20261015b";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015b";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -157,7 +157,7 @@ const CURRENCIES = ["USD", "EUR", "GBP", "AUD", "JPY", "DKK", "SGD", "IDR", "THB
 let MARKETS = null;   // [{ name, region, position }], the sheet's allocation columns
 async function marketList() {
   if (!MARKETS) {
-    const { data } = await sb.from("markets").select("name,region,position").order("position");
+    const { data } = await sb.from("markets").select("name,region,position,sheet_column").order("position");
     MARKETS = data ?? [];
   }
   return MARKETS;
@@ -196,7 +196,7 @@ async function renderForm(token, id) {
         <div><label for="artist">Artist</label><input id="artist" required value="${v("artist")}"></div>
         <div><label for="song">Song or project</label><input id="song" value="${v("song")}"></div>
         <div><label for="po_number">PO number</label><input id="po_number" placeholder="#ST2109" value="${v("po_number")}" autocomplete="off">
-          <p class="hint">Shared with the Campaign Overview sheet. Artist, song and PO together identify the campaign.</p></div>
+          <p class="hint" id="po-hint">Shared with the Campaign Overview sheet. Artist, song and PO together identify the campaign.</p></div>
         <div><label for="status">Status</label><select id="status">${opt(STATUSES, c.status, "").replace('<option value=""></option>', "")}</select></div>
         <div><label for="campaign_type">Campaign type</label><input id="campaign_type" list="ctypes" value="${v("campaign_type")}" placeholder="Phase 1">${list("ctypes", CAMPAIGN_TYPES)}</div>
         <div><label for="release_type">New release or catalogue</label><select id="release_type">${opt(RELEASE_TYPES, c.release_type)}</select></div>
@@ -223,7 +223,7 @@ async function renderForm(token, id) {
 
       <h2>Markets</h2>
       <div class="split-head">
-        <p class="muted small" style="margin:0">Add each market and its share of the budget.</p>
+        <p class="muted small" style="margin:0">Add each market and its share of the budget. Countries add up into their column in the sheet, e.g. Indonesia and Philippines both count towards SEA.</p>
         <div class="seg" role="group" aria-label="Enter splits as">
           <button type="button" data-mode="percent">%</button><button type="button" data-mode="amount">Amount</button>
         </div>
@@ -258,7 +258,9 @@ async function renderForm(token, id) {
     row.className = "markets-row";
     const val = mode === "percent" ? (m.share_percent ?? (m.amount != null && budget() ? +(m.amount / budget() * 100).toFixed(2) : ""))
       : (m.amount ?? (m.share_percent != null && budget() != null ? +(budget() * m.share_percent / 100).toFixed(2) : ""));
-    row.innerHTML = `<select aria-label="Market">${opt(allMarkets.map((x) => x.name), m.market ?? "", "Choose a market")}</select>
+    const groups = [["West", "West"], ["Central", "Central"], ["East", "East"], ["Other", "Global"]];
+    row.innerHTML = `<select aria-label="Market"><option value="">Choose a market</option>${groups.map(([r, label]) => `<optgroup label="${label}">${allMarkets.filter((x) => x.region === r).map((x) =>
+        `<option value="${esc(x.name)}" ${m.market === x.name ? "selected" : ""}>${esc(x.name)}${x.sheet_column && x.sheet_column !== x.name ? ` (${esc(x.sheet_column)})` : ""}</option>`).join("")}</optgroup>`).join("")}</select>
       <input aria-label="${mode === "percent" ? "Share in percent" : "Amount"}" type="number" min="0" ${mode === "percent" ? 'max="100"' : ""} step="0.01" placeholder="${mode === "percent" ? "%" : "Amount"}" value="${esc(val)}">
       <span class="small muted other"></span>
       <button type="button" class="link-btn danger">Remove</button>`;
@@ -302,6 +304,7 @@ async function renderForm(token, id) {
   if (!rows.length) addRow();
   totals();
   $("add-market").onclick = () => addRow();
+  if (!id) suggestPO();
   $("po_number").onblur = () => { const po = normalisePO($("po_number").value); if (po) $("po_number").value = po; };
   $("budget").oninput = totals;
   $("currency").oninput = totals;
@@ -393,6 +396,23 @@ async function syncMarketFolders(cid, keep, allMarkets) {
     if (!count && !links?.length) await sb.from("campaign_folders").delete().eq("id", f.id);
   }
   return null;
+}
+
+// New campaigns: fill in the next free PO number (one above the highest in the sheet and the tracker).
+async function suggestPO() {
+  const input = document.getElementById("po_number"), hint = document.getElementById("po-hint");
+  if (!input || input.value) return;
+  input.placeholder = "Finding the next PO…";
+  const { data, error } = await sb.functions.invoke("sheet-sync", { body: { action: "next_po" } });
+  if (!document.body.contains(input)) return;
+  input.placeholder = "#ST2109";
+  if (error || !data?.po) return;
+  if (!input.value) {
+    input.value = data.po;
+    hint.textContent = data.sheet_error
+      ? `Suggested from the tracker only (couldn't read the sheet). Check it's free before saving.`
+      : `Next free PO after ${data.po.replace(/\d+$/, (d) => d - 1)} in the Campaign Overview sheet. Change it if you need to.`;
+  }
 }
 
 // Where this campaign stands in the Campaign Overview sheet.
