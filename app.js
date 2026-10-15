@@ -1,7 +1,7 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015d";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261015d";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015d";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015e";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261015e";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015e";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -56,7 +56,7 @@ async function renderLogin(message) {
   app.innerHTML = `
     <section class="login on-blue">
       <img class="logo" src="assets/stellar-blue.png" alt="Stellar" width="160" height="44">
-      <h1>Campaign <em>tracker</em></h1>
+      <h1>Stellar <em>OS</em></h1>
       <p class="small">For the Stellar team. Ask Sam for an account if you don't have one.</p>
       <form id="login">
         <div><label for="email">Work email</label><input id="email" type="email" autocomplete="username" required></div>
@@ -88,8 +88,265 @@ async function isTeamMember() {
 }
 
 function renderWho(user) {
-  who.innerHTML = `<span class="email">${esc(user.email)}</span><button id="signout" type="button">Sign out</button>`;
+  who.innerHTML = `<span class="email" title="${esc(user.email)}">${esc(user.email)}</span><button id="signout" type="button">Sign out</button>`;
   document.getElementById("signout").onclick = async () => { await sb.auth.signOut(); };
+}
+
+// ---------- Stellar OS navigation ----------
+const NAV_ICON = {
+  overview: '<path d="M4 5h16M4 10h16M4 15h10M4 20h7"/>',
+  tracker: '<path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/>',
+  payouts: '<path d="M3 7h18v10H3zM3 11h18M7 15h3"/>',
+  creators: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/>',
+  invoices: '<path d="M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h5"/>',
+  analytics: '<path d="M3 20l5-7 4 4 8-11"/><path d="M16 6h4v4"/>',
+};
+const NAV = [
+  ["Campaigns", [
+    { key: "overview", href: "#/", label: "Campaign overview", icon: "overview" },
+    { key: "campaigns", href: "#/campaigns", label: "Tracker", icon: "tracker" },
+  ]],
+  ["Money", [
+    { key: "payouts", href: "#/payouts", label: "PayPal payouts", icon: "payouts", soon: true },
+    { key: "creator-payments", href: "#/creator-payments", label: "Creator payments", icon: "creators", soon: true },
+    { key: "invoices", href: "#/invoices", label: "Invoices", icon: "invoices", soon: true },
+  ]],
+  ["Insights", [
+    { key: "analytics", href: "#/analytics", label: "Analytics", icon: "analytics", soon: true },
+  ]],
+];
+function renderNav(active) {
+  document.getElementById("nav").innerHTML = NAV.map(([group, items]) => `
+    <div class="nav-group"><div class="nav-label">${esc(group)}</div>
+      ${items.map((it) => `<a href="${it.href}" class="nav-item${it.key === active ? " on" : ""}"${it.key === active ? ' aria-current="page"' : ""}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">${NAV_ICON[it.icon]}</svg><span>${esc(it.label)}</span>${it.soon ? '<i class="soon">Soon</i>' : ""}</a>`).join("")}
+    </div>`).join("");
+  document.querySelector('.nav-item.on')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+}
+
+// Sections that are planned but not built yet: say what they'll do.
+const SOON = {
+  payouts: ["PayPal payouts", "Replaces the PayPal payout sheet.", ["Who to pay this week, per campaign and creator", "PayPal batch file ready to upload", "Paid status written back to the campaign and its creator costs"]],
+  "creator-payments": ["Creator payments", "Every creator deal in one place.", ["Agreed price per creator and campaign, in any currency", "What's paid and what's still owed", "Payment details kept private to the team"]],
+  invoices: ["Invoices", "Client invoicing per PO number.", ["Draft, sent and paid, matching the Campaign Overview invoicing columns", "Linked to the campaign's price and invoicing entity", "Reminders for anything overdue"]],
+  analytics: ["Analytics", "Performance across every campaign.", ["Cost per view by market, client and DRI", "Best-performing creators and sounds", "Month and year totals"]],
+};
+function renderSoon(key) {
+  const [title, lead, points] = SOON[key];
+  app.innerHTML = `<div class="page-head"><div><h1>${esc(title)}</h1><p class="voice muted" style="margin:8px 0 0;font-size:20px">${esc(lead)}</p></div></div>
+    <section class="panel soon-panel"><span class="badge">Coming soon</span>
+      <p>This part of Stellar OS isn't built yet. What it will do:</p>
+      <ul>${points.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></section>`;
+}
+
+// ---------- Campaign overview: the backlog sheet, linked to the tracker ----------
+// The sheet ("Copy of CAMPAIGN OVERVIEW FY26/27") is mirrored into overview_snapshot every 5 minutes.
+// Each row is matched to a tracker campaign by Artist + Song + PO (or the row the tracker last wrote).
+const SHEET_URL = "https://docs.google.com/spreadsheets/d/1e3ce1Q7uW5iH4FQqN9Oo_Dw5Y51UcBx87nOAz1wp6Tk/edit#gid=1649746959";
+const normKey = (...v) => v.map((x) => String(x ?? "").trim().toLowerCase().replace(/\s+/g, " ")).join("|");
+const blankCell = (v) => { const t = String(v ?? "").trim(); return t === "" || t === "Select"; };
+const sheetNumber = (v) => { const t = String(v ?? "").replace(/[^\d.\-]/g, ""); return t && !isNaN(Number(t)) ? Number(t) : null; };
+const OV_STATUS = { Upcoming: "draft", Active: "active", "On Hold": "on_hold", Completed: "finished" };
+const ALLOC_COLUMNS = ["US", "Brazil", "Mexico", "All LATAM", "Canada", "UK", "Germany", "France", "Africa", "Other", "Japan", "Korea", "China", "India", "SEA", "Global"];
+
+// "01/07" (and "01/07/26") → an ISO date, picking the year that puts it closest to today.
+function sheetDate(v) {
+  const m = String(v ?? "").trim().match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+  if (!m) return null;
+  const d = Number(m[1]), mo = Number(m[2]);
+  if (d < 1 || d > 31 || mo < 1 || mo > 12) return null;
+  const pad = (x) => String(x).padStart(2, "0");
+  if (m[3]) return `${m[3].length === 2 ? "20" + m[3] : m[3]}-${pad(mo)}-${pad(d)}`;
+  const now = new Date(), y = now.getFullYear();
+  const best = [y - 1, y, y + 1].map((yy) => `${yy}-${pad(mo)}-${pad(d)}`).sort((a, b) => Math.abs(Date.parse(a) - now) - Math.abs(Date.parse(b) - now))[0];
+  return best;
+}
+// "2 weeks", "3 months", "10 days" → an end date after the start
+function endFromDuration(start, v) {
+  const m = String(v ?? "").toLowerCase().match(/(\d+)\s*(day|week|month)/);
+  if (!start || !m) return null;
+  const k = Number(m[1]), dt = new Date(start + "T00:00:00Z");
+  if (m[2] === "day") dt.setUTCDate(dt.getUTCDate() + k - 1);
+  else if (m[2] === "week") dt.setUTCDate(dt.getUTCDate() + k * 7 - 1);
+  else { dt.setUTCMonth(dt.getUTCMonth() + k); dt.setUTCDate(dt.getUTCDate() - 1); }
+  return dt.toISOString().slice(0, 10);
+}
+
+// Turn a sheet row into the campaign form's fields, for "Create in tracker".
+function prefillFromRow(r) {
+  const g = (h) => (blankCell(r.f[h]) ? null : String(r.f[h]).trim());
+  const start = sheetDate(g("Start Date"));
+  const cur = (g("Currency") ?? "").toUpperCase().replace("JYP", "JPY");
+  const markets = ALLOC_COLUMNS.map((m) => ({ market: m, amount: sheetNumber(r.f[m]) })).filter((x) => x.amount);
+  return {
+    campaign: {
+      artist: g("Artist Name"), song: g("Song Name (s) or Project Name"), po_number: g("Stellar PO no."),
+      status: OV_STATUS[g("Status")] ?? "draft", release_type: RELEASE_TYPES.includes(g("Type (NR or Cat)")) ? g("Type (NR or Cat)") : null,
+      client: g("Client"), invoicing_entity: g("Invoicing Entity"), client_country: g("Client Location (Country)"),
+      client_market: CLIENT_MARKETS.includes(g("Client Market")) ? g("Client Market") : null,
+      client_contact_name: g("Client Contact Name"), client_contact_email: g("Client Contact eMail"),
+      label_type: LABEL_TYPES.includes(g("Major / Indie / Other")) ? g("Major / Indie / Other") : null,
+      under_nda: g("Under NDA?") === "Yes" ? true : g("Under NDA?") === "No" ? false : null,
+      comms_owner: g("Stellar DRI"), campaign_type: g("Campaign Type"),
+      start_date: start, end_date: endFromDuration(start, g("Duration")),
+      budget: sheetNumber(g("Price")), currency: /^[A-Z]{3}$/.test(cur) ? cur : null,
+      notes: g("Comments"), folders_by_market: true, invoiced: g("Invoice Status") === "Invoiced",
+    },
+    markets,
+    sheetRow: r.row,
+  };
+}
+
+async function renderOverview(token) {
+  app.innerHTML = `<p class="muted pad">Loading the campaign overview…</p>`;
+  const [snap, camps, syncs] = await Promise.all([
+    sb.from("overview_snapshot").select("*").eq("id", 1).maybeSingle(),
+    fetchAll(() => sb.from("campaign_summary").select("id,artist,song,po_number,status,total_plays,live_posts").order("created_at")).catch(() => []),
+    sb.from("campaign_sheet_sync").select("campaign_id,sheet_row,last_error"),
+  ]);
+  if (token !== routeToken) return;
+  const s = snap.data ?? {};
+  const headers = s.headers ?? [];
+  // Section of each column (row 1 of the sheet is merged across each section).
+  let sec = "";
+  const sectionOf = (s.sections ?? []).map((x) => (sec = String(x || "").trim() || sec));
+  const firstIndex = {};
+  headers.forEach((h, i) => { if (!(h in firstIndex)) firstIndex[h] = i; });
+  const rows = (s.rows ?? []).map((r) => {
+    const f = {};
+    for (const h in firstIndex) f[h] = r.values[firstIndex[h]];
+    return { row: r.row, values: r.values, f };
+  });
+  const byKey = new Map((camps ?? []).filter((c) => c.po_number).map((c) => [normKey(c.artist, c.song, c.po_number), c]));
+  const byRow = new Map((syncs.data ?? []).filter((x) => x.sheet_row).map((x) => [x.sheet_row, (camps ?? []).find((c) => c.id === x.campaign_id)]));
+  for (const r of rows) r.camp = byKey.get(normKey(r.f["Artist Name"], r.f["Song Name (s) or Project Name"], r.f["Stellar PO no."])) ?? byRow.get(r.row) ?? null;
+  const linked = new Set(rows.map((r) => r.camp?.id).filter(Boolean));
+  const notInSheet = (camps ?? []).filter((c) => !linked.has(c.id));
+
+  const v = (r, h) => (blankCell(r.f[h]) ? "" : String(r.f[h]).trim());
+  const uniq = (h) => [...new Set(rows.map((r) => v(r, h)).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const st = { q: "", status: sessionStorageGet("ov-status") ?? "", dri: "", market: "", invoice: "", tracker: "", sort: "sheet" };
+  const totalsBy = (list) => {
+    const t = {};
+    const k = {};
+    for (const r of list) {
+      const p = sheetNumber(r.f["Price"]); const c = v(r, "Currency").toUpperCase().replace("JYP", "JPY");
+      if (p && c) { t[c] = (t[c] ?? 0) + p; k[c] = (k[c] ?? 0) + 1; }
+    }
+    // Most-used currency first; amounts in different currencies are never added together.
+    return Object.entries(t).sort((a, b) => k[b[0]] - k[a[0]] || b[1] - a[1]);
+  };
+  const fmtMoney = ([c, x]) => `${esc(c)} ${Math.round(x).toLocaleString("en-GB")}`;
+  const moneyLine = (pairs) => pairs.length ? `${fmtMoney(pairs[0])}${pairs.length > 1 ? `<span class="ov-more">${pairs.slice(1).map(fmtMoney).join(" · ")}</span>` : ""}` : "–";
+  const ago = s.synced_at ? timeAgo(s.synced_at) : null;
+
+  app.innerHTML = `
+    <div class="page-head">
+      <div><h1>Campaign overview</h1>
+        <p class="muted small" style="margin:6px 0 0" id="ov-sync">${s.sheet ? `From <a href="${SHEET_URL}" target="_blank" rel="noopener">${esc(s.sheet)}</a>` : "From the Campaign Overview sheet"}${ago ? ` · updated ${esc(ago)}` : ""}${s.last_error && (!s.synced_at || s.last_attempt_at > s.synced_at) ? ` · <span class="warn-note">last refresh failed: ${esc(s.last_error)}</span>` : ""}</p></div>
+      <div class="actions" style="margin:0">
+        <button type="button" id="ov-refresh">Refresh from sheet</button>
+        <a class="btn primary" href="#/new">New campaign</a>
+      </div>
+    </div>
+    ${!rows.length ? `<div class="panel"><p>${s.synced_at ? "The sheet has no campaigns yet." : "The overview hasn't been read from the sheet yet. Click <b>Refresh from sheet</b>; if that fails, the sheet script needs its latest version deployed."}</p></div>` : `
+    <div class="stats ov-stats" id="ov-stats"></div>
+    <div class="filters">
+      <input id="ov-q" type="search" placeholder="Search artist, song, client, PO or contact" aria-label="Search the overview">
+      <select id="ov-status" aria-label="Status"><option value="">All statuses</option>${uniq("Status").map((x) => `<option>${esc(x)}</option>`).join("")}</select>
+      <select id="ov-dri" aria-label="Stellar DRI"><option value="">All DRIs</option>${uniq("Stellar DRI").map((x) => `<option>${esc(x)}</option>`).join("")}</select>
+      <select id="ov-market" aria-label="Client market"><option value="">All client markets</option>${uniq("Client Market").map((x) => `<option>${esc(x)}</option>`).join("")}</select>
+      <select id="ov-invoice" aria-label="Invoice status"><option value="">Invoiced or not</option>${uniq("Invoice Status").map((x) => `<option>${esc(x)}</option>`).join("")}</select>
+      <select id="ov-tracker" aria-label="In the tracker"><option value="">In the tracker or not</option><option value="yes">In the tracker</option><option value="no">Not in the tracker</option></select>
+      <select id="ov-sort" aria-label="Sort"><option value="sheet">Sheet order</option><option value="newest">Newest first</option><option value="start">Start date</option><option value="price">Highest price</option></select>
+    </div>
+    <div id="ov-list"></div>`}
+    ${notInSheet.length ? `<div class="panel ov-missing"><h3>In the tracker, not in the sheet yet</h3>
+      <p class="small muted">These campaigns are sent to the sheet once they have a PO number.</p>
+      <ul>${notInSheet.map((c) => `<li><a href="#/c/${esc(c.id)}">${esc(c.artist)}${c.song ? ` – ${esc(c.song)}` : ""}</a> <span class="muted small">${c.po_number ? esc(c.po_number) + " · on its way" : "no PO number"}</span></li>`).join("")}</ul></div>` : ""}`;
+
+  document.getElementById("ov-refresh").onclick = async (e) => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = "Reading the sheet…";
+    const { data, error } = await sb.functions.invoke("sheet-sync", { body: { action: "pull_overview" } });
+    if (token !== routeToken) return;
+    if (error || data?.error) { b.disabled = false; b.textContent = "Refresh from sheet"; toast(`Couldn't read the sheet: ${data?.error ?? error.message}`); return; }
+    toast(`Read ${data.rows} campaigns from the sheet`);
+    renderOverview(++routeToken);
+  };
+  if (!rows.length) return;
+
+  const listEl = document.getElementById("ov-list");
+  const open = new Set();
+  const filtered = () => {
+    const q = st.q.trim().toLowerCase();
+    let list = rows.filter((r) =>
+      (!st.status || v(r, "Status") === st.status) && (!st.dri || v(r, "Stellar DRI") === st.dri) &&
+      (!st.market || v(r, "Client Market") === st.market) && (!st.invoice || v(r, "Invoice Status") === st.invoice) &&
+      (!st.tracker || (st.tracker === "yes") === !!r.camp) &&
+      (!q || ["Artist Name", "Song Name (s) or Project Name", "Client", "Stellar PO no.", "Client Contact Name", "Client Contact eMail", "Invoicing Entity"].some((h) => v(r, h).toLowerCase().includes(q))));
+    if (st.sort === "newest") list = [...list].reverse();
+    if (st.sort === "start") list = [...list].sort((a, b) => String(sheetDate(v(b, "Start Date")) ?? "").localeCompare(String(sheetDate(v(a, "Start Date")) ?? "")));
+    if (st.sort === "price") list = [...list].sort((a, b) => (sheetNumber(v(b, "Price")) ?? 0) - (sheetNumber(v(a, "Price")) ?? 0));
+    return list;
+  };
+  const statusChip = (x) => x ? `<span class="status ${esc((OV_STATUS[x] ?? "").replace("draft", "upcoming"))}">${esc(x)}</span>` : `<span class="muted small">–</span>`;
+  const detail = (r) => {
+    const groups = [];
+    headers.forEach((h, i) => {
+      if (!h || h === "#" || blankCell(r.values[i])) return;
+      const name = sectionOf[i] || "Details";
+      let g = groups.find((x) => x.name === name);
+      if (!g) groups.push((g = { name, items: [] }));
+      g.items.push([h, r.values[i]]);
+    });
+    return `<div class="ov-detail">${groups.map((g) => `<div class="ov-group"><h4>${esc(g.name.replace(/^\d+\.\s*/, ""))}</h4><dl>${g.items.map(([h, x]) => `<dt>${esc(h)}</dt><dd>${esc(x)}</dd>`).join("")}</dl></div>`).join("")}
+      <p class="small muted" style="grid-column:1/-1;margin:0">Row ${r.row} of the sheet. ${r.camp ? "Sections 1–4 and the budget allocations are kept up to date by the tracker; edit them in the tracker." : "Edit this row in the sheet, or create it in the tracker to manage it from here."}</p></div>`;
+  };
+  function drawStats(list) {
+    const active = list.filter((r) => v(r, "Status") === "Active");
+    const notInv = list.filter((r) => v(r, "Invoice Status") && v(r, "Invoice Status") !== "Invoiced");
+    document.getElementById("ov-stats").innerHTML = `
+      <div class="stat"><div class="n">${n(list.length)}</div><div class="l">Campaigns${list.length !== rows.length ? ` of ${n(rows.length)}` : ""}</div></div>
+      <div class="stat"><div class="n">${n(active.length)}</div><div class="l">Active</div></div>
+      <div class="stat money"><div class="n ov-money">${moneyLine(totalsBy(list))}</div><div class="l">Total price</div></div>
+      <div class="stat money"><div class="n ov-money">${moneyLine(totalsBy(notInv))}</div><div class="l">Not invoiced yet (${n(notInv.length)})</div></div>
+      <div class="stat"><div class="n">${n(list.filter((r) => r.camp).length)}</div><div class="l">In the tracker</div></div>`;
+  }
+  function draw() {
+    const list = filtered();
+    drawStats(list);
+    if (!list.length) { listEl.innerHTML = `<div class="panel"><p>No campaigns match these filters.</p></div>`; return; }
+    listEl.innerHTML = `<div class="table-wrap ov-table"><table>
+      <thead><tr><th>Status</th><th>Artist and song</th><th>Client</th><th>DRI</th><th>Market</th><th>Start</th><th class="num">Price</th><th>Invoice</th><th>Tracker</th></tr></thead>
+      <tbody>${list.map((r) => `
+        <tr class="ov-row${open.has(r.row) ? " open" : ""}" data-row="${r.row}" tabindex="0" aria-expanded="${open.has(r.row)}">
+          <td>${statusChip(v(r, "Status"))}</td>
+          <td><div class="artist">${esc(v(r, "Artist Name") || "–")}</div><div class="song small">${esc(v(r, "Song Name (s) or Project Name"))}</div>${v(r, "Stellar PO no.") ? `<div class="muted small ov-po">${esc(v(r, "Stellar PO no."))}</div>` : ""}</td>
+          <td><div>${esc(v(r, "Client"))}</div><div class="muted small">${esc(v(r, "Client Market"))}</div></td>
+          <td>${esc(v(r, "Stellar DRI"))}</td>
+          <td class="small">${esc(v(r, "Campaign Market"))}</td>
+          <td class="small">${esc(v(r, "Start Date"))}${v(r, "Duration") ? `<div class="muted">${esc(v(r, "Duration"))}</div>` : ""}</td>
+          <td class="num">${v(r, "Price") ? `${esc(v(r, "Price"))} <span class="muted small">${esc(v(r, "Currency"))}</span>` : "–"}</td>
+          <td class="small">${v(r, "Invoice Status") === "Invoiced" ? `<span class="status finished">Invoiced</span>` : esc(v(r, "Invoice Status"))}${v(r, "Paid") === "Paid" ? ` <span class="status active">Paid</span>` : ""}</td>
+          <td>${r.camp
+            ? `<a class="btn small-btn" href="#/c/${esc(r.camp.id)}" data-stop>Open</a><div class="muted small">${r.camp.live_posts ? `${compact(r.camp.total_plays)} plays` : "no posts yet"}</div>`
+            : `<button type="button" class="small-btn" data-create="${r.row}">Create</button>`}</td>
+        </tr>
+        ${open.has(r.row) ? `<tr class="ov-detail-row"><td colspan="9">${detail(r)}</td></tr>` : ""}`).join("")}</tbody></table></div>`;
+    listEl.querySelectorAll(".ov-row").forEach((tr) => {
+      const toggle = () => { const k = Number(tr.dataset.row); if (open.has(k)) open.delete(k); else open.add(k); draw(); };
+      tr.onclick = (e) => { if (e.target.closest("[data-stop],[data-create]")) return; toggle(); };
+      tr.onkeydown = (e) => { if (e.key === "Enter" && e.target === tr) toggle(); };
+    });
+    listEl.querySelectorAll("[data-create]").forEach((b) => (b.onclick = () => {
+      const r = rows.find((x) => x.row === Number(b.dataset.create));
+      sessionStorageSet("prefill", JSON.stringify(prefillFromRow(r)));
+      go("#/new");
+    }));
+  }
+  const bind = (elId, key) => { const el = document.getElementById(elId); el.value = st[key]; el.oninput = () => { st[key] = el.value; if (key === "status") sessionStorageSet("ov-status", el.value); draw(); }; };
+  bind("ov-q", "q"); bind("ov-status", "status"); bind("ov-dri", "dri"); bind("ov-market", "market"); bind("ov-invoice", "invoice"); bind("ov-tracker", "tracker"); bind("ov-sort", "sort");
+  draw();
 }
 
 // ---------- campaign list ----------
@@ -167,6 +424,16 @@ async function renderForm(token, id) {
   let c = { status: "active", currency: "USD", invoiced: false, folders_by_market: true };
   let rows = [];
   let sync = null;
+  let fromSheet = null;
+  if (!id) {
+    // "Create in tracker" on the Campaign overview hands over the sheet row's values.
+    try { fromSheet = JSON.parse(sessionStorageGet("prefill") ?? "null"); } catch { fromSheet = null; }
+    sessionStorageSet("prefill", "null");
+    if (fromSheet) {
+      c = { ...c, ...Object.fromEntries(Object.entries(fromSheet.campaign).filter(([, x]) => x !== null && x !== undefined)) };
+      rows = fromSheet.markets ?? [];
+    }
+  }
   const allMarkets = await marketList();
   if (id) {
     const [{ data, error }, m, s] = await Promise.all([
@@ -190,6 +457,7 @@ async function renderForm(token, id) {
 
   app.innerHTML = `
     <div class="page-head"><h1>${id ? "Edit campaign" : "New campaign"}</h1></div>
+    ${fromSheet ? `<p class="panel small prefill-note">Filled in from row ${esc(fromSheet.sheetRow)} of the Campaign Overview sheet. Check the details, then create it: the tracker will keep that same row up to date.</p>` : ""}
     <form id="cf" class="panel form-sections" novalidate>
       <h2>Campaign</h2>
       <div class="form-grid">
@@ -242,7 +510,7 @@ async function renderForm(token, id) {
       <div id="form-msg"></div>
       <div class="actions">
         <button class="primary" type="submit">${id ? "Save changes" : "Create campaign"}</button>
-        <a class="btn" href="${id ? `#/c/${esc(id)}` : "#/"}">Cancel</a>
+        <a class="btn" href="${id ? `#/c/${esc(id)}` : "#/campaigns"}">Cancel</a>
         ${id ? `<button type="button" id="delete" class="danger" style="margin-left:auto">Delete campaign</button>` : ""}
       </div>
     </form>`;
@@ -372,7 +640,7 @@ async function renderForm(token, id) {
     if (!confirm(`Delete "${c.artist}${c.song ? ` – ${c.song}` : ""}" and all its posts? This can't be undone. Its row in the Campaign Overview sheet stays as it is.`)) return;
     const { error } = await sb.from("campaigns").delete().eq("id", id);
     if (error) { $("form-msg").innerHTML = fail(error); return; }
-    toast("Campaign deleted"); go("#/");
+    toast("Campaign deleted"); go("#/campaigns");
   };
 }
 
@@ -449,7 +717,7 @@ async function renderCampaign(token, id) {
     <section class="band on-blue">
       <div class="hero">
         <div>
-          <a href="#/" class="back">All campaigns</a>
+          <a href="#/campaigns" class="back">All campaigns</a>
           <h1>${esc(c.artist)}</h1>
           ${c.song ? `<div class="voice">${esc(c.song)}</div>` : ""}
           <div class="meta">
@@ -1105,7 +1373,7 @@ function renderReport(token, artist) {
       return !error;
     },
     header: `<div class="client-view-note">
-        <a href="#/" class="back">All campaigns</a>
+        <a href="#/campaigns" class="back">All campaigns</a>
         <span>Client view: what a client link shows with every setting on. Upcoming campaigns appear here but not on client links.</span>
         <button type="button" id="rep-share" aria-expanded="false" aria-controls="share-panel">Share with client</button>
       </div>`,
@@ -1231,6 +1499,11 @@ async function route() {
   renderWho(user);
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   window.scrollTo(0, 0);
+  const section = !parts[0] || parts[0] === "overview" ? "overview" : SOON[parts[0]] ? parts[0] : "campaigns";
+  renderNav(section);
+  if (section === "overview") return renderOverview(token);
+  if (SOON[parts[0]]) return renderSoon(parts[0]);
+  if (parts[0] === "campaigns") return renderList(token);
   if (parts[0] === "new") return renderForm(token);
   if (parts[0] === "report" && parts[1]) return renderReport(token, decodeURIComponent(parts.slice(1).join("/")));
   if (parts[0] === "c" && parts[1]) {

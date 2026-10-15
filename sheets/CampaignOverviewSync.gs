@@ -27,6 +27,7 @@ function doPost(e) {
   if (!body || body.secret !== SECRET) return out({ ok: false, error: "Not allowed" });
   if (body.action === "ping") return out({ ok: true, sheet: getSheet_().getName() });
   if (body.action === "max_po") return out({ ok: true, max: maxPo_() });
+  if (body.action === "export") return out(export_());
 
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -95,6 +96,24 @@ function upsert_(body) {
   });
   SpreadsheetApp.flush();
   return { ok: true, row: row, key: body.key, skipped: skipped, missing: missing };
+}
+
+// Every filled-in row of the tab, as the sheet shows it, for the platform's Campaign Overview page.
+function export_() {
+  const sh = getSheet_();
+  const lastCol = sh.getLastColumn(), lastRow = sh.getLastRow();
+  const sections = sh.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  const headers = sh.getRange(HEADER_ROW, 1, 1, lastCol).getDisplayValues()[0];
+  const n = Math.max(lastRow - FIRST_DATA_ROW + 1, 0);
+  const values = n ? sh.getRange(FIRST_DATA_ROW, 1, n, lastCol).getDisplayValues() : [];
+  const col = (name) => headers.map(norm_).indexOf(norm_(name));
+  const cA = col("Artist Name"), cS = col("Song Name (s) or Project Name"), cP = col("Stellar PO no.");
+  const rows = [];
+  values.forEach((r, i) => {
+    if (blank_(r[cA]) && blank_(r[cS]) && blank_(r[cP])) return;
+    rows.push({ row: FIRST_DATA_ROW + i, values: r });
+  });
+  return { ok: true, sheet: sh.getName(), sections: sections, headers: headers, rows: rows };
 }
 
 // Highest "#ST1234"-style PO number in the tab, as a number (0 if none).

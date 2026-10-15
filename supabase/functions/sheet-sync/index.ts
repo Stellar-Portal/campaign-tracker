@@ -5,6 +5,9 @@
 // something is waiting. It takes no input: it only pushes the tracker's current data for
 // queued campaigns, so calling it is harmless.
 //
+// It also mirrors the sheet into overview_snapshot for the Campaign Overview page ("pull_overview"),
+// and suggests the next free PO number ("next_po").
+//
 // The sheet side is an Apps Script web app (sheets/CampaignOverviewSync.gs) that finds the row
 // by Artist + Song + PO and writes only the columns the tracker owns.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -152,6 +155,22 @@ Deno.serve(async (req) => {
   // A signed-in team member asking for the next PO number (new campaign form).
   let body: any = {};
   try { body = await req.json(); } catch { /* scheduled calls send {} */ }
+  // Mirror the sheet for the Campaign Overview page: every 5 minutes (schedule) or "Refresh" (team member).
+  if (body?.action === "pull_overview") {
+    const fromCron = !!cfg?.sheet_sync_secret && req.headers.get("x-cron-secret") === cfg.sheet_sync_secret;
+    if (!fromCron && !(await teamMember(req))) return json({ error: "Not allowed" }, 401);
+    if (!cfg?.sheet_sync_url) return json({ error: "The sheet connection isn't set up yet." }, 503);
+    const now = new Date().toISOString();
+    try {
+      const x = await callSheet(cfg, { action: "export" });
+      await db.from("overview_snapshot").update({ sheet: x.sheet, sections: x.sections, headers: x.headers, rows: x.rows, synced_at: now, last_attempt_at: now, last_error: null }).eq("id", 1);
+      return json({ ok: true, rows: x.rows.length, synced_at: now });
+    } catch (e) {
+      const msg = String((e as Error).message).slice(0, 300);
+      await db.from("overview_snapshot").update({ last_attempt_at: now, last_error: msg }).eq("id", 1);
+      return json({ error: msg }, 502);
+    }
+  }
   if (body?.action === "next_po") {
     if (!(await teamMember(req))) return json({ error: "Sign in as a Stellar team member." }, 401);
     if (!cfg?.sheet_sync_url) return json({ po: null, sheet_error: "not configured" });
