@@ -86,7 +86,17 @@ export function buildFields(c: any): Record<string, unknown> {
 }
 
 // POST to the Apps Script web app. It runs the request, then redirects to a one-time URL with the answer.
+// While a new script version is being published Google briefly answers "Script function not found",
+// so a failed call is retried once after a short pause before it counts as an error.
 async function callSheet(cfg: Record<string, string>, payload: Record<string, unknown>) {
+  try { return await callSheetOnce(cfg, payload); } catch (e) {
+    const msg = String((e as Error).message);
+    if (/Not allowed|Nothing identifies|More than one row/.test(msg)) throw e;   // real answers from the script
+    await new Promise((r) => setTimeout(r, 2000));
+    return await callSheetOnce(cfg, payload);
+  }
+}
+async function callSheetOnce(cfg: Record<string, string>, payload: Record<string, unknown>) {
   let res = await fetch(cfg.sheet_sync_url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
