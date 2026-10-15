@@ -17,7 +17,7 @@ async function call(body) {
 function renderGone(msg) {
   document.body.classList.add("signin");
   app.innerHTML = `<section class="login on-blue">
-    <img class="logo" src="assets/stellar-white.png" alt="Stellar" width="160" height="44">
+    <img class="logo" src="assets/stellar-blue.png" alt="Stellar" width="160" height="44">
     <h1>Campaign <em>report</em></h1>
     <p>${esc(msg ?? "This link isn't active. Ask your Stellar contact for a new one.")}</p></section>`;
 }

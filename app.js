@@ -54,7 +54,7 @@ async function renderLogin(message) {
   document.body.classList.add("signin");
   app.innerHTML = `
     <section class="login on-blue">
-      <img class="logo" src="assets/stellar-white.png" alt="Stellar" width="160" height="44">
+      <img class="logo" src="assets/stellar-blue.png" alt="Stellar" width="160" height="44">
       <h1>Campaign <em>tracker</em></h1>
       <p class="small">For the Stellar team. Ask Sam for an account if you don't have one.</p>
       <form id="login">
@@ -691,7 +691,7 @@ async function route() {
   if (!(await isTeamMember())) {
     document.body.classList.add("signin");
     app.innerHTML = `<section class="login no-access on-blue">
-      <img class="logo" src="assets/stellar-white.png" alt="Stellar" width="160" height="44">
+      <img class="logo" src="assets/stellar-blue.png" alt="Stellar" width="160" height="44">
       <h1>No access <em>yet</em></h1>
       <p>${esc(user.email)} isn't on the Stellar team list. Ask Sam to add this email, then sign in again.</p>
       <div class="actions"><button type="button" id="signout2">Sign out</button></div></section>`;

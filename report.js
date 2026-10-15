@@ -191,7 +191,7 @@ export function renderWall(el, list, ctx, { shown = 48, view = "grid", onMore } 
           <button type="button" class="cover" data-i="${i}" aria-label="Preview @${esc(p.creator?.username ?? "")}'s video">
             <img data-vid="${esc(p.video_id)}" alt="" loading="lazy" ${ctx.covers[p.video_id] ? `src="${esc(ctx.covers[p.video_id])}"` : "hidden"} onerror="this.hidden=true">
             ${p.gone ? `<span class="chip tl">No longer on TikTok</span>` : ctx.showCountry !== false && flag(p.country) ? `<span class="chip tl" title="${esc(regionName(p.country))}">${flag(p.country)}</span>` : ""}
-            <span class="chip tr">${esc(ago(p.published_at))}</span>
+            ${p.gone ? "" : `<span class="chip tr">${esc(ago(p.published_at))}</span>`}
             <span class="plays">${compact(p.plays)}</span>
           </button>
           ${actions(p, i)}
@@ -432,7 +432,7 @@ export function mountReport(root, api) {
     const showPosts = S.posts && (api.mode === "team" || posts.length);
     root.innerHTML = `
       <section class="band on-blue sh-band">
-        ${api.mode === "client" ? `<div class="sh-top"><img src="assets/stellar-white.png" alt="Stellar" width="80" height="22"><span>Campaign report</span></div>` : ""}
+        ${api.mode === "client" ? `<div class="sh-top"><img src="assets/stellar-blue.png" alt="Stellar" width="80" height="22"><span>Campaign report</span></div>` : ""}
         ${api.header ?? ""}
         <div class="hero">
           <div>
