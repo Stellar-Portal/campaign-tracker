@@ -1,7 +1,7 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015e";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261015e";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015e";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015f";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261015f";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015f";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -290,17 +290,66 @@ async function renderOverview(token) {
     return list;
   };
   const statusChip = (x) => x ? `<span class="status ${esc((OV_STATUS[x] ?? "").replace("draft", "upcoming"))}">${esc(x)}</span>` : `<span class="muted small">–</span>`;
+  // One campaign, laid out for reading: key numbers first, then Campaign / Client / Invoicing.
+  const COUNTRY_FIX = { UK: "GB", SP: "ES", AUS: "AU" };
+  const place = (x) => {
+    if (!x) return "";
+    const code = COUNTRY_FIX[x.toUpperCase()] ?? x.toUpperCase();
+    return /^[A-Z]{2}$/.test(code) ? `${flag(code)} ${esc(regionName(code))}` : esc(x);
+  };
+  const longDate = (x) => {
+    const d = sheetDate(x);
+    return d ? new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : esc(x);
+  };
+  const line = (label, value) => (value ? `<div class="ovd-line"><span>${esc(label)}</span><b>${value}</b></div>` : "");
   const detail = (r) => {
-    const groups = [];
-    headers.forEach((h, i) => {
-      if (!h || h === "#" || blankCell(r.values[i])) return;
-      const name = sectionOf[i] || "Details";
-      let g = groups.find((x) => x.name === name);
-      if (!g) groups.push((g = { name, items: [] }));
-      g.items.push([h, r.values[i]]);
-    });
-    return `<div class="ov-detail">${groups.map((g) => `<div class="ov-group"><h4>${esc(g.name.replace(/^\d+\.\s*/, ""))}</h4><dl>${g.items.map(([h, x]) => `<dt>${esc(h)}</dt><dd>${esc(x)}</dd>`).join("")}</dl></div>`).join("")}
-      <p class="small muted" style="grid-column:1/-1;margin:0">Row ${r.row} of the sheet. ${r.camp ? "Sections 1–4 and the budget allocations are kept up to date by the tracker; edit them in the tracker." : "Edit this row in the sheet, or create it in the tracker to manage it from here."}</p></div>`;
+    const cur = v(r, "Currency");
+    const price = sheetNumber(v(r, "Price")), cost = sheetNumber(v(r, "Campaign Cost"));
+    const amt = (x) => (x == null ? "" : `${Math.round(x).toLocaleString("en-GB")} <span class="muted">${esc(cur)}</span>`);
+    const allocs = ALLOC_COLUMNS.map((m, i) => ({ m, x: sheetNumber(v(r, m)), region: i < 5 ? "West" : i < 10 ? "Central" : i < 15 ? "East" : "Global" })).filter((a) => a.x);
+    const allocTotal = allocs.reduce((t, a) => t + a.x, 0);
+    const invoiced = v(r, "Invoice Status") === "Invoiced", paid = v(r, "Paid") === "Paid";
+    const email = v(r, "Client Contact eMail");
+    const contact = [v(r, "Client Contact Name") && esc(v(r, "Client Contact Name")), email && `<a href="mailto:${esc(email)}">${esc(email)}</a>`].filter(Boolean).join("<br>");
+    const entity = v(r, "Invoicing Entity") && v(r, "Invoicing Entity") !== v(r, "Client") ? esc(v(r, "Invoicing Entity")) : "";
+    const sheetLink = `${SHEET_URL}&range=A${r.row}`;
+    return `<div class="ovd">
+      <div class="ovd-kpis">
+        <div><span>Price</span><b>${price != null ? amt(price) : "–"}</b></div>
+        <div><span>Campaign cost</span><b>${cost != null ? amt(cost) : "–"}</b></div>
+        <div><span>Margin</span><b>${v(r, "Margin") ? esc(v(r, "Margin")) : "–"}</b></div>
+        <div><span>Invoice</span><b>${invoiced ? `<span class="status finished">Invoiced</span>` : `<span class="status upcoming">${esc(v(r, "Invoice Status") || "Not invoiced")}</span>`}${v(r, "Invoice #") ? ` <span class="muted small">#${esc(v(r, "Invoice #"))}</span>` : ""}</b></div>
+        <div><span>Payment</span><b>${paid ? `<span class="status active">Paid</span>${v(r, "Date Paid") ? ` <span class="muted small">${esc(longDate(v(r, "Date Paid")))}</span>` : ""}` : `<span class="muted">Not paid</span>`}</b></div>
+      </div>
+      <div class="ovd-cards">
+        <section class="ovd-card"><h4>Campaign</h4>
+          ${line("Starts", v(r, "Start Date") ? `${longDate(v(r, "Start Date"))}${v(r, "Duration") ? ` <span class="muted">· ${esc(v(r, "Duration"))}</span>` : ""}` : "")}
+          ${line("Type", [v(r, "Type (NR or Cat)"), v(r, "Campaign Type")].filter(Boolean).map(esc).join(" · "))}
+          ${line("Regions", esc(v(r, "Campaign Market")))}
+          ${line("Stellar DRI", esc(v(r, "Stellar DRI")))}
+          ${allocs.length ? `<div class="ovd-alloc">
+            <div class="ovd-alloc-head">Budget split</div>
+            <div class="ovd-bar">${allocs.map((a, i) => `<i style="flex:${a.x};background:${["#0626c7", "#2a78d6", "#7aa7e6", "#b9cff2", "#1d1d1f"][i % 5]}" title="${esc(a.m)}"></i>`).join("")}</div>
+            ${allocs.map((a, i) => `<div class="ovd-line"><span><i class="dot" style="background:${["#0626c7", "#2a78d6", "#7aa7e6", "#b9cff2", "#1d1d1f"][i % 5]}"></i>${esc(a.m)}</span><b>${amt(a.x)}${allocTotal ? ` <span class="muted small">${Math.round((a.x / allocTotal) * 100)}%</span>` : ""}</b></div>`).join("")}
+          </div>` : `<p class="muted small">No budget split yet.</p>`}
+        </section>
+        <section class="ovd-card"><h4>Client</h4>
+          ${line("Client", esc(v(r, "Client")))}
+          ${line("Invoiced to", entity)}
+          ${line("Based in", place(v(r, "Client Location (Country)")))}
+          ${line("Client market", esc(v(r, "Client Market")))}
+          ${line("Label", esc(v(r, "Major / Indie / Other")))}
+          ${line("Under NDA", esc(v(r, "Under NDA?")))}
+          ${line("Contact", contact)}
+        </section>
+        ${v(r, "Comments") ? `<section class="ovd-card"><h4>Comments</h4><p>${esc(v(r, "Comments"))}</p></section>` : ""}
+      </div>
+      <div class="ovd-foot">
+        ${r.camp ? `<a class="btn small-btn primary" href="#/c/${esc(r.camp.id)}">Open in tracker</a>` : `<button type="button" class="small-btn primary" data-create="${r.row}">Create in tracker</button>`}
+        <a class="btn small-btn" href="${sheetLink}" target="_blank" rel="noopener">Row ${r.row} in the sheet</a>
+        <span class="muted small">${r.camp ? "Campaign details and budget split are kept in sync by the tracker; invoicing is filled in on the sheet." : "Not in the tracker yet. Create it to track posts and keep this row in sync."}</span>
+      </div>
+    </div>`;
   };
   function drawStats(list) {
     const active = list.filter((r) => v(r, "Status") === "Active");
