@@ -683,3 +683,4 @@ export function mountReport(root, api) {
   const onResize = () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (data && root.isConnected && root.querySelector("#panel")) renderPanel(); }, 200); };
   window.addEventListener("resize", onResize);
 }
+export { flag, regionName, ago, engagement, ICON, copyLink, pct, compact };

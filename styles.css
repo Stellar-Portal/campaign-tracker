@@ -398,6 +398,54 @@ tr.picked td { background: var(--accent-tint); }
 .pm-folder select { width: auto; max-width: 180px; padding: 7px 12px; border-radius: var(--pill); font-size: 13px; }
 .voice .folder-name { display: inline-block; margin-left: 12px; padding: 2px 12px; border-radius: var(--pill); background: var(--accent-tint); color: var(--accent); font-style: normal; font-size: 0.6em; font-weight: 600; vertical-align: middle; white-space: nowrap; }
 
+/* ---------- folder sections (campaign page, "Folders" view) ---------- */
+.fsec { background: var(--canvas); border-radius: var(--r-lg); box-shadow: 0 0 0 1px var(--hairline); margin-bottom: 18px; overflow: hidden; }
+.fsec-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 20px; background: linear-gradient(180deg, var(--pearl), var(--parchment)); border-bottom: 1px solid var(--hairline); }
+.fsec.shut .fsec-head { border-bottom: none; }
+.fsec-title h3 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fsec-meta { margin-top: 4px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.fsec-meta b { color: var(--ink); font-weight: 600; }
+.fsec-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fsec-actions button { padding: 7px 14px; font-size: 13px; }
+.fsec-chev { width: 34px; height: 34px; padding: 0 !important; display: grid; place-items: center; border-radius: 50%; }
+.fsec-chev svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.2s; }
+.fsec.shut .fsec-chev svg { transform: rotate(180deg); }
+.badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: var(--pill); background: var(--chip); color: var(--ink-80); letter-spacing: 0; }
+.badge.on { background: var(--accent-tint); color: var(--accent); }
+.fsec-flash { padding: 10px 20px; background: var(--accent-tint); color: var(--ink); border-bottom: 1px solid var(--hairline); }
+.fsec-flash ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+.fsec-flash .u { word-break: break-all; }
+.fsec-add { padding: 16px 20px; border-bottom: 1px solid var(--hairline); background: var(--canvas); }
+.fsec-add textarea { min-height: 84px; }
+.fsec-add-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.fsec-add-row .spacer { flex: 1; }
+.fsec-add .progress { margin-top: 10px; }
+.fsec .fs-panel { margin: 0; border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--hairline); }
+.fsec-empty { padding: 22px 20px; }
+.fsec-table { position: relative; border: none; border-radius: 0; margin: 0; box-shadow: none; }
+.fsec-table td.small { white-space: nowrap; }
+.fsec-table table { min-width: 860px; }
+.fsec-table th { font-size: 12px; font-weight: 600; color: var(--muted); }
+.fsec-table td, .fsec-table th { padding-top: 10px; padding-bottom: 10px; vertical-align: middle; }
+.fsec-table th:first-child, .fsec-table td:first-child { padding-left: 20px; }
+.fsec-table tbody tr:hover td { background: var(--pearl); }
+.fsec-table tr[data-gone] td { color: var(--muted); }
+.creator-cell { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 10px; min-width: 190px; }
+.creator-cell:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 3px; border-radius: 8px; }
+.creator-cell .av { position: relative; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 50%; overflow: hidden; background: var(--parchment); display: grid; place-items: center; font-size: 13px; font-weight: 600; color: var(--muted); }
+.creator-cell .av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.creator-cell .cw { display: flex; flex-direction: column; min-width: 0; }
+.creator-cell .nm { font-weight: 600; font-size: 14px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.creator-cell:hover .nm { color: var(--accent); }
+.creator-cell .hd { font-size: 12px; color: var(--muted); }
+.creator-cell .tick { color: var(--accent); font-size: 12px; }
+.gone-tag { color: var(--bad); }
+.fsec-table .row-actions .card-actions { gap: 6px; }
+.fsec-table .row-actions .card-actions button, .fsec-table .row-actions .card-actions a { width: 30px; height: 30px; }
+.pager { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 10px 20px; border-top: 1px solid var(--divider); }
+.pager .link-btn { font-size: 20px; line-height: 1; padding: 2px 8px; }
+.pager .link-btn:disabled { color: var(--hairline); cursor: default; }
+
 /* ---------- small screens ---------- */
 @media (max-width: 760px) {
   :root { --gutter: 16px; }
@@ -419,6 +467,9 @@ tr.picked td { background: var(--accent-tint); }
   .markets-row { grid-template-columns: minmax(0, 1fr) 100px auto; }
   .markets-row .other { grid-column: 1 / -1; margin-top: -4px; }
   .pick-bar { border-radius: var(--r-md); }
+  .fsec-head { padding: 14px 16px; }
+  .fsec-actions { width: 100%; }
+  .fsec-actions .fsec-chev { margin-left: auto; }
   .view-toggle { margin-left: 0; }
   .sh-filters input, .sh-filters select { max-width: none; flex: 1 1 140px; }
   .pm-backdrop { padding: 0; place-items: stretch; }

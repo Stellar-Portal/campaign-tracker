@@ -1,7 +1,7 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015b";
-import { mountReport, renderWall } from "./report.js?v=20261015b";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015b";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015d";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261015d";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015d";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -490,6 +490,7 @@ async function renderCampaign(token, id) {
     <div class="section-head">
       <h2>Posts</h2>
       <div class="posts-tools">
+        <div class="seg" role="group" aria-label="Layout"><button type="button" data-pview="folders">Folders</button><button type="button" data-pview="grid">All posts</button></div>
         <button type="button" id="new-folder">New folder</button>
         <button type="button" id="pick-toggle" aria-pressed="false">Select posts</button>
         <label class="small" style="display:flex;gap:8px;align-items:center;margin:0">Sort by
@@ -695,7 +696,7 @@ async function loadSounds(token, id) {
 
 async function loadPosts(token, id, camp) {
   const el = document.getElementById("posts");
-  let posts, folders;
+  let posts, folders, folderLinks = {};
   try {
     [posts, { data: folders }] = await Promise.all([
       fetchAll(() => sb.from("posts")
@@ -703,6 +704,7 @@ async function loadPosts(token, id, camp) {
         .eq("campaign_id", id).order("created_at", { ascending: false })),
       sb.from("campaign_folders").select("id,name,market,position,hidden,created_at").eq("campaign_id", id).order("position").order("created_at"),
     ]);
+    folderLinks = Object.fromEntries(((await sb.from("share_links").select("id,token,folder_id").eq("campaign_id", id).eq("revoked", false).not("folder_id", "is", null)).data ?? []).map((l) => [l.folder_id, l]));
   } catch (e) { el.innerHTML = fail(e); return; }
   if (token !== routeToken) return;
   folders = folders ?? [];
@@ -754,7 +756,7 @@ async function loadPosts(token, id, camp) {
 
   const sortSel = document.getElementById("sort");
   const folderEl = document.getElementById("folders");
-  const panel = document.getElementById("folder-panel");
+  const gridPanel = document.getElementById("folder-panel");
   const pickBar = document.getElementById("pick-bar");
   const pickBtn = document.getElementById("pick-toggle");
   let shown = 48;
@@ -790,7 +792,7 @@ async function loadPosts(token, id, camp) {
     folderEl.querySelectorAll("[data-fmenu]").forEach((b) => (b.onclick = () => openFolderPanel(folders.find((f) => f.id === b.dataset.fmenu))));
   }
 
-  async function openFolderPanel(f) {
+  async function openFolderPanel(f, panel = gridPanel) {
     if (!panel.hidden && panel.dataset.folder === f.id) { panel.hidden = true; return; }
     panel.hidden = false; panel.dataset.folder = f.id;
     panel.innerHTML = `<p class="muted small">Loading…</p>`;
@@ -821,7 +823,8 @@ async function loadPosts(token, id, camp) {
         <span class="muted small">${count ? (count === 1 ? "Its post stays in the campaign, just not in a folder." : `Its ${n(count)} posts stay in the campaign, just not in a folder.`) : "The folder is empty."}</span>
       </div>`;
     panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    const again = () => { panel.dataset.folder = ""; openFolderPanel(f); };
+    // Re-open after a change; in the folder view the section was redrawn, so find its new panel.
+    const again = () => { const host = el.querySelector(`.fsec[data-key="${f.id}"] .fs-panel`) ?? (document.body.contains(panel) ? panel : gridPanel); host.dataset.folder = ""; openFolderPanel(f, host); };
     panel.querySelector("#fp-close").onclick = () => { panel.hidden = true; };
     panel.querySelector("#fp-rename").onclick = async () => {
       const name = panel.querySelector("#fp-name").value.trim();
@@ -834,12 +837,13 @@ async function loadPosts(token, id, camp) {
       const hidden = !e.target.checked;
       const { error } = await sb.from("campaign_folders").update({ hidden }).eq("id", f.id);
       if (error) { toast(error.message); e.target.checked = !e.target.checked; return; }
-      f.hidden = hidden; toast(hidden ? "Hidden from client links" : "Shown on client links"); drawFolders();
+      f.hidden = hidden; toast(hidden ? "Hidden from client links" : "Shown on client links"); drawFolders(); draw(); again();
     };
     panel.querySelector("#fp-create")?.addEventListener("click", async (e) => {
       e.currentTarget.disabled = true;
       const { error } = await sb.from("share_links").insert({ campaign_id: id, folder_id: f.id });
       if (error) { toast(error.message); e.currentTarget.disabled = false; return; }
+      folderLinks[f.id] = (await sb.from("share_links").select("id,token,folder_id").eq("folder_id", f.id).eq("revoked", false).order("created_at", { ascending: false }).limit(1).maybeSingle()).data;
       toast("Folder link created"); again();
     });
     if (link) {
@@ -853,6 +857,7 @@ async function loadPosts(token, id, camp) {
         if (!confirm(`Turn off the client link for ${f.name}? Anyone with it will see "This link isn't active".`)) return;
         const { error } = await sb.from("share_links").update({ revoked: true }).eq("id", link.id);
         if (error) { toast(error.message); return; }
+        delete folderLinks[f.id];
         toast("Link turned off"); again();
       };
     }
@@ -870,12 +875,12 @@ async function loadPosts(token, id, camp) {
     const k = ctx.selected.size;
     pickBar.hidden = false;
     pickBar.innerHTML = `<span><b>${n(k)}</b> selected</span>
-      <button type="button" class="link-btn" id="pick-all">Select all ${n(inView().length)} shown</button>
+      <button type="button" class="link-btn" id="pick-all">Select all ${n((view === "grid" ? inView() : list).length)}${view === "grid" ? " shown" : ""}</button>
       ${k ? `<button type="button" class="link-btn" id="pick-none">Clear</button>` : ""}
       <span class="spacer"></span>
       ${folders.length ? `<label class="small" for="pick-to">Move to</label>
       <select id="pick-to" ${k ? "" : "disabled"}><option value="" disabled selected>Choose a folder</option>${folders.map((f) => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join("")}<option value="none">Not in a folder</option></select>` : `<span class="muted small">Create a folder first, then move posts into it.</span>`}`;
-    pickBar.querySelector("#pick-all").onclick = () => { inView().forEach((p) => ctx.selected.add(p.id)); draw(); drawPickBar(); };
+    pickBar.querySelector("#pick-all").onclick = () => { (view === "grid" ? inView() : list).forEach((p) => ctx.selected.add(p.id)); draw(); drawPickBar(); };
     pickBar.querySelector("#pick-none")?.addEventListener("click", () => { ctx.selected.clear(); draw(); drawPickBar(); });
     const to = pickBar.querySelector("#pick-to");
     if (to) to.onchange = async () => {
@@ -900,7 +905,25 @@ async function loadPosts(token, id, camp) {
     drawFolders(); drawPickBar(); draw();
   };
 
+  let view = sessionStorageGet("posts-view") === "grid" ? "grid" : "folders";
+  document.querySelectorAll("[data-pview]").forEach((b) => {
+    b.setAttribute("aria-pressed", b.dataset.pview === view);
+    b.onclick = () => {
+      view = b.dataset.pview; sessionStorageSet("posts-view", view);
+      document.querySelectorAll("[data-pview]").forEach((x) => x.setAttribute("aria-pressed", x.dataset.pview === view));
+      gridPanel.hidden = true; drawPickBar(); draw();
+    };
+  });
+  const sortList = (ps) => {
+    const by = sortSel.value;
+    return [...ps].sort((a, b) =>
+      by === "plays" ? (b.plays ?? -1) - (a.plays ?? -1)
+      : by === "newest" ? String(b.published_at ?? "").localeCompare(String(a.published_at ?? ""))
+      : String(b.created_at).localeCompare(String(a.created_at)));
+  };
   const draw = () => {
+    folderEl.hidden = view !== "grid";
+    if (view === "folders") return drawSections();
     if (!list.length) {
       el.innerHTML = `<div class="panel"><p>No posts yet.</p><a class="btn primary" href="#/c/${esc(id)}/add">Add links</a></div>`;
       return;
@@ -912,7 +935,154 @@ async function loadPosts(token, id, camp) {
       : String(b.created_at).localeCompare(String(a.created_at)));
     renderWall(el, sorted, ctx, { shown, onMore: () => { shown += 48; draw(); } });
   };
-  sortSel.onchange = () => { shown = 48; draw(); };
+  sortSel.onchange = () => { shown = 48; Object.keys(pages).forEach((k) => (pages[k] = 0)); draw(); };
+
+  // ---------- folder view: one section per folder, Cobrand-style, with its own add box ----------
+  const PER_PAGE = 10;
+  const pages = {};
+  const collapsed = new Set(JSON.parse(sessionStorageGet(`collapsed-${id}`) ?? "[]"));
+  const saveCollapsed = () => sessionStorageSet(`collapsed-${id}`, JSON.stringify([...collapsed]));
+  const flash = JSON.parse(sessionStorageGet(`flash-${id}`) ?? "null");
+  sessionStorageSet(`flash-${id}`, "null");
+  const CHEVRON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>';
+
+  function sectionRows(ps, key) {
+    const picking = ctx.selected instanceof Set;
+    if (!ps.length) return `<div class="fsec-empty muted small">No posts in this folder yet. Use <b>Add links</b> to add some.</div>`;
+    const page = Math.min(pages[key] ?? 0, Math.ceil(ps.length / PER_PAGE) - 1);
+    pages[key] = page;
+    const rows = ps.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
+    const pagesN = Math.ceil(ps.length / PER_PAGE);
+    return `<div class="table-wrap fsec-table"><table>
+      <thead><tr>${picking ? '<th class="pick-col"><span class="sr">Select</span></th>' : ""}<th>Creator</th><th>Posted</th><th>Country</th><th class="num">Views</th><th class="num">Likes</th><th class="num">Comments</th><th class="num">Shares</th><th class="num">Eng. rate</th><th class="num">Followers</th><th><span class="sr">Actions</span></th></tr></thead>
+      <tbody>${rows.map((p) => `<tr data-pid="${esc(p.id)}"${picking && ctx.selected.has(p.id) ? ' class="picked"' : ""}${p.gone ? ' data-gone="1"' : ""}>
+        ${picking ? `<td class="pick-col"><input type="checkbox" data-rpick="${esc(p.id)}" ${ctx.selected.has(p.id) ? "checked" : ""} aria-label="Select @${esc(p.creator?.username ?? "")}"></td>` : ""}
+        <td><button type="button" class="creator-cell" data-open="${esc(p.id)}">
+          <span class="av">${p.creator?.avatar ? `<img src="${esc(p.creator.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span>${esc((p.creator?.name || p.creator?.username || "?").trim().charAt(0).toUpperCase())}</span></span>
+          <span class="cw"><span class="nm">${esc(p.creator?.name || p.creator?.username || "Unknown")}${p.creator?.verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</span><span class="hd">@${esc(p.creator?.username ?? "unknown")}${p.gone ? ' · <span class="gone-tag">no longer on TikTok</span>' : ""}</span></span>
+        </button></td>
+        <td class="small">${p.published_at ? esc(ago(p.published_at)) : "–"}</td>
+        <td>${p.country ? `<span title="${esc(regionName(p.country))}">${flag(p.country)}</span>` : "–"}</td>
+        <td class="num plays-cell">${n(p.plays)}</td><td class="num">${n(p.likes)}</td><td class="num">${n(p.comments)}</td><td class="num">${n(p.shares)}</td>
+        <td class="num">${pct(engagement(p))}</td><td class="num">${compact(p.creator?.followers)}</td>
+        <td class="row-actions"><div class="card-actions">
+          <button type="button" data-ract="copy" data-id="${esc(p.id)}" title="Copy link" aria-label="Copy link">${ICON.link}</button>
+          <a href="${esc(p.url)}" target="_blank" rel="noopener" title="Open on TikTok" aria-label="Open on TikTok">${ICON.open}</a>
+          <button type="button" data-ract="remove" data-id="${esc(p.id)}" title="Remove from campaign" aria-label="Remove from campaign">${ICON.trash}</button>
+        </div></td></tr>`).join("")}</tbody></table></div>
+      ${pagesN > 1 ? `<div class="pager"><button type="button" class="link-btn" data-page="${page - 1}" ${page === 0 ? "disabled" : ""} aria-label="Previous page">‹</button>
+        <span class="small muted">Page ${page + 1} of ${pagesN} · ${n(ps.length)} posts</span>
+        <button type="button" class="link-btn" data-page="${page + 1}" ${page >= pagesN - 1 ? "disabled" : ""} aria-label="Next page">›</button></div>` : ""}`;
+  }
+
+  function drawSections() {
+    const loose = list.filter((p) => !p.folder_id);
+    const groups = [
+      ...folders.map((f) => ({ key: f.id, f, name: f.name, posts: sortList(list.filter((p) => p.folder_id === f.id)) })),
+      ...(loose.length || !folders.length ? [{ key: "none", f: null, name: folders.length ? "Not in a folder" : "All posts", posts: sortList(loose) }] : []),
+    ];
+    el.innerHTML = groups.map((g) => {
+      const live = g.posts.filter((p) => !p.gone);
+      const plays = live.reduce((s, p) => s + Number(p.plays ?? 0), 0);
+      const sounds = new Set(live.map((p) => p.sound_title).filter(Boolean)).size;
+      const shut = collapsed.has(g.key);
+      const fl = flash && flash.key === g.key ? flash.text : "";
+      return `<section class="fsec${shut ? " shut" : ""}" data-key="${esc(g.key)}">
+        <header class="fsec-head">
+          <div class="fsec-title">
+            <h3>${esc(g.name)}${g.f?.hidden ? ' <span class="badge">Hidden from clients</span>' : ""}${g.f && folderLinks[g.f.id] ? ' <span class="badge on">Client link on</span>' : ""}</h3>
+            <div class="fsec-meta"><b>${compact(plays)}</b> plays · ${n(live.length)} post${live.length === 1 ? "" : "s"}${sounds ? ` · ${n(sounds)} sound${sounds === 1 ? "" : "s"}` : ""}${live.length ? ` · ${pct(plays ? live.reduce((s, p) => s + (p.likes ?? 0) + (p.comments ?? 0) + (p.shares ?? 0), 0) / plays : null)} engagement` : ""}</div>
+          </div>
+          <div class="fsec-actions">
+            <button type="button" class="primary" data-sact="add">+ Add links</button>
+            ${g.f ? `<button type="button" data-sact="link">${folderLinks[g.f.id] ? "Copy client link" : "Client link"}</button><button type="button" data-sact="edit">Edit</button>` : ""}
+            <button type="button" class="icon-btn fsec-chev" data-sact="collapse" aria-expanded="${!shut}" aria-label="${shut ? "Expand" : "Collapse"} ${esc(g.name)}">${CHEVRON}</button>
+          </div>
+        </header>
+        ${fl ? `<div class="fsec-flash small">${fl}</div>` : ""}
+        <form class="fsec-add" hidden>
+          <label class="sr" for="add-${esc(g.key)}">TikTok links for ${esc(g.name)}</label>
+          <textarea id="add-${esc(g.key)}" placeholder="Paste TikTok video links for ${esc(g.name)}, one per line or separated by spaces."></textarea>
+          <div class="fsec-add-row"><span class="small muted" data-count>No links yet.</span><span class="spacer"></span>
+            <button type="button" class="link-btn" data-sact="cancel">Cancel</button><button type="submit" class="primary" disabled>Add links</button></div>
+          <div class="progress" hidden><div></div></div>
+        </form>
+        <div class="fs-panel panel share-panel" hidden></div>
+        <div class="fsec-body"${shut ? " hidden" : ""}>${sectionRows(g.posts, g.key)}</div>
+      </section>`;
+    }).join("");
+
+    el.querySelectorAll(".fsec").forEach((sec) => {
+      const key = sec.dataset.key;
+      const g = groups.find((x) => x.key === key);
+      const addForm = sec.querySelector(".fsec-add");
+      const ta = addForm.querySelector("textarea"), go = addForm.querySelector("[type=submit]"), cnt = addForm.querySelector("[data-count]");
+      sec.querySelectorAll("[data-sact]").forEach((b) => (b.onclick = async () => {
+        const act = b.dataset.sact;
+        if (act === "add") { addForm.hidden = !addForm.hidden; if (!addForm.hidden) { if (collapsed.has(key)) { collapsed.delete(key); saveCollapsed(); sec.classList.remove("shut"); sec.querySelector(".fsec-body").hidden = false; } ta.focus(); } }
+        if (act === "cancel") { addForm.hidden = true; ta.value = ""; ta.oninput(); }
+        if (act === "edit") openFolderPanel(g.f, sec.querySelector(".fs-panel"));
+        if (act === "link") {
+          const l = folderLinks[g.f.id];
+          if (l) { await copyLink(shareUrl(l.token)); } else { const host = sec.querySelector(".fs-panel"); host.dataset.folder = ""; openFolderPanel(g.f, host); }
+        }
+        if (act === "collapse") {
+          if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
+          saveCollapsed(); drawSections();
+        }
+      }));
+      const MAX = 500;
+      ta.oninput = () => {
+        const k = parseLinks(ta.value).length;
+        cnt.textContent = k === 0 ? "No links yet." : k > MAX ? `${n(k)} links found. Add up to ${MAX} at a time.` : `${n(k)} link${k === 1 ? "" : "s"} found.`;
+        go.disabled = k === 0 || k > MAX;
+        go.textContent = k > 0 && k <= MAX ? `Add ${n(k)} link${k === 1 ? "" : "s"}` : "Add links";
+      };
+      addForm.onsubmit = async (e) => {
+        e.preventDefault();
+        const urls = parseLinks(ta.value);
+        if (!urls.length) return;
+        go.disabled = true; ta.disabled = true;
+        const bar = addForm.querySelector(".progress"), fill = bar.firstElementChild;
+        bar.hidden = false; cnt.textContent = "Starting…";
+        const { data: job, error } = await sb.from("link_jobs").insert({ campaign_id: id, folder_id: g.f?.id ?? null }).select("id").single();
+        if (error) { cnt.textContent = error.message; go.disabled = false; ta.disabled = false; return; }
+        const r = await sb.from("link_job_items").insert(urls.map((url) => ({ job_id: job.id, url })));
+        if (r.error) { cnt.textContent = r.error.message; go.disabled = false; ta.disabled = false; return; }
+        const tick = async () => {
+          if (!document.body.contains(addForm)) return;
+          const [{ data: j }, { data: items }] = await Promise.all([
+            sb.from("link_jobs").select("status").eq("id", job.id).single(),
+            sb.from("link_job_items").select("url,status,error").eq("job_id", job.id),
+          ]);
+          const all = items ?? [], done = all.filter((i) => i.status !== "pending").length;
+          fill.style.width = `${all.length ? Math.round((done / all.length) * 100) : 0}%`;
+          cnt.textContent = `Checking links: ${done} of ${all.length}…`;
+          if (j?.status !== "done") { setTimeout(tick, 2000); return; }
+          const c = (st) => all.filter((i) => i.status === st);
+          const failed = c("failed");
+          const text = `Added ${n(c("success").length)} post${c("success").length === 1 ? "" : "s"} to ${esc(g.name)}`
+            + (c("duplicate").length ? ` · ${n(c("duplicate").length)} already in this campaign` : "")
+            + (failed.length ? ` · ${n(failed.length)} failed:<ul>${failed.map((i) => `<li><span class="u">${esc(i.url)}</span> – ${esc(i.error ?? "")}</li>`).join("")}</ul>` : "");
+          sessionStorageSet(`flash-${id}`, JSON.stringify({ key, text }));
+          renderCampaign(++routeToken, id);
+        };
+        tick();
+      };
+      sec.querySelectorAll("[data-page]").forEach((b) => (b.onclick = () => { pages[key] = Number(b.dataset.page); drawSections(); sec.scrollIntoView({ block: "nearest" }); }));
+      sec.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => openPostModal(g.posts, g.posts.findIndex((p) => p.id === b.dataset.open), ctx)));
+      sec.querySelectorAll("[data-ract=copy]").forEach((b) => (b.onclick = () => copyLink(list.find((p) => p.id === b.dataset.id).url)));
+      sec.querySelectorAll("[data-ract=remove]").forEach((b) => (b.onclick = async () => {
+        const p = list.find((x) => x.id === b.dataset.id);
+        if (!confirm(`Remove @${p.creator?.username ?? "this creator"}'s video from the campaign? Its numbers will no longer count.`)) return;
+        if (await ctx.remove(p)) { toast("Video removed"); renderCampaign(++routeToken, id); }
+      }));
+      sec.querySelectorAll("[data-rpick]").forEach((b) => (b.onchange = () => {
+        if (b.checked) ctx.selected.add(b.dataset.rpick); else ctx.selected.delete(b.dataset.rpick);
+        b.closest("tr").classList.toggle("picked", b.checked); drawPickBar();
+      }));
+    });
+  }
   drawFolders();
   draw();
 }
