@@ -165,6 +165,7 @@ async function applyFromSheet(cid: string, prev: Record<string, any>, now: Recor
     const { error } = await db.from("campaigns").update(upd).eq("id", cid);
     if (error) throw new Error(error.code === "23505" ? "another campaign already has that artist, song and PO" : error.message);
   }
+  const touched = new Set<string>();   // sheet columns whose figures were typed in the sheet
   if (changed.includes("alloc")) {
     const budget = Number((upd.budget ?? c.budget) || 0);
     const [{ data: cm }, { data: mk }] = await Promise.all([
@@ -176,6 +177,7 @@ async function applyFromSheet(cid: string, prev: Record<string, any>, now: Recor
     for (const col of cols) {
       const v = now.alloc?.[col] ?? null;
       if (same(v, prev.alloc?.[col] ?? null)) continue;
+      touched.add(col);
       const rows = (cm ?? []).filter((r) => colOf[r.market] === col);
       const share = (a: number) => (budget ? Math.round((a / budget) * 10000) / 100 : null);
       if (!v) { if (rows.length) await db.from("campaign_markets").delete().eq("campaign_id", cid).in("market", rows.map((r) => r.market)); continue; }
@@ -194,7 +196,34 @@ async function applyFromSheet(cid: string, prev: Record<string, any>, now: Recor
       }
     }
   }
-  return changed.map((k) => FIELD_LABEL[k] ?? k);
+  // The price changed in the sheet. A split entered in % keeps its percentages, so each market's amount
+  // follows the new price; a split entered as amounts keeps its figures and only its percentages move.
+  const labels = changed.map((k) => FIELD_LABEL[k] ?? k);
+  const newBudget = upd.budget === undefined ? null : Number(upd.budget || 0);
+  if (newBudget != null && !same(newBudget, Number(c.budget || 0))) {
+    const [{ data: cm }, { data: mk }] = await Promise.all([
+      db.from("campaign_markets").select("market,amount,share_percent").eq("campaign_id", cid),
+      db.from("markets").select("name,sheet_column"),
+    ]);
+    const colOf = Object.fromEntries((mk ?? []).map((m) => [m.name, m.sheet_column]));
+    const byPercent = c.split_mode !== "amount";
+    let moved = false;
+    for (const r of cm ?? []) {
+      if (touched.has(colOf[r.market])) continue;
+      if (byPercent && r.share_percent != null) {
+        const a = newBudget ? Math.round(newBudget * Number(r.share_percent)) / 100 : null;
+        if (!same(a, r.amount == null ? null : Number(r.amount))) {
+          await db.from("campaign_markets").update({ amount: a }).eq("campaign_id", cid).eq("market", r.market);
+          moved = true;
+        }
+      } else if (!byPercent && r.amount != null) {
+        const pct = newBudget ? Math.round((Number(r.amount) / newBudget) * 10000) / 100 : null;
+        await db.from("campaign_markets").update({ share_percent: pct }).eq("campaign_id", cid).eq("market", r.market);
+      }
+    }
+    if (moved && !labels.includes(FIELD_LABEL.alloc)) labels.push(`${FIELD_LABEL.alloc} (kept at the same %)`);
+  }
+  return labels;
 }
 
 // Called after every read of the sheet: bring edits made in the sheet into linked tracker campaigns.

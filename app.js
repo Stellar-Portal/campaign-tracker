@@ -1,9 +1,9 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016a";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261016a";
-import { renderAnalytics } from "./analytics.js?v=20261016a";
-import { renderTrending } from "./trending.js?v=20261016a";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016a";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016b";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261016b";
+import { renderAnalytics } from "./analytics.js?v=20261016b";
+import { renderTrending } from "./trending.js?v=20261016b";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016b";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -147,6 +147,31 @@ function renderSoon(key) {
       <ul>${points.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></section>`;
 }
 
+// ---------- per-person view settings ----------
+// Sorting and filters are saved for whoever is signed in (table user_prefs, readable only by them),
+// so changing them never changes anyone else's view. A copy in this browser makes pages open instantly.
+let PREFS = { email: null, data: {} };
+async function loadPrefs() {
+  const user = await signedInUser();
+  const email = user?.email?.toLowerCase() ?? null;
+  if (PREFS.email === email && PREFS.loaded) return PREFS.data;
+  let data = {};
+  try { data = JSON.parse(localStorage.getItem(`prefs:${email}`) || "{}") || {}; } catch { /* private window */ }
+  const { data: row } = await sb.from("user_prefs").select("prefs").maybeSingle();
+  if (row?.prefs) data = row.prefs;
+  PREFS = { email, data, loaded: true };
+  return data;
+}
+let prefsTimer = null;
+function savePrefs(section, value) {
+  PREFS.data = { ...PREFS.data, [section]: value };
+  try { localStorage.setItem(`prefs:${PREFS.email}`, JSON.stringify(PREFS.data)); } catch { /* ignore */ }
+  clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(() => {
+    if (PREFS.email) sb.from("user_prefs").upsert({ email: PREFS.email, prefs: PREFS.data, updated_at: new Date().toISOString() }).then(() => {});
+  }, 500);
+}
+
 // ---------- Campaign overview: the backlog sheet, linked to the tracker ----------
 // The sheet ("Copy of CAMPAIGN OVERVIEW FY26/27") is mirrored into overview_snapshot every 5 minutes.
 // Each row is matched to a tracker campaign by Artist + Song + PO (or the row the tracker last wrote).
@@ -211,10 +236,12 @@ function prefillFromRow(r) {
 
 async function renderOverview(token) {
   app.innerHTML = `<p class="muted pad">Loading the campaign overview…</p>`;
-  const [snap, camps, syncs] = await Promise.all([
+  const [snap, camps, syncs, fx, prefs] = await Promise.all([
     sb.from("overview_snapshot").select("*").eq("id", 1).maybeSingle(),
     fetchAll(() => sb.from("campaign_summary").select("id,artist,song,po_number,status,total_plays,live_posts").order("created_at")).catch(() => []),
     sb.from("campaign_sheet_sync").select("campaign_id,sheet_row,last_error"),
+    sb.from("fx_rates").select("currency,per_usd"),
+    loadPrefs().catch(() => ({})),
   ]);
   if (token !== routeToken) return;
   const s = snap.data ?? {};
@@ -241,19 +268,60 @@ async function renderOverview(token) {
 
   const v = (r, h) => (blankCell(r.f[h]) ? "" : String(r.f[h]).trim());
   const uniq = (h) => [...new Set(rows.map((r) => v(r, h)).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const st = { q: "", status: sessionStorageGet("ov-status") ?? "", dri: "", market: "", invoice: "", tracker: "", sort: "sheet" };
-  const totalsBy = (list) => {
-    const t = {};
-    const k = {};
-    for (const r of list) {
-      const p = sheetNumber(r.f["Price"]); const c = v(r, "Currency").toUpperCase().replace("JYP", "JPY");
-      if (p && c) { t[c] = (t[c] ?? 0) + p; k[c] = (k[c] ?? 0) + 1; }
-    }
-    // Most-used currency first; amounts in different currencies are never added together.
-    return Object.entries(t).sort((a, b) => k[b[0]] - k[a[0]] || b[1] - a[1]);
+  // Amounts in other currencies are converted with the day's ECB rate, so totals and price sorting
+  // compare like with like. The original currencies stay visible on hover.
+  const rate = Object.fromEntries((fx.data ?? []).map((x) => [x.currency, Number(x.per_usd)]));
+  const curOf = (r) => v(r, "Currency").toUpperCase().replace("JYP", "JPY");
+  const toUsd = (x, c) => (x == null ? null : c === "USD" ? x : rate[c] ? x / rate[c] : null);
+  const priceUsd = (r) => toUsd(sheetNumber(v(r, "Price")), curOf(r));
+  const STATUS_RANK = { Active: 0, Upcoming: 1, "On Hold": 2, Completed: 3 };
+  // Each sort: the direction it starts in, and its two labels (first direction, then the other).
+  const SORTS = {
+    added: { first: "desc", labels: ["Recently added", "Oldest added"], get: (r) => r.row },
+    start: { first: "desc", labels: ["Start date, latest first", "Start date, earliest first"], get: (r) => sheetDate(v(r, "Start Date")) },
+    price: { first: "desc", labels: ["Price, highest first", "Price, lowest first"], get: priceUsd },
+    artist: { first: "asc", labels: ["Artist A–Z", "Artist Z–A"], get: (r) => v(r, "Artist Name").toLowerCase() || null },
+    client: { first: "asc", labels: ["Client A–Z", "Client Z–A"], get: (r) => v(r, "Client").toLowerCase() || null },
+    dri: { first: "asc", labels: ["DRI A–Z", "DRI Z–A"], get: (r) => v(r, "Stellar DRI").toLowerCase() || null },
+    status: { first: "asc", labels: ["Status, active first", "Status, completed first"], get: (r) => STATUS_RANK[v(r, "Status")] ?? null },
   };
-  const fmtMoney = ([c, x]) => `${esc(c)} ${Math.round(x).toLocaleString("en-GB")}`;
-  const moneyLine = (pairs) => pairs.length ? `${fmtMoney(pairs[0])}${pairs.length > 1 ? `<span class="ov-more">${pairs.slice(1).map(fmtMoney).join(" · ")}</span>` : ""}` : "–";
+  const other = (d) => (d === "asc" ? "desc" : "asc");
+  const sortLabel = (k, d) => SORTS[k].labels[d === SORTS[k].first ? 0 : 1];
+  const FILTERS = [
+    { key: "dri", label: "Stellar DRI", col: "Stellar DRI", all: "Everyone" },
+    { key: "market", label: "Client market", col: "Client Market", all: "All markets" },
+    { key: "invoice", label: "Invoice", col: "Invoice Status", all: "Invoiced or not" },
+    { key: "tracker", label: "Tracker", all: "In the tracker or not", options: [["yes", "In the tracker"], ["no", "Not in the tracker"]] },
+  ];
+  const optionsFor = (f) => f.options ?? uniq(f.col).map((x) => [x, x]);
+  const saved = prefs?.overview ?? {};
+  const st = { q: "", status: "", dri: "", market: "", invoice: "", tracker: "", sort: SORTS[saved.sort] ? saved.sort : "added", dir: saved.dir === "asc" || saved.dir === "desc" ? saved.dir : null };
+  st.dir ??= SORTS[st.sort].first;
+  // Only keep saved filters that still exist in the sheet (a DRI who left, a renamed market…).
+  if (uniq("Status").includes(saved.status)) st.status = saved.status;
+  for (const f of FILTERS) if (optionsFor(f).some(([x]) => x === saved[f.key])) st[f.key] = saved[f.key];
+  const persist = () => savePrefs("overview", { sort: st.sort, dir: st.dir, status: st.status, ...Object.fromEntries(FILTERS.map((f) => [f.key, st[f.key]])) });
+  const totalsUsd = (list) => {
+    let usd = 0, unconverted = 0;
+    const by = {};
+    for (const r of list) {
+      const p = sheetNumber(v(r, "Price")), c = curOf(r);
+      if (!p || !c) continue;
+      by[c] = (by[c] ?? 0) + p;
+      const u = toUsd(p, c);
+      if (u == null) unconverted++; else usd += u;
+    }
+    const curs = Object.entries(by).sort((a, b) => (a[0] === "USD" ? -1 : b[0] === "USD" ? 1 : b[1] - a[1]));
+    return { usd, curs, unconverted };
+  };
+  const moneyTile = (list, label) => {
+    const t = totalsUsd(list);
+    const breakdown = t.curs.map(([c, x]) => `${c} ${Math.round(x).toLocaleString("en-GB")}`).join(" · ");
+    const sub = !t.curs.length ? "" : t.curs.length > 1 ? `${t.curs.length} currencies, in USD` : t.curs[0][0] === "USD" ? "All in USD" : `Converted from ${t.curs[0][0]}`;
+    return `<div class="stat" title="${esc(breakdown)}${t.unconverted ? ` (${t.unconverted} without an exchange rate left out)` : ""}">
+      <div class="n">${t.curs.length ? `USD ${Math.round(t.usd).toLocaleString("en-GB")}` : "–"}</div>
+      <div class="l">${label}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ""}</div>`;
+  };
   const ago = s.synced_at ? timeAgo(s.synced_at) : null;
 
   app.innerHTML = `
@@ -267,14 +335,17 @@ async function renderOverview(token) {
     </div>
     ${!rows.length ? `<div class="panel"><p>${s.synced_at ? "The sheet has no campaigns yet." : "The overview hasn't been read from the sheet yet. Click <b>Refresh from sheet</b>; if that fails, the sheet script needs its latest version deployed."}</p></div>` : `
     <div class="stats ov-stats" id="ov-stats"></div>
-    <div class="filters">
-      <input id="ov-q" type="search" placeholder="Search artist, song, client, PO or contact" aria-label="Search the overview">
-      <select id="ov-status" aria-label="Status"><option value="">All statuses</option>${uniq("Status").map((x) => `<option>${esc(x)}</option>`).join("")}</select>
-      <select id="ov-dri" aria-label="Stellar DRI"><option value="">All DRIs</option>${uniq("Stellar DRI").map((x) => `<option>${esc(x)}</option>`).join("")}</select>
-      <select id="ov-market" aria-label="Client market"><option value="">All client markets</option>${uniq("Client Market").map((x) => `<option>${esc(x)}</option>`).join("")}</select>
-      <select id="ov-invoice" aria-label="Invoice status"><option value="">Invoiced or not</option>${uniq("Invoice Status").map((x) => `<option>${esc(x)}</option>`).join("")}</select>
-      <select id="ov-tracker" aria-label="In the tracker"><option value="">In the tracker or not</option><option value="yes">In the tracker</option><option value="no">Not in the tracker</option></select>
-      <select id="ov-sort" aria-label="Sort"><option value="sheet">Sheet order</option><option value="newest">Newest first</option><option value="start">Start date</option><option value="price">Highest price</option></select>
+    <div class="ov-bar">
+      <label class="ov-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input id="ov-q" type="search" placeholder="Search artist, song, client, PO or contact" aria-label="Search the overview"></label>
+      <select id="ov-status" class="ov-pill" aria-label="Status"><option value="">All statuses</option>${uniq("Status").map((x) => `<option>${esc(x)}</option>`).join("")}</select>
+      <label class="ov-pill ov-sort"><span>Sort</span><select id="ov-sort" aria-label="Sort by">${Object.keys(SORTS).map((k) => [SORTS[k].first, other(SORTS[k].first)].map((d) => `<option value="${k}:${d}">${esc(sortLabel(k, d))}</option>`).join("")).join("")}</select></label>
+      <div class="ov-filt">
+        <button type="button" class="ov-pill" id="ov-fbtn" aria-expanded="false" aria-controls="ov-fpanel"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M6 10h8M9 15h2"/></svg>Filters<span class="ov-count" id="ov-fcount" hidden></span></button>
+        <div class="ov-fpanel" id="ov-fpanel" role="dialog" aria-label="Filters" hidden>
+          ${FILTERS.map((f) => `<label><span>${esc(f.label)}</span><select id="ov-${f.key}"><option value="">${esc(f.all)}</option>${optionsFor(f).map(([x, l]) => `<option value="${esc(x)}">${esc(l)}</option>`).join("")}</select></label>`).join("")}
+          <div class="ov-fpanel-foot"><button type="button" class="link-btn" id="ov-fclear">Clear filters</button><span class="muted small">Saved for you only</span></div>
+        </div>
+      </div>
     </div>
     <div id="ov-list"></div>`}
     ${notInSheet.length ? `<div class="panel ov-missing"><h3>In the tracker, not in the sheet yet</h3>
@@ -300,10 +371,17 @@ async function renderOverview(token) {
       (!st.market || v(r, "Client Market") === st.market) && (!st.invoice || v(r, "Invoice Status") === st.invoice) &&
       (!st.tracker || (st.tracker === "yes") === !!r.camp) &&
       (!q || ["Artist Name", "Song Name (s) or Project Name", "Client", "Stellar PO no.", "Client Contact Name", "Client Contact eMail", "Invoicing Entity"].some((h) => v(r, h).toLowerCase().includes(q))));
-    if (st.sort === "newest") list = [...list].reverse();
-    if (st.sort === "start") list = [...list].sort((a, b) => String(sheetDate(v(b, "Start Date")) ?? "").localeCompare(String(sheetDate(v(a, "Start Date")) ?? "")));
-    if (st.sort === "price") list = [...list].sort((a, b) => (sheetNumber(v(b, "Price")) ?? 0) - (sheetNumber(v(a, "Price")) ?? 0));
-    return list;
+    // Empty values always go last; ties fall back to the most recently added.
+    const get = SORTS[st.sort].get, sign = st.dir === "asc" ? 1 : -1;
+    const keyed = list.map((r) => [get(r), r]);
+    keyed.sort(([a, ra], [b, rb]) => {
+      if (a == null && b == null) return rb.row - ra.row;
+      if (a == null) return 1;
+      if (b == null) return -1;
+      const c = typeof a === "number" ? a - b : String(a).localeCompare(String(b));
+      return c ? c * sign : rb.row - ra.row;
+    });
+    return keyed.map(([, r]) => r);
   };
   const statusChip = (x) => x ? `<span class="status ${esc((OV_STATUS[x] ?? "").replace("draft", "upcoming"))}">${esc(x)}</span>` : `<span class="muted small">–</span>`;
   // One campaign, laid out for reading: key numbers first, then Campaign / Client / Invoicing.
@@ -373,8 +451,8 @@ async function renderOverview(token) {
     document.getElementById("ov-stats").innerHTML = `
       <div class="stat"><div class="n">${n(list.length)}</div><div class="l">Campaigns${list.length !== rows.length ? ` of ${n(rows.length)}` : ""}</div></div>
       <div class="stat"><div class="n">${n(active.length)}</div><div class="l">Active</div></div>
-      <div class="stat money"><div class="n ov-money">${moneyLine(totalsBy(list))}</div><div class="l">Total price</div></div>
-      <div class="stat money"><div class="n ov-money">${moneyLine(totalsBy(notInv))}</div><div class="l">Not invoiced yet (${n(notInv.length)})</div></div>
+      ${moneyTile(list, "Total price")}
+      ${moneyTile(notInv, `Not invoiced (${n(notInv.length)})`)}
       <div class="stat"><div class="n">${n(list.filter((r) => r.camp).length)}</div><div class="l">In the tracker</div></div>`;
   }
   function draw() {
@@ -382,7 +460,9 @@ async function renderOverview(token) {
     drawStats(list);
     if (!list.length) { listEl.innerHTML = `<div class="panel"><p>No campaigns match these filters.</p></div>`; return; }
     listEl.innerHTML = `<div class="table-wrap ov-table"><table>
-      <thead><tr><th>Status</th><th>Artist and song</th><th>Client</th><th>DRI</th><th>Market</th><th>Start</th><th class="num">Price</th><th>Invoice</th><th>Tracker</th></tr></thead>
+      <thead><tr>${[["status", "Status"], ["artist", "Artist and song"], ["client", "Client"], ["dri", "DRI"], [null, "Market"], ["start", "Start"], ["price", "Price", "num"], [null, "Invoice"], [null, "Tracker"]].map(([k, label, cls]) => !k
+        ? `<th${cls ? ` class="${cls}"` : ""}>${label}</th>`
+        : `<th class="${cls ?? ""}" aria-sort="${st.sort === k ? (st.dir === "asc" ? "ascending" : "descending") : "none"}"><button type="button" class="th-sort${st.sort === k ? " on" : ""}" data-sort="${k}" title="Sort by ${label.toLowerCase()}">${label}<i aria-hidden="true">${st.sort === k ? (st.dir === "asc" ? "↑" : "↓") : "↕"}</i></button></th>`).join("")}</tr></thead>
       <tbody>${list.map((r) => `
         <tr class="ov-row${open.has(r.row) ? " open" : ""}" data-row="${r.row}" tabindex="0" aria-expanded="${open.has(r.row)}">
           <td>${statusChip(v(r, "Status"))}</td>
@@ -446,8 +526,44 @@ async function renderOverview(token) {
       go("#/new");
     }));
   }
-  const bind = (elId, key) => { const el = document.getElementById(elId); el.value = st[key]; el.oninput = () => { st[key] = el.value; if (key === "status") sessionStorageSet("ov-status", el.value); draw(); }; };
-  bind("ov-q", "q"); bind("ov-status", "status"); bind("ov-dri", "dri"); bind("ov-market", "market"); bind("ov-invoice", "invoice"); bind("ov-tracker", "tracker"); bind("ov-sort", "sort");
+  const sortSel = document.getElementById("ov-sort");
+  const fcount = document.getElementById("ov-fcount");
+  const refreshControls = () => {
+    sortSel.value = `${st.sort}:${st.dir}`;
+    const k = FILTERS.filter((f) => st[f.key]).length;
+    fcount.hidden = !k; fcount.textContent = k;
+    document.getElementById("ov-fbtn").classList.toggle("on", !!k);
+  };
+  const bind = (elId, key) => {
+    const el = document.getElementById(elId); el.value = st[key];
+    el.oninput = () => { st[key] = el.value; if (key !== "q") persist(); refreshControls(); draw(); };
+  };
+  bind("ov-q", "q"); bind("ov-status", "status");
+  FILTERS.forEach((f) => bind(`ov-${f.key}`, f.key));
+  sortSel.onchange = () => { [st.sort, st.dir] = sortSel.value.split(":"); persist(); draw(); };
+  // Column headers sort too: click once for the natural direction, again to flip it.
+  listEl.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-sort]");
+    if (!b) return;
+    const k = b.dataset.sort;
+    st.dir = st.sort === k ? other(st.dir) : SORTS[k].first; st.sort = k;
+    persist(); refreshControls(); draw();
+  });
+  // Filters panel: opens under its button, closes on Escape or a click elsewhere.
+  const fbtn = document.getElementById("ov-fbtn"), fpanel = document.getElementById("ov-fpanel");
+  const setPanel = (open) => { fpanel.hidden = !open; fbtn.setAttribute("aria-expanded", open); if (open) fpanel.querySelector("select")?.focus(); };
+  fbtn.onclick = () => setPanel(fpanel.hidden);
+  const outside = (e) => {
+    if (!document.body.contains(fpanel)) { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", esc_); return; }
+    if (!fpanel.hidden && !e.target.closest(".ov-filt")) setPanel(false);
+  };
+  const esc_ = (e) => { if (e.key === "Escape" && !fpanel.hidden) { setPanel(false); fbtn.focus(); } };
+  document.addEventListener("pointerdown", outside); document.addEventListener("keydown", esc_);
+  document.getElementById("ov-fclear").onclick = () => {
+    FILTERS.forEach((f) => { st[f.key] = ""; document.getElementById(`ov-${f.key}`).value = ""; });
+    persist(); refreshControls(); draw();
+  };
+  refreshControls();
   draw();
 }
 
@@ -560,7 +676,7 @@ async function renderForm(token, id) {
   }).join("")}`;
   const list = (idName, items) => `<datalist id="${idName}">${items.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>`;
   // Splits are entered one way for the whole campaign: % of the budget, or amounts.
-  let mode = rows.some((r) => r.amount != null) && !rows.some((r) => r.share_percent != null) ? "amount" : "percent";
+  let mode = c?.split_mode ?? (rows.some((r) => r.amount != null) && !rows.some((r) => r.share_percent != null) ? "amount" : "percent");
 
   app.innerHTML = `
     <div class="page-head"><h1>${id ? "Edit campaign" : "New campaign"}</h1></div>
@@ -607,6 +723,7 @@ async function renderForm(token, id) {
       </div>
       <div id="markets"></div>
       <div class="split-foot"><button type="button" id="add-market">Add market</button><span class="small muted" id="split-total"></span></div>
+      <p class="small muted split-rule" id="split-rule"></p>
       <label class="check folder-opt"><input id="folders_by_market" type="checkbox" ${c.folders_by_market ? "checked" : ""}>
         <span>Create a folder for each market<br><span class="muted small">Untick to organise posts your own way, for example by creative. You can add folders on the campaign page.</span></span></label>
 
@@ -686,16 +803,20 @@ async function renderForm(token, id) {
       ? `${fmt(pct)}% allocated${budget() != null ? ` · ${fmt(amt)} of ${fmt(budget())} ${cur()}` : ""}`
       : `${fmt(amt)}${budget() != null ? ` of ${fmt(budget())}` : ""} ${cur()} allocated${budget() ? ` · ${fmt(pct)}%` : ""}`;
   }
+  const ruleText = () => { $("split-rule").textContent = mode === "percent"
+    ? "Split by %: if the price changes, here or in the sheet, each market keeps its % and its amount follows."
+    : "Split by amount: if the price changes, each market keeps its amount."; };
   const setMode = (m) => {
     const current = readRows().filter((r) => r.market || r.share_percent != null || r.amount != null);
     mode = m;
     document.querySelectorAll("[data-mode]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === mode));
     box.innerHTML = "";
     current.forEach(addRow);
-    totals();
+    totals(); ruleText();
   };
   document.querySelectorAll("[data-mode]").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
   document.querySelectorAll("[data-mode]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === mode));
+  ruleText();
   rows.sort((a, b) => allMarkets.findIndex((x) => x.name === a.market) - allMarkets.findIndex((x) => x.name === b.market)).forEach(addRow);
   if (!rows.length) addRow();
   totals();
@@ -731,7 +852,7 @@ async function renderForm(token, id) {
       client_market: val("client_market") || null, client_contact_name: val("client_contact_name") || null,
       client_contact_email: val("client_contact_email") || null, label_type: val("label_type") || null,
       under_nda: val("under_nda") === "yes" ? true : val("under_nda") === "no" ? false : null,
-      folders_by_market: $("folders_by_market").checked,
+      folders_by_market: $("folders_by_market").checked, split_mode: mode,
       invoiced: $("invoiced").checked, notes: val("notes") || null,
     };
     const btn = e.submitter ?? document.querySelector("#cf button[type=submit]"); btn.disabled = true;
