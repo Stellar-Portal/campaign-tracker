@@ -1,9 +1,11 @@
-// process-links: turns a batch of pasted TikTok links into posts.
+// process-links: turns a batch of pasted TikTok or YouTube links into posts.
+// TikTok goes through ScrapeCreators; YouTube through Google's official YouTube Data API (youtube.ts).
 // Called by the database (pg_net) right after a team member inserts link_job_items.
 // Body: { "job_id": "<uuid>" }. It only processes jobs that are still "pending",
 // so calling it twice, or by anyone else, can't double-process or touch other data.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { youtubeId, isYouTubeLink, ytVideos, ytChannels, videoStats, channelFollowers, bestThumb } from "./youtube.ts";
 
 // Newer projects expose secret keys as SUPABASE_SECRET_KEYS (JSON); older ones as SUPABASE_SERVICE_ROLE_KEY.
 function serviceKey(): string {
@@ -32,7 +34,7 @@ const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Copenha
 function checkUrl(raw: string): { ok: true; url: string; videoId: string | null } | { ok: false; error: string } {
   let u: URL;
   try { u = new URL(raw.trim()); } catch { return { ok: false, error: "Not a valid link" }; }
-  if (!TIKTOK_HOST.test(u.hostname)) return { ok: false, error: "Not a TikTok link" };
+  if (!TIKTOK_HOST.test(u.hostname)) return { ok: false, error: "Not a TikTok or YouTube link" };
   const m = u.pathname.match(/\/video\/(\d+)/);
   const short = /^(vm|vt)\./i.test(u.hostname) || u.pathname.startsWith("/t/");
   if (!m && !short) return { ok: false, error: "Not a TikTok video link" };
@@ -79,7 +81,59 @@ async function finishItem(id: string, status: string, error: string | null, post
   await db.from("link_job_items").update({ status, error, post_id: postId, processed_at: new Date().toISOString() }).eq("id", id);
 }
 
+// A YouTube video (Shorts or regular). Stored with a "yt:" prefix so it never collides with a TikTok id.
+async function processYouTube(item: Item, job: Job, ytId: string) {
+  const key = `yt:${ytId}`;
+  const existing = await alreadyInCampaign(job.campaign_id, key);
+  if (existing) return finishItem(item.id, "duplicate", "Already in this campaign", existing);
+  let v: any, ch: any;
+  try {
+    v = (await ytVideos([ytId])).get(ytId);
+    if (!v) return finishItem(item.id, "failed", "Video not found (deleted or private?)", null);
+    ch = (await ytChannels([v.snippet?.channelId])).get(v.snippet?.channelId);
+  } catch (e) { return finishItem(item.id, "failed", String((e as Error).message), null); }
+
+  let creatorId: string | null = null;
+  if (v.snippet?.channelId) {
+    const handle = String(ch?.snippet?.customUrl ?? "").replace(/^@/, "");
+    const { data, error } = await db.from("creators").upsert({
+      tiktok_user_id: `yt:${v.snippet.channelId}`, platform: "youtube",
+      username: handle || v.snippet.channelId,
+      display_name: ch?.snippet?.title ?? v.snippet.channelTitle ?? null,
+      avatar_url: bestThumb(ch?.snippet?.thumbnails),
+      bio: ch?.snippet?.description ? String(ch.snippet.description).slice(0, 500) : null,
+      follower_count: channelFollowers(ch),
+      is_verified: false,
+      country_code: ch?.snippet?.country ?? null,
+    }, { onConflict: "tiktok_user_id" }).select("id").single();
+    if (error) return finishItem(item.id, "failed", `Could not save creator: ${error.message}`, null);
+    creatorId = data.id;
+  }
+  const shorts = /\/shorts\//.test(item.url);
+  const now = new Date().toISOString();
+  const { data: post, error: postErr } = await db.from("posts").insert({
+    campaign_id: job.campaign_id, folder_id: job.folder_id ?? null, creator_id: creatorId, sound_id: null,
+    platform: "youtube", tiktok_video_id: key,
+    url: shorts ? `https://www.youtube.com/shorts/${ytId}` : `https://www.youtube.com/watch?v=${ytId}`,
+    caption: v.snippet?.title ?? null,
+    published_at: v.snippet?.publishedAt ?? null,
+    country_code: ch?.snippet?.country ?? null,
+    cover_path: await saveCover(`yt-${ytId}`, bestThumb(v.snippet?.thumbnails)),
+    added_by: job.submitted_by, last_checked_at: now,
+  }).select("id").single();
+  if (postErr) {
+    if ((postErr as any).code === "23505") return finishItem(item.id, "duplicate", "Already in this campaign", await alreadyInCampaign(job.campaign_id, key));
+    return finishItem(item.id, "failed", `Could not save post: ${postErr.message}`, null);
+  }
+  await db.from("post_daily_stats").upsert({ tiktok_video_id: key, stat_date: today(), ...videoStats(v), captured_at: now }, { onConflict: "tiktok_video_id,stat_date" });
+  return finishItem(item.id, "success", null, post.id);
+}
+
 async function processItem(item: Item, job: Job) {
+  if (isYouTubeLink(item.url)) {
+    const ytId = youtubeId(item.url);
+    return ytId ? processYouTube(item, job, ytId) : finishItem(item.id, "failed", "Not a YouTube video link (channel and playlist links aren't supported)", null);
+  }
   const checked = checkUrl(item.url);
   if (!checked.ok) return finishItem(item.id, "failed", checked.error, null);
 

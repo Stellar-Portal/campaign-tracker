@@ -1,9 +1,9 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016b";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261016b";
-import { renderAnalytics } from "./analytics.js?v=20261016b";
-import { renderTrending } from "./trending.js?v=20261016b";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016b";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016c";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261016c";
+import { renderAnalytics } from "./analytics.js?v=20261016c";
+import { renderTrending } from "./trending.js?v=20261016c";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016c";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -1126,7 +1126,7 @@ async function renderCampaign(token, id) {
       document.getElementById("refresh").onclick = async (e) => {
         const btn = e.currentTarget;
         btn.disabled = true; btn.textContent = "Refreshing…";
-        document.getElementById("updated").textContent = "Getting the latest numbers from TikTok. This can take a minute.";
+        document.getElementById("updated").textContent = "Getting the latest numbers from TikTok and YouTube. This can take a minute.";
         const { data: r, error: err } = await sb.functions.invoke("refresh-stats", { body: { campaign_id: id } });
         if (token !== routeToken) return;
         if (err || r?.error) {
@@ -1136,7 +1136,7 @@ async function renderCampaign(token, id) {
         }
         const ok = r.videos?.ok ?? 0, gone = r.videos?.unavailable ?? 0;
         toast(ok || gone
-          ? `Updated ${ok} post${ok === 1 ? "" : "s"}${gone ? `, ${gone} no longer on TikTok` : ""}${r.skipped_recent ? `. ${r.skipped_recent} were already up to date` : ""}`
+          ? `Updated ${ok} post${ok === 1 ? "" : "s"}${gone ? `, ${gone} no longer available` : ""}${r.skipped_recent ? `. ${r.skipped_recent} were already up to date` : ""}`
           : "Everything was updated in the last hour already");
         renderCampaign(++routeToken, id);
       };
@@ -1577,7 +1577,7 @@ async function loadPosts(token, id, camp) {
         ${picking ? `<td class="pick-col"><input type="checkbox" data-rpick="${esc(p.id)}" ${ctx.selected.has(p.id) ? "checked" : ""} aria-label="Select @${esc(p.creator?.username ?? "")}"></td>` : ""}
         <td><button type="button" class="creator-cell" data-open="${esc(p.id)}">
           <span class="av">${p.creator?.avatar ? `<img src="${esc(p.creator.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span>${esc((p.creator?.name || p.creator?.username || "?").trim().charAt(0).toUpperCase())}</span></span>
-          <span class="cw"><span class="nm">${esc(p.creator?.name || p.creator?.username || "Unknown")}${p.creator?.verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</span><span class="hd">@${esc(p.creator?.username ?? "unknown")}${p.gone ? ' · <span class="gone-tag">no longer on TikTok</span>' : ""}</span></span>
+          <span class="cw"><span class="nm">${esc(p.creator?.name || p.creator?.username || "Unknown")}${p.creator?.verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</span><span class="hd">${isYT(p) ? "YouTube" : "@" + esc(p.creator?.username ?? "unknown")}${p.gone ? ` · <span class="gone-tag">no longer on ${platformName(p)}</span>` : ""}</span></span>
         </button></td>
         <td class="small">${p.published_at ? esc(ago(p.published_at)) : "–"}</td>
         <td>${p.country ? `<span title="${esc(regionName(p.country))}">${flag(p.country)}</span>` : "–"}</td>
@@ -1585,7 +1585,7 @@ async function loadPosts(token, id, camp) {
         <td class="num">${pct(engagement(p))}</td><td class="num">${compact(p.creator?.followers)}</td>
         <td class="row-actions"><div class="card-actions">
           <button type="button" data-ract="copy" data-id="${esc(p.id)}" title="Copy link" aria-label="Copy link">${ICON.link}</button>
-          <a href="${esc(p.url)}" target="_blank" rel="noopener" title="Open on TikTok" aria-label="Open on TikTok">${ICON.open}</a>
+          <a href="${esc(p.url)}" target="_blank" rel="noopener" title="Open on ${platformName(p)}" aria-label="Open on ${platformName(p)}">${ICON.open}</a>
           <button type="button" data-ract="remove" data-id="${esc(p.id)}" title="Remove from campaign" aria-label="Remove from campaign">${ICON.trash}</button>
         </div></td></tr>`).join("")}</tbody></table></div>
       ${pagesN > 1 ? `<div class="pager"><button type="button" class="link-btn" data-page="${page - 1}" ${page === 0 ? "disabled" : ""} aria-label="Previous page">‹</button>
@@ -1620,8 +1620,8 @@ async function loadPosts(token, id, camp) {
         </header>
         ${fl ? `<div class="fsec-flash small">${fl}</div>` : ""}
         <form class="fsec-add" hidden>
-          <label class="sr" for="add-${esc(g.key)}">TikTok links for ${esc(g.name)}</label>
-          <textarea id="add-${esc(g.key)}" placeholder="Paste TikTok video links for ${esc(g.name)}, one per line or separated by spaces."></textarea>
+          <label class="sr" for="add-${esc(g.key)}">TikTok or YouTube links for ${esc(g.name)}</label>
+          <textarea id="add-${esc(g.key)}" placeholder="Paste TikTok or YouTube video links for ${esc(g.name)}, one per line or separated by spaces."></textarea>
           <div class="fsec-add-row"><span class="small muted" data-count>No links yet.</span><span class="spacer"></span>
             <button type="button" class="link-btn" data-sact="cancel">Cancel</button><button type="submit" class="primary" disabled>Add links</button></div>
           <div class="progress" hidden><div></div></div>
@@ -1760,8 +1760,8 @@ async function renderAdd(token, id, jobId) {
     <a href="#/c/${esc(id)}" class="small">Back to ${title}</a>
     <div class="page-head" style="margin-top:8px"><h1>Add links</h1></div>
     <form id="af" class="panel">
-      <label for="links">TikTok links</label>
-      <textarea id="links" placeholder="Paste one or more TikTok video links. Short vm.tiktok.com links work too."></textarea>
+      <label for="links">TikTok or YouTube links</label>
+      <textarea id="links" placeholder="Paste TikTok or YouTube video links (Shorts or regular). Short vm.tiktok.com and youtu.be links work too."></textarea>
       <p class="muted small" id="count">No links yet.</p>
       ${folders?.length ? `<label for="folder">Folder</label>
       <select id="folder" style="max-width:360px"><option value="">No folder</option>${folders.map((f) => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join("")}</select>

@@ -15,6 +15,9 @@ Stellar's internal platform. A sidebar links its sections: **Campaign overview**
 - **Markets and folders:** markets are the sheet's 16 allocation columns (`markets` table), split by % or by amount. A campaign can get a folder per market automatically, or folders named by hand (e.g. per creative). Every post can sit in one folder; folders never change the campaign's totals. A folder can be hidden from client links (its posts still count, just unnamed) and can have its own client link that shows only that folder's posts and numbers.
 - **Access:** only signed-in users whose email is in the `team_members` table can see or change anything. Every table is protected by row level security.
 
+## YouTube
+YouTube videos (Shorts or regular) can be pasted next to TikTok links. They're read with Google's official YouTube Data API (free: 10,000 units a day; one call covers up to 50 videos), not ScrapeCreators. Needs the Supabase secret `YOUTUBE_API_KEY`. They reuse the same tables: ids are stored as `yt:<id>` in `posts.tiktok_video_id` / `creators.tiktok_user_id`, with `platform = 'youtube'`. YouTube doesn't publish share counts, so shares stay empty and engagement rate is likes + comments per view.
+
 ## Design
 
 The look follows `DESIGN.md`: Apple's design language from [awesome-design-md](https://github.com/VoltAgent/awesome-design-md) (MIT), with Stellar cobalt as the single accent colour and the Stellar logo kept. AI coding tools read that file, so new screens stay consistent; change the Stellar section at the top of it to change the rules.

@@ -26,6 +26,17 @@ const daysBetween = (a, b) => { const out = []; for (let d = a; d <= b; d = addD
 const truncate = (s, k) => (s.length > k ? s.slice(0, k - 1) + "…" : s);
 // "original sound - soraempire" → "soraempire (original)" so labels stay tellable apart.
 const shortName = (s) => { const m = /^original sound\s*[-–]\s*(.+)$/i.exec(s); return m ? `${m[1]} (original)` : s; };
+// Posts come from TikTok or YouTube (YouTube video ids are stored as "yt:<id>").
+const isYT = (p) => String(p?.video_id ?? "").startsWith("yt:");
+const platformName = (p) => (isYT(p) ? "YouTube" : "TikTok");
+const embedSrc = (p) => isYT(p)
+  ? `https://www.youtube.com/embed/${encodeURIComponent(p.video_id.slice(3))}?rel=0&playsinline=1`
+  : `https://www.tiktok.com/player/v1/${encodeURIComponent(p.video_id)}?description=1&music_info=1&rel=0&native_context_menu=0`;
+const profileUrl = (p) => {
+  const u = p.creator?.username ?? "";
+  if (!isYT(p)) return `https://www.tiktok.com/@${encodeURIComponent(u)}`;
+  return /^UC[\w-]{22}$/.test(u) ? `https://www.youtube.com/channel/${encodeURIComponent(u)}` : `https://www.youtube.com/@${encodeURIComponent(u)}`;
+};
 const engagement = (p) => (p.plays ? ((p.likes ?? 0) + (p.comments ?? 0) + (p.shares ?? 0)) / p.plays : null);
 
 // Validated categorical palette (dataviz reference order). Stellar cobalt stays for single-series charts.
@@ -209,7 +220,7 @@ export function renderWall(el, list, ctx, { shown = 48, view = "grid", onMore } 
   const pick = (p, i) => picking ? `<label class="pick" title="Select"><input type="checkbox" data-pick="${i}" ${ctx.selected.has(p.id) ? "checked" : ""} aria-label="Select @${esc(p.creator?.username ?? "")}'s video"></label>` : "";
   const actions = (p, i) => `<div class="card-actions">
       <button type="button" data-act="copy" data-i="${i}" title="Copy link" aria-label="Copy link to this video">${ICON.link}</button>
-      <a data-act="open" href="${esc(p.url)}" target="_blank" rel="noopener" title="Open on TikTok" aria-label="Open this video on TikTok">${ICON.open}</a>
+      <a data-act="open" href="${esc(p.url)}" target="_blank" rel="noopener" title="Open on ${platformName(p)}" aria-label="Open this video on ${platformName(p)}">${ICON.open}</a>
       ${team ? `<button type="button" data-act="remove" data-i="${i}" title="Remove from campaign" aria-label="Remove this video from the campaign">${ICON.trash}</button>` : ""}
     </div>`;
   el.innerHTML = view === "grid"
@@ -219,8 +230,8 @@ export function renderWall(el, list, ctx, { shown = 48, view = "grid", onMore } 
           ${pick(p, i)}
           <button type="button" class="cover" data-i="${i}" aria-label="Preview @${esc(p.creator?.username ?? "")}'s video">
             <img data-vid="${esc(p.video_id)}" alt="" loading="lazy" ${ctx.covers[p.video_id] ? `src="${esc(ctx.covers[p.video_id])}"` : "hidden"} onerror="this.hidden=true">
-            ${p.gone ? `<span class="chip tl">No longer on TikTok</span>` : ctx.showCountry !== false && flag(p.country) ? `<span class="chip tl" title="${esc(regionName(p.country))}">${flag(p.country)}</span>` : ""}
-            ${p.gone ? "" : `<span class="chip tr">${esc(ago(p.published_at))}</span>`}
+            ${p.gone ? `<span class="chip tl">No longer on ${platformName(p)}</span>` : ctx.showCountry !== false && flag(p.country) ? `<span class="chip tl" title="${esc(regionName(p.country))}">${flag(p.country)}</span>` : ""}
+            ${p.gone ? "" : `<span class="chip tr">${isYT(p) ? "YouTube · " : ""}${esc(ago(p.published_at))}</span>`}
             <span class="plays">${compact(p.plays)}</span>
           </button>
           ${actions(p, i)}
@@ -309,7 +320,7 @@ export function openPostModal(list, index, ctx) {
       <div class="pm" role="dialog" aria-modal="true" aria-label="Video by @${esc(p.creator?.username ?? "")}">
         <div class="pm-media">
           ${ctx.covers[p.video_id] ? `<img class="pm-poster" src="${esc(ctx.covers[p.video_id])}" alt="">` : ""}
-          <iframe src="https://www.tiktok.com/player/v1/${encodeURIComponent(p.video_id)}?description=1&music_info=1&rel=0&native_context_menu=0" title="TikTok video by @${esc(p.creator?.username ?? "")}"
+          <iframe src="${esc(embedSrc(p))}" title="${platformName(p)} video by ${esc(p.creator?.name || p.creator?.username || "")}"
             allow="encrypted-media; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
           ${list.length > 1 ? `<button type="button" class="pm-nav prev" aria-label="Previous video" ${i === 0 ? "disabled" : ""}>${ICON.prev}</button>
           <button type="button" class="pm-nav next" aria-label="Next video" ${i === list.length - 1 ? "disabled" : ""}>${ICON.next}</button>` : ""}
@@ -319,13 +330,13 @@ export function openPostModal(list, index, ctx) {
             <div class="pm-avatar">${p.creator?.avatar ? `<img src="${esc(p.creator.avatar)}" alt="" referrerpolicy="no-referrer" onerror="this.replaceWith(document.createTextNode('${initial}'))">` : initial}</div>
             <div class="pm-who">
               <div class="pm-name">${esc(name)}${p.creator?.verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</div>
-              <a href="https://www.tiktok.com/@${encodeURIComponent(p.creator?.username ?? "")}" target="_blank" rel="noopener">@${esc(p.creator?.username ?? "unknown")}</a>
+              <a href="${esc(profileUrl(p))}" target="_blank" rel="noopener">${isYT(p) && /^UC[\w-]{22}$/.test(p.creator?.username ?? "") ? "YouTube channel" : "@" + esc(p.creator?.username ?? "unknown")}</a>
               <div class="muted small">${p.published_at ? `Posted ${esc(dayLong(p.published_at.slice(0, 10)))}` : ""}${ctx.showCountry !== false && p.country ? ` · ${flag(p.country)} ${esc(regionName(p.country))}` : ""}</div>
             </div>
             <button type="button" class="pm-close" aria-label="Close">${ICON.close}</button>
           </div>
           <div class="pm-actions">
-            <a class="btn primary" href="${esc(p.url)}" target="_blank" rel="noopener">Watch on TikTok</a>
+            <a class="btn primary" href="${esc(p.url)}" target="_blank" rel="noopener">Watch on ${platformName(p)}</a>
             <button type="button" class="icon-btn" data-pm="copy" title="Copy link" aria-label="Copy link">${ICON.link}</button>
             <a class="icon-btn" href="${esc(p.url)}" target="_blank" rel="noopener" title="Open in a new tab" aria-label="Open in a new tab">${ICON.open}</a>
             ${ctx.mode === "team" && ctx.move && ctx.folders?.length ? `<label class="pm-folder"><span class="sr">Folder</span><select data-pm="folder" aria-label="Folder"><option value="">Not in a folder</option>${ctx.folders.map((f) => `<option value="${esc(f.id)}" ${p.folder_id === f.id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select></label>` : ""}
@@ -352,7 +363,7 @@ export function openPostModal(list, index, ctx) {
                 ${p.creator?.followers != null ? `<dt>Creator's followers</dt><dd>${n(p.creator.followers)}</dd>` : ""}
                 ${ctx.showCountry !== false && p.country ? `<dt>Country</dt><dd>${flag(p.country)} ${esc(regionName(p.country))}</dd>` : ""}
                 <dt>Posted</dt><dd>${p.published_at ? esc(dayLong(p.published_at.slice(0, 10))) : "–"}</dd>
-                <dt>TikTok video ID</dt><dd>${esc(p.video_id)}</dd>
+                <dt>${platformName(p)} video ID</dt><dd>${esc(isYT(p) ? p.video_id.slice(3) : p.video_id)}</dd>
               </dl>`}
           </div>
         </div>
@@ -721,4 +732,4 @@ export function mountReport(root, api) {
   const onResize = () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (data && root.isConnected && root.querySelector("#panel")) renderPanel(); }, 200); };
   window.addEventListener("resize", onResize);
 }
-export { flag, regionName, ago, engagement, ICON, copyLink, pct, compact };
+export { flag, regionName, ago, engagement, ICON, copyLink, pct, compact, isYT, platformName };

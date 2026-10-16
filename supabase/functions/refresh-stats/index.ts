@@ -8,6 +8,7 @@
 //    skipping videos checked in the last hour.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { ytVideos, ytChannels, videoStats, channelFollowers } from "./youtube.ts";
 
 function serviceKey(): string {
   const raw = Deno.env.get("SUPABASE_SECRET_KEYS");
@@ -71,6 +72,43 @@ async function refreshVideo(videoId: string, url: string, statDate: string) {
     return "error";
   }
 }
+
+// YouTube videos ("yt:" ids) in one go: Google's API takes 50 ids per call, so no per-video lookups.
+async function refreshYouTube(videoIds: string[], statDate: string): Promise<Record<string, number>> {
+  const tally: Record<string, number> = {};
+  if (!videoIds.length) return tally;
+  const now = new Date().toISOString();
+  const raw = videoIds.map((v) => v.slice(3));
+  let found: Map<string, any>;
+  try { found = await ytVideos(raw); } catch (e) {
+    await db.from("posts").update({ last_refresh_attempt_at: now, last_refresh_error: String((e as Error).message).slice(0, 200) }).in("tiktok_video_id", videoIds);
+    tally.error = videoIds.length;
+    return tally;
+  }
+  for (const id of raw) {
+    const v = found.get(id), key = `yt:${id}`;
+    if (!v) {
+      await db.from("posts").update({ status: "unavailable", last_refresh_attempt_at: now, last_refresh_error: "Video no longer available (deleted or private)" }).eq("tiktok_video_id", key);
+      tally.unavailable = (tally.unavailable ?? 0) + 1;
+      continue;
+    }
+    await db.from("post_daily_stats").upsert({ tiktok_video_id: key, stat_date: statDate, ...videoStats(v), captured_at: now }, { onConflict: "tiktok_video_id,stat_date" });
+    await db.from("posts").update({ last_checked_at: now, last_refresh_attempt_at: now, last_refresh_error: null }).eq("tiktok_video_id", key);
+    tally.ok = (tally.ok ?? 0) + 1;
+  }
+  // Subscriber counts, one call per 50 channels.
+  try {
+    const chIds = [...new Set([...found.values()].map((v) => v.snippet?.channelId).filter(Boolean))];
+    const chans = await ytChannels(chIds);
+    for (const [cid, c] of chans) {
+      const f = channelFollowers(c);
+      if (f != null) await db.from("creators").update({ follower_count: f }).eq("tiktok_user_id", `yt:${cid}`);
+    }
+  } catch { /* follower counts can wait for tomorrow */ }
+  return tally;
+}
+const isYT = (id: string) => id.startsWith("yt:");
+const merge = (a: Record<string, number>, b: Record<string, number>) => { for (const k in b) a[k] = (a[k] ?? 0) + b[k]; return a; };
 
 async function refreshSound(id: string, soundId: string, statDate: string) {
   const now = new Date().toISOString();
@@ -139,7 +177,8 @@ Deno.serve(async (req) => {
     });
     const skipped = seen.size - due.length;
     const batch = due.slice(0, MANUAL_LIMIT);
-    const videos = await runPool(batch, (p) => refreshVideo(p.tiktok_video_id, p.url, statDate), deadline);
+    const videos = merge(await runPool(batch.filter((p) => !isYT(p.tiktok_video_id)), (p) => refreshVideo(p.tiktok_video_id, p.url, statDate), deadline),
+      await refreshYouTube(batch.filter((p) => isYT(p.tiktok_video_id)).map((p) => p.tiktok_video_id), statDate));
 
     const { data: links } = await db.from("campaign_sounds").select("sound:sounds(id,tiktok_sound_id,last_checked_at)").eq("campaign_id", body.campaign_id);
     const soundsDue = (links ?? []).map((l: any) => l.sound).filter((s: any) => s && (!s.last_checked_at || s.last_checked_at < hourAgo));
@@ -154,7 +193,9 @@ Deno.serve(async (req) => {
   const sounds = await runPool(soundsDue ?? [], (s: any) => refreshSound(s.id, s.tiktok_sound_id, statDate), deadline);
   const { data: videosDue, error } = await db.rpc("videos_due_for_refresh", { max_rows: 600 });
   if (error) { console.error("videos_due_for_refresh failed", error.message); return json({ error: error.message }, 500); }
-  const videos = await runPool(videosDue ?? [], (v: any) => refreshVideo(v.tiktok_video_id, v.url, statDate), deadline);
+  const due = (videosDue ?? []) as { tiktok_video_id: string; url: string }[];
+  const videos = merge(await refreshYouTube(due.filter((v) => isYT(v.tiktok_video_id)).map((v) => v.tiktok_video_id), statDate),
+    await runPool(due.filter((v) => !isYT(v.tiktok_video_id)), (v) => refreshVideo(v.tiktok_video_id, v.url, statDate), deadline));
 
   const summary = { mode: "daily", stat_date: statDate, sounds, videos, seconds: Math.round((Date.now() - started) / 1000) };
   if ((videosDue ?? []).length || (soundsDue ?? []).length) console.log("daily refresh", JSON.stringify(summary));
