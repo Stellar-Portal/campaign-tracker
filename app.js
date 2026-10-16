@@ -1,9 +1,9 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016c";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261016c";
-import { renderAnalytics } from "./analytics.js?v=20261016c";
-import { renderTrending } from "./trending.js?v=20261016c";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016c";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016d";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261016d";
+import { renderAnalytics } from "./analytics.js?v=20261016d";
+import { renderTrending } from "./trending.js?v=20261016d";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016d";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -745,7 +745,7 @@ async function renderForm(token, id) {
   const $ = (k) => document.getElementById(k);
 
   // Artist: search the music catalogue as you type; the chosen picture brands the dashboards.
-  let artistPick = null;          // { deezer_id, image, thumb, name } chosen in this form
+  let artistPick = null;          // { cm_artist or deezer_id, image, thumb, name } chosen in this form
   let artistSaved = null;         // what the artists table already has for this name
   const showChosen = () => {
     const pic = artistPick?.thumb ?? artistPick?.image ?? (artistSaved?.image_url && artistKey(artistSaved.name) === artistKey($("artist").value) ? artistSaved.image_url : null);
@@ -997,12 +997,12 @@ async function searchArtists(q) {
   return data.artists ?? [];
 }
 async function saveArtist(name, pick) {
-  const row = { name: name.trim(), deezer_id: pick?.deezer_id ?? null, image_url: pick?.image ?? null, updated_at: new Date().toISOString() };
+  const row = { name: name.trim(), deezer_id: pick?.deezer_id ?? null, cm_artist: pick?.cm_artist ?? null, image_url: pick?.image ?? null, updated_at: new Date().toISOString() };
   const { error } = await sb.from("artists").upsert(row, { onConflict: "name_key" });
   if (error) toast(`Couldn't save the artist picture: ${error.message}`);
   return !error;
 }
-// Live search under an input. onPick({ name, deezer_id, image, thumb }).
+// Live search under an input (Chartmetric, Deezer as fallback). onPick({ name, cm_artist | deezer_id, image, thumb }).
 function attachArtistSearch(input, box, onPick) {
   let timer, seq = 0;
   const close = () => { box.hidden = true; box.innerHTML = ""; };
@@ -1018,7 +1018,7 @@ function attachArtistSearch(input, box, onPick) {
       try { list = await searchArtists(q); } catch { if (my === seq) box.innerHTML = `<div class="none">Couldn't search right now. You can still type the name.</div>`; return; }
       if (my !== seq) return;
       box.innerHTML = list.length
-        ? list.map((a, i) => `<button type="button" data-i="${i}">${a.thumb ? `<img src="${esc(a.thumb)}" alt="" referrerpolicy="no-referrer">` : `<span class="ph"></span>`}<span>${esc(a.name)}</span><span class="fans">${a.fans ? `${compact(a.fans)} fans` : ""}</span></button>`).join("") + `<div class="none">Not listed? Keep typing the name; you can add a picture later.</div>`
+        ? list.map((a, i) => `<button type="button" data-i="${i}">${a.thumb ? `<img src="${esc(a.thumb)}" alt="" referrerpolicy="no-referrer">` : `<span class="ph"></span>`}<span>${esc(a.name)}</span><span class="fans">${a.fans ? `${compact(a.fans)} ${esc(a.fans_label ?? "fans")}` : ""}</span></button>`).join("") + `<div class="none">Not listed? Keep typing the name; you can add a picture later.</div>`
         : `<div class="none">No match. Keep the name as typed; you can add a picture later.</div>`;
       box.querySelectorAll("[data-i]").forEach((b) => (b.onmousedown = (e) => { e.preventDefault(); onPick(list[Number(b.dataset.i)]); close(); }));
     }, 300);

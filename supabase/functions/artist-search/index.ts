@@ -1,5 +1,8 @@
 // artist-search: finds artists by name for the campaign form, with their picture.
-// Uses Deezer's public catalogue (no account or key needed). Signed-in team members only.
+// First choice: Chartmetric (official Spotify artist photos, ranked by real audience; 1 API credit
+// = $0.01 per search, and the result carries the Chartmetric id used by Trending).
+// Fallback: Deezer's public catalogue (free, no key) when Chartmetric is unavailable.
+// Signed-in team members only (or the internal cron secret, for checks).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
@@ -14,9 +17,37 @@ const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey(), { auth: { p
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+const REFRESH = Deno.env.get("CHARTMETRIC_REFRESH_TOKEN") ?? "";
+let cmToken = "", cmUntil = 0;
+async function chartmetricSearch(q: string, debug: boolean) {
+  if (!REFRESH) throw new Error("no Chartmetric key");
+  if (!cmToken || Date.now() > cmUntil) {
+    const t = await fetch("https://api.chartmetric.com/api/token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refreshtoken: REFRESH }), signal: AbortSignal.timeout(10_000) });
+    const tj = await t.json().catch(() => null);
+    if (!t.ok || !tj?.token) throw new Error(`Chartmetric sign-in failed (${t.status})`);
+    cmToken = tj.token; cmUntil = Date.now() + (Number(tj.expires_in ?? 3600) - 120) * 1000;
+  }
+  const r = await fetch(`https://api.chartmetric.com/api/search?type=artists&limit=10&q=${encodeURIComponent(q)}`, { headers: { Authorization: `Bearer ${cmToken}` }, signal: AbortSignal.timeout(10_000) });
+  const j = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(`Chartmetric search failed (${r.status})`);
+  const list: any[] = j?.obj?.artists ?? j?.obj?.data?.artists ?? [];
+  const num = (v: unknown) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+  const artists = list.filter((a) => a?.name).map((a) => {
+    const listeners = num(a.sp_monthly_listeners), followers = num(a.sp_followers);
+    const img = a.image_url ?? a.image ?? null;
+    return {
+      cm_artist: num(a.id) ?? num(a.cm_artist), name: a.name, image: img, thumb: img,
+      fans: listeners ?? followers ?? null,
+      fans_label: listeners != null ? "monthly listeners" : followers != null ? "Spotify followers" : null,
+      verified: !!a.verified,
+    };
+  });
+  return debug ? { artists, raw_keys: list[0] ? Object.keys(list[0]) : [] } : { artists };
+}
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
 async function teamMember(req: Request): Promise<boolean> {
@@ -31,11 +62,19 @@ async function teamMember(req: Request): Promise<boolean> {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-  if (!(await teamMember(req))) return json({ error: "Sign in as a Stellar team member." }, 401);
+  const { data: secret } = await db.rpc("trending_cron_secret");
+  const internal = !!secret && req.headers.get("x-cron-secret") === secret;
+  if (!internal && !(await teamMember(req))) return json({ error: "Sign in as a Stellar team member." }, 401);
   let body: any = {};
   try { body = await req.json(); } catch { /* ignore */ }
   const q = String(body?.q ?? "").trim().slice(0, 80);
   if (q.length < 2) return json({ artists: [] });
+  if (body?.source !== "deezer") {
+    try {
+      const cm = await chartmetricSearch(q, internal && !!body?.debug);
+      if (cm.artists.length) return json({ ...cm, source: "chartmetric" });
+    } catch (e) { if (internal) console.log("chartmetric search", String((e as Error).message)); /* fall back to Deezer */ }
+  }
   try {
     const r = await fetch(`https://api.deezer.com/search/artist?limit=25&q=${encodeURIComponent(q)}`);
     const j = await r.json();
@@ -62,7 +101,7 @@ Deno.serve(async (req) => {
       .filter((a: any) => { const k = norm(a.name); if (seen.has(k)) return false; seen.add(k); return true; })
       .slice(0, 6)
       .map(({ exact, starts, ...a }: any) => a);
-    return json({ artists });
+    return json({ artists, source: "deezer" });
   } catch (e) {
     return json({ artists: [], error: String((e as Error).message).slice(0, 200) }, 502);
   }

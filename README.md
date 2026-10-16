@@ -43,3 +43,6 @@ The look follows `DESIGN.md`: Apple's design language from [awesome-design-md](h
 
 1. Supabase → Authentication → Users → Add user, with their email and a password.
 2. Supabase → SQL Editor: `insert into team_members (email, name) values ('name@stellarmusic.dk', 'Name');`
+
+## Artist search
+The campaign form's artist search (`artist-search` function) uses Chartmetric: official Spotify artist photos, ranked by monthly listeners, at 1 API credit ($0.01) per search. Each picked artist is saved in `artists` with its Chartmetric id (`cm_artist`), which also identifies them in Trending. If Chartmetric is unavailable (no credits, outage), the search falls back to Deezer automatically.
