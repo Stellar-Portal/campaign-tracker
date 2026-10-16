@@ -1,9 +1,9 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016h";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261016h";
-import { renderAnalytics } from "./analytics.js?v=20261016h";
-import { renderTrending } from "./trending.js?v=20261016h";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016h";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016i";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261016i";
+import { renderAnalytics } from "./analytics.js?v=20261016i";
+import { renderTrending } from "./trending.js?v=20261016i";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016i";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -130,16 +130,15 @@ const NAV = [
 const NAV_KEY = "nav-collapsed";
 function setNavCollapsed(on, save = true) {
   document.body.classList.toggle("nav-collapsed", on);
-  const b = document.getElementById("nav-toggle"), edge = document.getElementById("nav-edge");
+  const b = document.getElementById("nav-toggle");
   const label = on ? "Expand the menu" : "Collapse the menu";
   if (b) { b.setAttribute("aria-expanded", String(!on)); b.setAttribute("aria-label", label); b.title = `${label} (Ctrl + \\)`; }
-  if (edge) edge.title = label;
   if (!save) return;
   try { localStorage.setItem(NAV_KEY, on ? "1" : "0"); } catch { /* ignore */ }
   if (PREFS.loaded) savePrefs("ui", { ...(PREFS.data.ui ?? {}), nav_collapsed: on });
 }
 try { if (localStorage.getItem(NAV_KEY) === "1") document.body.classList.add("nav-collapsed"); } catch { /* ignore */ }
-for (const idb of ["nav-toggle", "nav-edge"]) document.getElementById(idb)?.addEventListener("click", () => setNavCollapsed(!document.body.classList.contains("nav-collapsed")));
+document.getElementById("nav-toggle")?.addEventListener("click", () => setNavCollapsed(!document.body.classList.contains("nav-collapsed")));
 // Ctrl/⌘ + \ toggles it too.
 document.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setNavCollapsed(!document.body.classList.contains("nav-collapsed")); } });
 
