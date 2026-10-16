@@ -9,7 +9,11 @@ const nf = new Intl.NumberFormat("en");
 const cf = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 const n = (v) => (v == null ? "–" : nf.format(v));
 const compact = (v) => (v == null ? "–" : cf.format(v));
-const signed = (v) => (v == null ? "" : `${v >= 0 ? "+" : "−"}${compact(Math.abs(v))}`);
+// Headline numbers: exact up to 99,999, then 3 significant digits (459K, 2.46M, 19.5M, 1.83B).
+const bf = new Intl.NumberFormat("en", { notation: "compact", maximumSignificantDigits: 3 });
+const big = (v) => (v == null ? "–" : Math.abs(v) < 100_000 ? nf.format(v) : bf.format(v));
+const signed = (v) => (v == null ? "" : `${v >= 0 ? "+" : "−"}${big(Math.abs(v))}`);
+
 const pct = (v) => (v == null || !isFinite(v) ? "–" : `${(v * 100).toFixed(2)}%`);
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const dayLabel = (d) => `${Number(d.slice(8, 10))} ${MONTHS[Number(d.slice(5, 7)) - 1]}`;
@@ -612,10 +616,10 @@ export function mountReport(root, api) {
     el.innerHTML = `
       <div class="stats sh-stats">
         ${METRICS.map((m) => `<div class="stat ${state.metrics.includes(m.key) && S.overview_chart ? "on" : ""}" style="--mc:${state.metrics.length === 1 ? BRAND : METRIC_COLOR[m.key]}">${S.overview_chart ? `<button type="button" class="stat-btn" data-metric="${m.key}" aria-pressed="${state.metrics.includes(m.key)}">` : "<div>"}
-          <div class="n">${n(g[m.key].end)}</div><div class="l">${m.label}</div>${sinceText(g[m.key])}${S.overview_chart ? "</button>" : "</div>"}</div>`).join("")}
+          <div class="n" title="${g[m.key].end == null ? "" : nf.format(g[m.key].end)}">${big(g[m.key].end)}</div><div class="l">${m.label}</div>${sinceText(g[m.key])}${S.overview_chart ? "</button>" : "</div>"}</div>`).join("")}
         <div class="stat"><div class="n">${pct(er)}</div><div class="l">Engagement rate</div><div class="d muted">likes, comments and shares per view</div></div>
-        <div class="stat"><div class="n">${n(posts)}</div><div class="l">Live posts</div><div class="d muted">by ${n(creators)} creator${creators === 1 ? "" : "s"}</div></div>
-        ${data.follower_total != null ? `<div class="stat"><div class="n">${compact(data.follower_total)}</div><div class="l">Creators' followers</div><div class="d muted">combined reach</div></div>` : ""}
+        <div class="stat"><div class="n">${big(posts)}</div><div class="l">Live posts</div><div class="d muted">by ${n(creators)} creator${creators === 1 ? "" : "s"}</div></div>
+        ${data.follower_total != null ? `<div class="stat"><div class="n" title="${nf.format(data.follower_total)}">${big(data.follower_total)}</div><div class="l">Creators' followers</div><div class="d muted">combined reach</div></div>` : ""}
       </div>
       ${S.overview_chart ? `<div class="chart-card">
         <div class="chart-head"><h3>${state.metrics.map(metricLabel).join(", ")} over time</h3><span class="muted small">${state.metrics.length > 1 ? "Each line is shown as a % of its latest total so they share one scale; hover for the real numbers" : "Click the numbers above to compare them on one chart"}</span></div>
@@ -732,4 +736,4 @@ export function mountReport(root, api) {
   const onResize = () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (data && root.isConnected && root.querySelector("#panel")) renderPanel(); }, 200); };
   window.addEventListener("resize", onResize);
 }
-export { flag, regionName, ago, engagement, ICON, copyLink, pct, compact, isYT, platformName };
+export { big, flag, regionName, ago, engagement, ICON, copyLink, pct, compact, isYT, platformName };
