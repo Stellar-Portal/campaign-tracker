@@ -37,19 +37,31 @@ Deno.serve(async (req) => {
   const q = String(body?.q ?? "").trim().slice(0, 80);
   if (q.length < 2) return json({ artists: [] });
   try {
-    const r = await fetch(`https://api.deezer.com/search/artist?limit=8&q=${encodeURIComponent(q)}`);
+    const r = await fetch(`https://api.deezer.com/search/artist?limit=25&q=${encodeURIComponent(q)}`);
     const j = await r.json();
     if (j?.error) throw new Error(j.error.message ?? "Deezer error");
-    const artists = (j?.data ?? [])
-      .filter((a: any) => a?.name)
-      .map((a: any) => ({
-        deezer_id: a.id,
-        name: a.name,
-        fans: a.nb_fan ?? null,
-        // Deezer's placeholder for artists without a photo has an empty hash in the URL.
-        image: a.picture_xl && !/\/artist\/\/|\/images\/artist\/\//.test(a.picture_xl) ? a.picture_xl : null,
-        thumb: a.picture_medium && !/\/artist\/\/|\/images\/artist\/\//.test(a.picture_medium) ? a.picture_medium : null,
-      }));
+    // Deezer pads results with tiny same-name accounts. Rank real artists first: an exact name match
+    // (ignoring accents and case) with a real following, then by fans; drop near-empty profiles and
+    // same-name duplicates, keeping the biggest.
+    const norm = (x: string) => x.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const nq = norm(q);
+    const placeholder = (u: string | undefined) => !u || /\/artist\/\/|\/images\/artist\//.test(u);
+    const all = (j?.data ?? []).filter((a: any) => a?.name).map((a: any) => ({
+      deezer_id: a.id, name: a.name, fans: a.nb_fan ?? 0,
+      image: placeholder(a.picture_xl) ? null : a.picture_xl,
+      thumb: placeholder(a.picture_medium) ? null : a.picture_medium,
+      exact: norm(a.name) === nq, starts: norm(a.name).startsWith(nq),
+    }));
+    const biggest = Math.max(0, ...all.map((a: any) => a.fans));
+    const floor = biggest >= 1000 ? 100 : 0;   // only drop tiny profiles when a real artist is in the list
+    const score = (a: any) => (a.exact && a.fans >= 100 ? 3e9 : 0) + (a.starts ? 1e9 : 0) + a.fans;
+    const seen = new Set<string>();
+    const artists = all
+      .filter((a: any) => a.fans >= floor)
+      .sort((a: any, b: any) => score(b) - score(a))
+      .filter((a: any) => { const k = norm(a.name); if (seen.has(k)) return false; seen.add(k); return true; })
+      .slice(0, 6)
+      .map(({ exact, starts, ...a }: any) => a);
     return json({ artists });
   } catch (e) {
     return json({ artists: [], error: String((e as Error).message).slice(0, 200) }, 502);
