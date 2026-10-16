@@ -1,9 +1,9 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016i";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261016i";
-import { renderAnalytics } from "./analytics.js?v=20261016i";
-import { renderTrending } from "./trending.js?v=20261016i";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016i";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016j";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261016j";
+import { renderAnalytics } from "./analytics.js?v=20261016j";
+import { renderTrending } from "./trending.js?v=20261016j";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016j";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -165,6 +165,21 @@ function renderSoon(key) {
       <p>This part of Stellar OS isn't built yet. What it will do:</p>
       <ul>${points.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></section>`;
 }
+
+// ---------- copy buttons (PO numbers etc.) ----------
+const COPY_SVG = '<svg viewBox="0 0 20 20" aria-hidden="true"><rect class="c1" x="7" y="7" width="10" height="10" rx="2"/><path class="c1" d="M13 4.5V4a1.5 1.5 0 0 0-1.5-1.5h-7A1.5 1.5 0 0 0 3 4v7a1.5 1.5 0 0 0 1.5 1.5h.5"/><path class="c2" d="M5 10.5l3.2 3.2L15.5 6"/></svg>';
+const copyBtn = (text, what = "PO number") => `<button type="button" class="copy-btn" data-copy="${esc(text)}" data-stop title="Copy ${esc(what)}" aria-label="Copy ${esc(what)} ${esc(text)}">${COPY_SVG}</button>`;
+// One listener for every copy button; runs before row clicks so copying never opens or closes a row.
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest?.("[data-copy]");
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  try {
+    await navigator.clipboard.writeText(b.dataset.copy);
+    b.classList.add("done"); setTimeout(() => b.classList.remove("done"), 1400);
+    toast(`Copied ${b.dataset.copy}`);
+  } catch { toast("Couldn't copy here; select the text instead"); }
+}, true);
 
 // ---------- per-person view settings ----------
 // Sorting and filters are saved for whoever is signed in (table user_prefs, readable only by them),
@@ -485,7 +500,7 @@ async function renderOverview(token) {
       <tbody>${list.map((r) => `
         <tr class="ov-row${open.has(r.row) ? " open" : ""}" data-row="${r.row}" tabindex="0" aria-expanded="${open.has(r.row)}">
           <td>${statusChip(v(r, "Status"))}</td>
-          <td><div class="artist">${esc(v(r, "Artist Name") || "–")}</div><div class="song small">${esc(v(r, "Song Name (s) or Project Name"))}</div>${v(r, "Stellar PO no.") ? `<div class="muted small ov-po">${esc(v(r, "Stellar PO no."))}</div>` : ""}</td>
+          <td><div class="artist">${esc(v(r, "Artist Name") || "–")}</div><div class="song small">${esc(v(r, "Song Name (s) or Project Name"))}</div>${v(r, "Stellar PO no.") ? `<div class="muted small ov-po">${esc(v(r, "Stellar PO no."))}${copyBtn(v(r, "Stellar PO no."))}</div>` : ""}</td>
           <td><div>${esc(v(r, "Client"))}</div><div class="muted small">${esc(v(r, "Client Market"))}</div></td>
           <td>${esc(v(r, "Stellar DRI"))}</td>
           <td class="small">${esc(v(r, "Campaign Market"))}</td>
@@ -1097,7 +1112,7 @@ async function renderCampaign(token, id) {
     remove: async (p) => { const { error: e } = await sb.from("posts").delete().eq("campaign_id", id).eq("tiktok_video_id", p.video_id); if (e) toast(e.message); return !e; },
     header: `<a href="#/campaigns" class="back">All campaigns</a>`,
     avatarAction: `<button type="button" class="art-edit" id="art-edit">Change</button>`,
-    heroMeta: `<span class="key-chip status-chip s-${esc(c.status)}">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span class="key-chip po"><span class="key-sub">PO</span><span class="key-text">${esc(c.po_number)}</span></span>` : ""}`,
+    heroMeta: `<span class="key-chip status-chip s-${esc(c.status)}">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span class="key-chip po"><span class="key-sub">PO</span><span class="key-text">${esc(c.po_number)}</span>${copyBtn(c.po_number)}</span>` : ""}`,
     heroActions: `
       <a class="btn primary" href="#/c/${esc(id)}/add">Add links</a>
       <button type="button" id="refresh">Refresh numbers</button>

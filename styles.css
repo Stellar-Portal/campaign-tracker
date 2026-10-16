@@ -810,3 +810,16 @@ body.nav-collapsed .who button { padding: 7px; }
   body.nav-collapsed .nav-item { padding: 6px 12px; }
   .content .art-band::before { display: none; }
 }
+
+/* Copy button next to PO numbers */
+.copy-btn { display: inline-grid; place-items: center; width: 24px; height: 24px; margin: -4px -6px -4px 4px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); vertical-align: middle; cursor: pointer; }
+.copy-btn:hover { background: rgba(0,0,0,0.06); color: var(--accent); }
+.copy-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.copy-btn .c2 { display: none; }
+.copy-btn.done { color: var(--good); }
+.copy-btn.done .c1 { display: none; }
+.copy-btn.done .c2 { display: inline; stroke-width: 2; }
+.ov-po { display: flex; align-items: center; font-variant-numeric: tabular-nums; }
+.art-band .copy-btn { color: rgba(255,255,255,0.7); margin-right: -8px; }
+.art-band .copy-btn:hover { background: rgba(255,255,255,0.16); color: #fff; }
+.art-band .copy-btn.done { color: #3ddc84; }
