@@ -1,8 +1,9 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261015i";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261015i";
-import { renderAnalytics } from "./analytics.js?v=20261015i";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261015i";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016a";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct } from "./report.js?v=20261016a";
+import { renderAnalytics } from "./analytics.js?v=20261016a";
+import { renderTrending } from "./trending.js?v=20261016a";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016a";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -106,6 +107,7 @@ const NAV_ICON = {
   creators: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/>',
   invoices: '<path d="M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h5"/>',
   analytics: '<path d="M3 20l5-7 4 4 8-11"/><path d="M16 6h4v4"/>',
+  trending: '<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
 };
 const NAV = [
   ["Campaigns", [
@@ -119,6 +121,7 @@ const NAV = [
   ]],
   ["Insights", [
     { key: "analytics", href: "#/analytics", label: "Analytics", icon: "analytics" },
+    { key: "trending", href: "#/trending", label: "Trending", icon: "trending" },
   ]],
 ];
 function renderNav(active) {
@@ -1726,10 +1729,11 @@ async function route() {
   renderWho(user);
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   window.scrollTo(0, 0);
-  const section = !parts[0] || parts[0] === "overview" ? "overview" : SOON[parts[0]] || parts[0] === "analytics" ? parts[0] : "campaigns";
+  const section = !parts[0] || parts[0] === "overview" ? "overview" : SOON[parts[0]] || parts[0] === "analytics" || parts[0] === "trending" ? parts[0] : "campaigns";
   renderNav(section);
   if (section === "overview") return renderOverview(token);
   if (section === "analytics") return renderAnalytics(app, sb, { isCurrent: () => token === routeToken, go });
+  if (section === "trending") return renderTrending(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (SOON[parts[0]]) return renderSoon(parts[0]);
   if (parts[0] === "campaigns") return renderList(token);
   if (parts[0] === "new") return renderForm(token);

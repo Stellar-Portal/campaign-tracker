@@ -1,0 +1,269 @@
+// chartmetric-sync: the data behind the Trending section.
+//
+// 1. Daily charts (schedule, every 5 minutes in the early morning, or "Collect now" by a team member):
+//    for every followed country, fetches the latest Spotify daily chart, Shazam chart and the weekly
+//    TikTok breakout and popular charts from Chartmetric, stores them in trend_chart_rows and scores
+//    them (trend_compute_scores). trend_fetch_log records each chart fetched per day, so each run
+//    continues where the last one stopped and no chart is paid for twice in a day.
+// 2. Artist audience ({action:"audience", cm_artist, platform}, team members only): TikTok, Instagram
+//    or YouTube audience for one artist, kept 30 days in trend_artist_audience.
+//
+// Needs the Supabase secret CHARTMETRIC_REFRESH_TOKEN (Chartmetric API refresh token).
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+
+function serviceKey(): string {
+  const raw = Deno.env.get("SUPABASE_SECRET_KEYS");
+  if (raw) {
+    try { const k = JSON.parse(raw); const v = k.default ?? Object.values(k)[0]; if (v) return String(v); } catch { /* ignore */ }
+  }
+  return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+}
+const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey(), { auth: { persistSession: false } });
+const REFRESH = Deno.env.get("CHARTMETRIC_REFRESH_TOKEN") ?? "";
+const API = "https://api.chartmetric.com";
+const TIME_BUDGET_MS = 120_000;
+const AUDIENCE_DAYS = 30;
+
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
+const todayCph = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Copenhagen" }).format(new Date());
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ---------- Chartmetric ----------
+let token = "", tokenUntil = 0, calls = 0;
+async function cmToken(): Promise<string> {
+  if (token && Date.now() < tokenUntil) return token;
+  if (!REFRESH) throw new Error("Chartmetric key is missing: add CHARTMETRIC_REFRESH_TOKEN in Supabase → Edge Functions → Secrets");
+  const r = await fetch(`${API}/api/token`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refreshtoken: REFRESH }) });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j?.token) throw new Error(`Chartmetric sign-in failed (HTTP ${r.status}): ${String(j?.error ?? j?.message ?? "").slice(0, 120)}`);
+  token = j.token;
+  tokenUntil = Date.now() + (Number(j.expires_in ?? 3600) - 120) * 1000;
+  return token;
+}
+class NoData extends Error {}
+async function cmGet(path: string, params: Record<string, string | number | boolean | undefined>): Promise<any> {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") q.set(k, String(v));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    calls++;
+    const r = await fetch(`${API}${path}?${q}`, { headers: { Authorization: `Bearer ${await cmToken()}` } });
+    if (r.status === 429) {
+      // Rate limited: wait as long as Chartmetric asks (capped), then try again.
+      const wait = Number(r.headers.get("retry-after")) || Number(r.headers.get("x-ratelimit-reset")) || 2;
+      await sleep(Math.min(10, wait) * 1000);
+      continue;
+    }
+    if (r.status === 401) { token = ""; continue; }
+    const text = await r.text();
+    let j: any = null;
+    try { j = JSON.parse(text); } catch { /* not JSON */ }
+    if (r.status === 404 || r.status === 400 && /no data|not found|invalid country|not available/i.test(text)) throw new NoData(String(j?.error ?? "No chart"));
+    if (r.status === 402) throw new Error("Chartmetric says the subscription doesn't cover this (HTTP 402)");
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${String(j?.error ?? j?.message ?? text).slice(0, 160)}`);
+    return j;
+  }
+  throw new Error("Chartmetric kept rate-limiting; will retry on the next run");
+}
+
+// ---------- normalising chart rows ----------
+// Different charts name the same song slightly differently ("Song (feat. X)", "Song - Sped Up"),
+// so tracks are matched across platforms on a cleaned title + first artist.
+const clean = (s: unknown) => String(s ?? "").toLowerCase()
+  .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+  .replace(/\s*[\(\[][^\)\]]*(feat|ft\.|with|remix|sped|slowed|version|edit|remaster)[^\)\]]*[\)\]]/g, "")
+  .replace(/\s+-\s+.*(sped|slowed|remix|version|edit|remaster).*$/g, "")
+  .replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+const asArr = (v: unknown): any[] => (Array.isArray(v) ? v : v == null || v === "" ? [] : typeof v === "string" ? v.split(/\s*,\s*/) : [v]);
+const num = (v: unknown) => { const x = Number(v); return Number.isFinite(x) ? x : null; };
+const dateOnly = (v: unknown) => { const m = String(v ?? "").match(/^\d{4}-\d{2}-\d{2}/); return m ? m[0] : null; };
+
+type Row = {
+  source: string; country: string; chart_date: string; rank: number; track_key: string; cm_track: number | null;
+  title: string | null; artist_names: string[]; cm_artist_ids: number[]; isrc: string | null; image_url: string | null;
+  pre_rank: number | null; rank_change: number | null; peak_rank: number | null; extra: Record<string, unknown>; raw: unknown;
+};
+function makeRow(source: string, country: string, fallbackDate: string, r: any): Row | null {
+  const rank = num(r.rank);
+  if (!rank) return null;
+  let names: string[], ids: number[], pre: number | null, date: string | null, cmTrack: number | null, extra: Record<string, unknown> = {};
+  if (source.startsWith("tiktok")) {
+    names = asArr(r.artists).map((a: any) => a?.name).filter(Boolean);
+    ids = asArr(r.artists).map((a: any) => num(a?.id)).filter((x): x is number => x != null);
+    // rankDiff: places moved since last week (positive = climbed); missing = new on the chart.
+    const diff = num(r.rankDiff);
+    pre = diff == null ? null : rank + diff;
+    date = dateOnly(r.chartedDate);
+    cmTrack = null; // TikTok chart ids aren't confirmed to be Chartmetric track ids, so they're kept in raw only
+    extra = { tiktok_top_videos_views: r.targetExtras?.tiktokTopVideosViews ?? null, spotify_plays: r.targetExtras?.spotifyPlays ?? null, shazams: r.targetExtras?.shazamCount ?? null, genre: r.genre ?? null };
+  } else {
+    names = asArr(r.artist_names ?? r.spotify_artist_names ?? r.itunes_artist_names).map(String).filter(Boolean);
+    ids = asArr(r.cm_artist).map(num).filter((x): x is number => x != null);
+    pre = num(r.pre_rank);
+    const stats = Array.isArray(r.rankStats) ? r.rankStats : [];
+    // The chart's date is the newest entry in its rank history.
+    date = stats.map((s: any) => dateOnly(s?.timestp)).filter(Boolean).sort().pop() ?? dateOnly(r.timestp) ?? dateOnly(r.chart_date);
+    cmTrack = num(r.cm_track);
+    extra = { velocity: r.velocity ?? null, time_on_chart: r.time_on_chart ?? null, shazams: r.num_of_shazams ?? null, countries_charting: r.countries_charting_count ?? null };
+  }
+  const title = r.name ?? null;
+  const key = `n:${clean(title)}|${clean(names[0] ?? "")}`;
+  if (key === "n:|") return null;
+  return {
+    source, country, chart_date: date ?? fallbackDate, rank, track_key: key, cm_track: cmTrack,
+    title, artist_names: names, cm_artist_ids: ids, isrc: r.isrc ?? null,
+    image_url: r.image_url ?? r.imageUrl ?? null,
+    pre_rank: pre, rank_change: pre == null ? null : pre - rank, peak_rank: num(r.peak_rank), extra, raw: r,
+  };
+}
+
+// The charts we collect, per country.
+const SOURCES: { source: string; fetch: (country: string) => Promise<any[]> }[] = [
+  { source: "spotify", fetch: async (c) => {
+      // Daily top chart by streams; up to 200 rows over a few pages.
+      const out: any[] = [];
+      for (let offset = 0; offset < 200; ) {
+        const j = await cmGet("/api/charts/spotify", { country_code: c === "GLOBAL" ? "GLOBAL" : c, type: "regional", interval: "daily", latest: true, offset });
+        const page = j?.obj?.data ?? j?.obj ?? [];
+        if (!Array.isArray(page) || !page.length) break;
+        out.push(...page);
+        offset += page.length;
+        if (page.length < 50) break;
+      }
+      return out;
+    } },
+  { source: "shazam", fetch: async (c) => {
+      const j = await cmGet("/api/charts/shazam", { country_code: c, latest: true });
+      const d = j?.obj?.data ?? j?.obj ?? [];
+      return Array.isArray(d) ? d : [];
+    } },
+  { source: "tiktok_breakout", fetch: async (c) => {
+      if (c === "GLOBAL") return [];
+      const j = await cmGet("/api/charts/tiktok/tracks/breakout", { code2: c, interval: "weekly", latest: true, limit: 100 });
+      return Array.isArray(j?.obj) ? j.obj : [];
+    } },
+  { source: "tiktok_popular", fetch: async (c) => {
+      if (c === "GLOBAL") return [];
+      const j = await cmGet("/api/charts/tiktok/tracks/popular", { code2: c, interval: "weekly", latest: true, limit: 100 });
+      return Array.isArray(j?.obj) ? j.obj : [];
+    } },
+];
+
+async function fetchOne(runDate: string, source: (typeof SOURCES)[number], country: string) {
+  try {
+    const raw = await source.fetch(country);
+    const rows = raw.map((r) => makeRow(source.source, country, runDate, r)).filter((x): x is Row => !!x);
+    // One row per rank and date (Chartmetric occasionally repeats a position).
+    const uniq = [...new Map(rows.map((r) => [`${r.chart_date}|${r.rank}`, r])).values()];
+    for (let i = 0; i < uniq.length; i += 200) {
+      const { error } = await db.from("trend_chart_rows").upsert(uniq.slice(i, i + 200), { onConflict: "source,country,chart_date,rank" });
+      if (error) throw new Error(error.message);
+    }
+    const chartDate = uniq.map((r) => r.chart_date).sort().pop() ?? null;
+    await db.from("trend_fetch_log").upsert({ run_date: runDate, source: source.source, country, status: uniq.length ? "ok" : "empty", rows: uniq.length, chart_date: chartDate, error: null, fetched_at: new Date().toISOString() }, { onConflict: "run_date,source,country" });
+    return { rows: uniq.length, chartDate };
+  } catch (e) {
+    const empty = e instanceof NoData;
+    const msg = String((e as Error).message).slice(0, 300);
+    // Errors are retried on the next run (only "ok"/"empty" count as done); missing charts are not.
+    await db.from("trend_fetch_log").upsert({ run_date: runDate, source: source.source, country, status: empty ? "empty" : "error", rows: 0, error: msg, fetched_at: new Date().toISOString() }, { onConflict: "run_date,source,country" });
+    if (/key is missing|sign-in failed|subscription/i.test(msg)) throw e; // no point carrying on
+    return { rows: 0, chartDate: null, error: msg };
+  }
+}
+
+async function syncCharts(force: boolean) {
+  const started = Date.now();
+  const runDate = todayCph();
+  const { data: countries, error } = await db.from("trend_countries").select("code").eq("enabled", true).order("position");
+  if (error) throw new Error(error.message);
+  const { data: done } = await db.from("trend_fetch_log").select("source,country,status,fetched_at").eq("run_date", runDate);
+  const doneSet = new Set((done ?? []).filter((d) => d.status !== "error" || (force ? false : Date.now() - Date.parse(d.fetched_at) < 20 * 60_000)).map((d) => `${d.source}|${d.country}`));
+  const todo: [(typeof SOURCES)[number], string][] = [];
+  for (const c of countries ?? []) for (const s of SOURCES) if (!doneSet.has(`${s.source}|${c.code}`)) todo.push([s, c.code]);
+
+  const { data: run } = await db.from("trend_runs").insert({ run_date: runDate, note: force ? "manual" : "schedule" }).select("id").single();
+  let saved = 0; const errors: string[] = []; const dates = new Set<string>();
+  let i = 0;
+  for (; i < todo.length && Date.now() - started < TIME_BUDGET_MS; i++) {
+    const [s, c] = todo[i];
+    const r = await fetchOne(runDate, s, c);
+    saved += r.rows;
+    if (r.chartDate && (s.source === "spotify" || s.source === "shazam")) dates.add(r.chartDate);
+    if ((r as any).error) errors.push(`${s.source} ${c}: ${(r as any).error}`);
+  }
+  // Score every daily chart date we touched, plus today's date once everything is in.
+  const remaining = todo.length - i;
+  if (remaining === 0) {
+    const { data: latest } = await db.from("trend_fetch_log").select("chart_date").eq("run_date", runDate).in("source", ["spotify", "shazam"]).not("chart_date", "is", null);
+    for (const d of latest ?? []) dates.add(d.chart_date);
+  }
+  let scored = 0;
+  for (const d of dates) {
+    const { data: n, error: e } = await db.rpc("trend_compute_scores", { p_date: d });
+    if (e) errors.push(`scoring ${d}: ${e.message}`); else scored += Number(n ?? 0);
+  }
+  await db.from("trend_runs").update({ finished_at: new Date().toISOString(), calls, rows_saved: saved, errors: errors.slice(0, 50), note: `${force ? "manual" : "schedule"}; ${i} charts fetched, ${remaining} left, ${scored} scores` }).eq("id", run?.id);
+  return { charts_fetched: i, charts_left: remaining, rows_saved: saved, scored, calls, errors: errors.slice(0, 10) };
+}
+
+// ---------- artist audience ----------
+const AUDIENCE_PATH: Record<string, string> = {
+  tiktok: "tiktok-audience-stats",
+  instagram: "instagram-audience-stats",
+  youtube: "youtube-audience-stats",
+};
+async function audience(cmArtist: number, platform: string, refresh: boolean) {
+  if (!AUDIENCE_PATH[platform]) throw new Error("Unknown platform");
+  if (!refresh) {
+    const { data: cached } = await db.from("trend_artist_audience").select("*").eq("cm_artist", cmArtist).eq("platform", platform).maybeSingle();
+    if (cached && Date.now() - Date.parse(cached.fetched_at) < AUDIENCE_DAYS * 86_400_000) return { ...cached, cached: true };
+  }
+  let data: unknown = null, error: string | null = null;
+  try {
+    const j = await cmGet(`/api/artist/${cmArtist}/${AUDIENCE_PATH[platform]}`, {});
+    data = j?.obj ?? j;
+  } catch (e) {
+    error = e instanceof NoData ? "Chartmetric has no audience data for this artist on this platform." : String((e as Error).message).slice(0, 300);
+  }
+  const row = { cm_artist: cmArtist, platform, data, error, fetched_at: new Date().toISOString() };
+  await db.from("trend_artist_audience").upsert(row, { onConflict: "cm_artist,platform" });
+  return { ...row, cached: false };
+}
+
+// ---------- access ----------
+async function teamMember(req: Request): Promise<boolean> {
+  const jwt = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!jwt.startsWith("ey")) return false;
+  const { data } = await db.auth.getUser(jwt);
+  const email = data.user?.email?.toLowerCase();
+  if (!email) return false;
+  const { data: m } = await db.from("team_members").select("email").eq("email", email).maybeSingle();
+  return !!m;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  let body: any = {};
+  try { body = await req.json(); } catch { /* scheduled calls send {} */ }
+  const { data: secret } = await db.rpc("trending_cron_secret");
+  const fromCron = !!secret && req.headers.get("x-cron-secret") === secret;
+  const member = fromCron ? false : await teamMember(req);
+  if (!fromCron && !member) return json({ error: "Not allowed" }, 401);
+  try {
+    if (body?.action === "audience") {
+      if (!member) return json({ error: "Not allowed" }, 401);
+      const id = Number(body.cm_artist);
+      if (!Number.isInteger(id) || id < 2) return json({ error: "Missing artist" }, 400);
+      return json(await audience(id, String(body.platform ?? "tiktok"), !!body.refresh));
+    }
+    return json(await syncCharts(member && !!body?.force));
+  } catch (e) {
+    return json({ error: String((e as Error).message) }, 502);
+  }
+});
