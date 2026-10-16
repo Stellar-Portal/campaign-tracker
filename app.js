@@ -1,9 +1,9 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016e";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261016e";
-import { renderAnalytics } from "./analytics.js?v=20261016e";
-import { renderTrending } from "./trending.js?v=20261016e";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016e";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016f";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261016f";
+import { renderAnalytics } from "./analytics.js?v=20261016f";
+import { renderTrending } from "./trending.js?v=20261016f";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016f";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -1062,6 +1062,7 @@ async function renderCampaign(token, id) {
   const mk = (markets.data ?? []).sort((a, b) => all.findIndex((x) => x.name === a.market) - all.findIndex((x) => x.name === b.market))
     .map((m) => `${m.market}${m.amount != null ? ` ${money(m.amount, c.currency)}` : m.share_percent != null ? ` ${m.share_percent}%` : ""}`).join(", ");
   const lastChecked = latest.data?.[0]?.last_checked_at;
+  const detail = (label, value) => (value ? `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>` : "");
   const call = async (body) => {
     const { data, error: e } = await sb.functions.invoke("share", { body: { campaign_id: id, ...body } });
     if (e || data?.error) throw new Error(data?.error ?? e.message);
@@ -1077,20 +1078,26 @@ async function renderCampaign(token, id) {
     remove: async (p) => { const { error: e } = await sb.from("posts").delete().eq("campaign_id", id).eq("tiktok_video_id", p.video_id); if (e) toast(e.message); return !e; },
     header: `<a href="#/campaigns" class="back">All campaigns</a>`,
     avatarAction: `<button type="button" class="art-edit" id="art-edit">Change</button>`,
-    heroMeta: `<span class="status">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span>PO ${esc(c.po_number)}</span>` : ""}
-      ${c.client ? `<span>${esc(c.client)}</span>` : ""}${c.comms_owner ? `<span>DRI ${esc(c.comms_owner)}</span>` : ""}
-      ${c.start_date ? `<span>${esc(date(c.start_date))}${c.end_date ? ` to ${esc(date(c.end_date))}` : ""}</span>` : ""}
-      ${mk ? `<span>${esc(mk)}</span>` : ""}`,
+    heroMeta: `<span class="key-chip status-chip s-${esc(c.status)}">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span class="key-chip po"><span class="key-sub">PO</span><span class="key-text">${esc(c.po_number)}</span></span>` : ""}`,
     heroActions: `
       <a class="btn primary" href="#/c/${esc(id)}/add">Add links</a>
       <button type="button" id="refresh">Refresh numbers</button>
       <button type="button" id="share-btn" aria-expanded="false" aria-controls="share-panel">Share with client</button>
       <a class="btn" href="#/c/${esc(id)}/edit">Edit</a>
       <button type="button" id="del-camp" class="danger-lite">Delete</button>
-      <span class="updated" id="updated">${lastChecked ? `Numbers from ${esc(timeAgo(lastChecked))}` : ""}</span>
-      ${sheetLine(sync.data, c)}`,
+      <span class="updated" id="updated" title="${lastChecked ? `Numbers checked ${esc(timeAgo(lastChecked))}` : ""}"></span>`,
     afterHero: `
       <section id="share-panel" class="panel share-panel" hidden></section>
+      <section class="camp-details" aria-label="Campaign details">
+        <dl>
+          ${detail("Client", c.client)}
+          ${detail("Stellar DRI", c.comms_owner)}
+          ${detail("Dates", c.start_date ? `${date(c.start_date)}${c.end_date ? ` – ${date(c.end_date)}` : ""}` : null)}
+          ${detail("Markets", mk)}
+          ${detail("Numbers", lastChecked ? `checked ${timeAgo(lastChecked)}` : null)}
+        </dl>
+        ${sheetLine(sync.data, c)}
+      </section>
       <div class="stats money-strip" aria-label="Money (team only)">
         <div class="stat money"><div class="n">${money(c.budget, c.currency)}</div><div class="l">Budget</div></div>
         <div class="stat money"><div class="n">${money(c.spend, c.currency)}</div><div class="l">Spend</div></div>

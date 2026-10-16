@@ -489,6 +489,17 @@ export function mountReport(root, api) {
     return { end, delta: end != null && base != null && ds.length + (before ? 1 : 0) > 1 ? end - base : null, since: ds[0], fromStart: !before };
   }
 
+  // The campaign's soundbite: its most-used TikTok sound, linked, with how many videos use it.
+  function soundChip() {
+    const sounds = (data.sounds ?? []).filter((x) => x.title || x.sound_url);
+    if (!sounds.length || (api.mode === "client" && S.sounds === false)) return "";
+    const latest = (x) => (x.daily ?? []).map((d) => d.n).filter((v) => v != null).at(-1) ?? 0;
+    const top = [...sounds].sort((a, b) => latest(b) - latest(a))[0];
+    const uses = latest(top);
+    const label = `<span class="note" aria-hidden="true">♪</span><span class="key-text">${esc(top.title ?? "Campaign sound")}</span>${uses ? `<span class="key-sub">${esc(big(uses))} videos</span>` : ""}${sounds.length > 1 ? `<span class="key-sub">+${sounds.length - 1} more</span>` : ""}`;
+    return top.sound_url ? `<a class="key-chip sound" href="${esc(top.sound_url)}" target="_blank" rel="noopener" title="Open the sound on TikTok">${label}</a>` : `<span class="key-chip sound">${label}</span>`;
+  }
+
   function render() {
     const camps = data.campaigns ?? [];
     const posts = data.posts ?? [];
@@ -509,11 +520,11 @@ export function mountReport(root, api) {
               <div class="art-text">
                 <h1>${esc(data.artist)}</h1>
                 <div class="voice">${camps.length === 1 ? esc(camps[0].song ?? "1 campaign") : `${camps.length} campaigns`}${data.folder ? `<span class="folder-name">${esc(data.folder.name)}</span>` : ""}</div>
-                <div class="meta">
-                  ${camps.length > 1 ? camps.map((c) => `<span class="status">${esc(c.song ?? "Untitled")}${c.status === "draft" ? " · upcoming" : ""}</span>`).join("") : camps[0]?.status === "draft" ? `<span class="status">upcoming</span>` : ""}
+                <div class="hero-keys">
+                  ${camps.length > 1 ? camps.map((c) => `<span class="key-chip">${esc(c.song ?? "Untitled")}${c.status === "draft" ? " · upcoming" : ""}</span>`).join("") : api.heroMeta ? "" : camps[0]?.status === "draft" ? `<span class="key-chip">Upcoming</span>` : ""}
                   ${api.heroMeta ?? ""}
-                  ${data.dates.length ? `<span>Tracking since ${esc(dayLong(data.dates[0]))}</span>` : ""}
-                  ${lastStats ? `<span>Numbers from ${esc(dayLong(lastStats))}</span>` : ""}
+                  ${soundChip()}
+                  ${lastStats ? `<span class="hero-upd">Updated ${esc(dayLabel(lastStats))}</span>` : ""}
                 </div>
               </div>
             </div>
