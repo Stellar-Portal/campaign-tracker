@@ -91,7 +91,7 @@ window.addEventListener("scroll", hideTip, { passive: true });
 // indexed: several numbers of very different size on one chart (e.g. views and comments).
 // Each line is drawn as a % of its own latest value on ONE shared 0–100% axis (no second axis,
 // which would invent a relationship); the tooltip always shows the real values.
-export function chart(host, { dates, panels, empty, allowNegative = false, independent = false }) {
+export function chart(host, { dates, panels, empty, allowNegative = false, independent = false, height = 280 }) {
   if (independent && panels.length === 1 && panels[0].series.length > 1) {
     // Index each series to its last value, keep the real numbers for the tooltip and table.
     panels = [{ ...panels[0], indexed: true, series: panels[0].series.map((se) => {
@@ -112,7 +112,7 @@ export function chart(host, { dates, panels, empty, allowNegative = false, indep
     <div class="chart-foot"><button type="button" class="link-btn small" data-table>Show as table</button></div>
     <div class="chart-table" hidden></div>`;
   const W = Math.max(300, Math.round(host.clientWidth || 600));
-  const H = stacked ? 150 : 280, L = 52, R = labelled ? Math.min(150, Math.round(W * 0.24)) : 16, T = stacked ? 26 : 14;
+  const H = stacked ? 150 : height, L = 52, R = labelled ? Math.min(150, Math.round(W * 0.24)) : 16, T = stacked ? 26 : 14;
   const x = (i) => L + (i / (dates.length - 1)) * (W - L - R);
   const views = panels.map((p, k) => {
     const last = k === panels.length - 1;
@@ -232,20 +232,13 @@ export function renderWall(el, list, ctx, { shown = 48, view = "grid", onMore } 
       <article class="post${p.gone ? " gone" : ""}${picking && ctx.selected.has(p.id) ? " picked" : ""}">
         <div class="cover-wrap">
           ${pick(p, i)}
-          <button type="button" class="cover" data-i="${i}" aria-label="Preview @${esc(p.creator?.username ?? "")}'s video">
+          <button type="button" class="cover" data-i="${i}" aria-label="Preview @${esc(p.creator?.username ?? "")}'s video" title="${esc(`@${p.creator?.username ?? "unknown"} · ${n(p.plays)} views · ${n(p.likes)} likes · ${n(p.comments)} comments${p.shares != null ? ` · ${n(p.shares)} shares` : ""}`)}">
             <img data-vid="${esc(p.video_id)}" alt="" loading="lazy" ${ctx.covers[p.video_id] ? `src="${esc(ctx.covers[p.video_id])}"` : "hidden"} onerror="this.hidden=true">
             ${p.gone ? `<span class="chip tl">No longer on ${platformName(p)}</span>` : ctx.showCountry !== false && flag(p.country) ? `<span class="chip tl" title="${esc(regionName(p.country))}">${flag(p.country)}</span>` : ""}
-            ${p.gone ? "" : `<span class="chip tr">${isYT(p) ? "YouTube · " : ""}${esc(ago(p.published_at))}</span>`}
-            <span class="plays">${compact(p.plays)}</span>
+            ${p.gone ? "" : `<span class="chip tr" ${isYT(p) ? `title="YouTube"` : ""}>${isYT(p) ? "▶ " : ""}${esc(ago(p.published_at))}</span>`}
+            <span class="cap"><span class="cap-who">${isYT(p) ? esc(p.creator?.name || "YouTube") : `@${esc(p.creator?.username ?? "unknown")}`}</span><span class="plays">${compact(p.plays)}</span></span>
           </button>
           ${actions(p, i)}
-        </div>
-        <div class="body">
-          <div class="handle">@${esc(p.creator?.username ?? "unknown")}${p.creator?.verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</div>
-          <div class="caption">${esc(p.caption ?? "")}</div>
-          ${p.sound_title ? `<div class="line sound-line">♪ ${esc(p.sound_title)}</div>` : ""}
-          ${ctx.folderOf && ctx.folderOf(p) ? `<div class="line folder-line">${esc(ctx.folderOf(p))}</div>` : ""}
-          <div class="line">${compact(p.likes)} likes · ${compact(p.comments)} comments · ${compact(p.shares)} shares</div>
         </div>
       </article>`).join("")}</div>`
     : `<div class="table-wrap"><table class="post-table"><thead><tr>${picking ? '<th class="pick-col"><span class="sr">Select</span></th>' : ""}<th>Post</th>${ctx.songOf ? "<th>Song</th>" : ""}${ctx.folderOf ? "<th>Folder</th>" : ""}${ctx.showCountry !== false ? "<th>Country</th>" : ""}<th>Posted</th><th class="num">Views</th><th class="num">Likes</th><th class="num">Comments</th><th class="num">Shares</th><th></th></tr></thead>
@@ -420,6 +413,7 @@ async function loadPostChart(p, ctx) {
   chart(host, {
     dates,
     panels: [{ label: "Views", series: [{ name: "Views", color: BRAND, values: filled.map((r) => r?.plays ?? null) }] }],
+    height: 170,
     empty: rows.length === 1 ? `Tracking started ${dayLong(rows[0].stat_date)}. The line appears after the next daily check.` : "No daily numbers yet.",
   });
 }
