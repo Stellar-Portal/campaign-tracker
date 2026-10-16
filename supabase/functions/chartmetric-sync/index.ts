@@ -52,7 +52,8 @@ async function cmGet(path: string, params: Record<string, string | number | bool
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") q.set(k, String(v));
   for (let attempt = 0; attempt < 3; attempt++) {
     calls++;
-    const r = await fetch(`${API}${path}?${q}`, { headers: { Authorization: `Bearer ${await cmToken()}` } });
+    const r = await fetch(`${API}${path}?${q}`, { headers: { Authorization: `Bearer ${await cmToken()}` }, signal: AbortSignal.timeout(30_000) })
+      .catch((e) => { throw new Error(e?.name === "TimeoutError" ? "Chartmetric took over 30 s; will retry on the next run" : String(e?.message ?? e)); });
     if (r.status === 429) {
       // Rate limited: wait as long as Chartmetric asks (capped), then try again.
       const wait = Number(r.headers.get("retry-after")) || Number(r.headers.get("x-ratelimit-reset")) || 2;
@@ -104,10 +105,12 @@ function makeRow(source: string, country: string, fallbackDate: string, r: any):
   } else {
     names = asArr(r.artist_names ?? r.spotify_artist_names ?? r.itunes_artist_names).map(String).filter(Boolean);
     ids = asArr(r.cm_artist).map(num).filter((x): x is number => x != null);
+    // Spotify's pre_rank from Chartmetric just repeats today's rank (seen Oct 2026), so Spotify movement is
+    // worked out in trend_compute_scores from the chart stored the day before. Shazam's pre_rank is real.
     pre = num(r.pre_rank);
     const stats = Array.isArray(r.rankStats) ? r.rankStats : [];
     // The chart's date is the newest entry in its rank history.
-    date = stats.map((s: any) => dateOnly(s?.timestp)).filter(Boolean).sort().pop() ?? dateOnly(r.timestp) ?? dateOnly(r.chart_date);
+    date = stats.map((s: any) => dateOnly(s?.timestp)).filter(Boolean).sort().pop() ?? dateOnly(r.added_at) ?? dateOnly(r.timestp) ?? dateOnly(r.chart_date);
     cmTrack = num(r.cm_track);
     extra = { velocity: r.velocity ?? null, time_on_chart: r.time_on_chart ?? null, shazams: r.num_of_shazams ?? null, countries_charting: r.countries_charting_count ?? null };
   }
@@ -131,6 +134,7 @@ const SOURCES: { source: string; fetch: (country: string) => Promise<any[]> }[] 
         const j = await cmGet("/api/charts/spotify", { country_code: c === "GLOBAL" ? "GLOBAL" : c, type: "regional", interval: "daily", latest: true, offset });
         const page = j?.obj?.data ?? j?.obj ?? [];
         if (!Array.isArray(page) || !page.length) break;
+        if (out.length && num(page[0]?.rank) != null && num(page[0].rank)! <= num(out[out.length - 1]?.rank)!) break;   // offset ignored: same page again
         out.push(...page);
         offset += page.length;
         if (page.length < 50) break;
@@ -184,29 +188,36 @@ async function syncCharts(force: boolean) {
   if (error) throw new Error(error.message);
   const { data: done } = await db.from("trend_fetch_log").select("source,country,status,fetched_at").eq("run_date", runDate);
   const doneSet = new Set((done ?? []).filter((d) => d.status !== "error" || (force ? false : Date.now() - Date.parse(d.fetched_at) < 20 * 60_000)).map((d) => `${d.source}|${d.country}`));
+  // TikTok charts are weekly: fetched once every 6 days per country, not daily (saves credits).
+  const weekAgo = new Date(Date.parse(runDate + "T12:00:00Z") - 6 * 86_400_000).toISOString().slice(0, 10);
+  const { data: recentTt } = await db.from("trend_fetch_log").select("source,country").like("source", "tiktok%").in("status", ["ok", "empty"]).gte("run_date", weekAgo);
+  for (const d of recentTt ?? []) doneSet.add(`${d.source}|${d.country}`);
   const todo: [(typeof SOURCES)[number], string][] = [];
   for (const c of countries ?? []) for (const s of SOURCES) if (!doneSet.has(`${s.source}|${c.code}`)) todo.push([s, c.code]);
 
   const { data: run } = await db.from("trend_runs").insert({ run_date: runDate, note: force ? "manual" : "schedule" }).select("id").single();
-  let saved = 0; const errors: string[] = []; const dates = new Set<string>();
+  let saved = 0; const errors: string[] = [];
   let i = 0;
-  for (; i < todo.length && Date.now() - started < TIME_BUDGET_MS; i++) {
-    const [s, c] = todo[i];
-    const r = await fetchOne(runDate, s, c);
-    saved += r.rows;
-    if (r.chartDate && (s.source === "spotify" || s.source === "shazam")) dates.add(r.chartDate);
-    if ((r as any).error) errors.push(`${s.source} ${c}: ${(r as any).error}`);
+  try {
+    for (; i < todo.length && Date.now() - started < TIME_BUDGET_MS; i++) {
+      const [s, c] = todo[i];
+      const r = await fetchOne(runDate, s, c);
+      saved += r.rows;
+      if ((r as any).error) errors.push(`${s.source} ${c}: ${(r as any).error}`);
+    }
+  } catch (e) {
+    // A problem with the account itself (key, subscription): record it on the run so it shows, then stop.
+    errors.unshift(String((e as Error).message).slice(0, 300));
+    await db.from("trend_runs").update({ finished_at: new Date().toISOString(), calls, rows_saved: saved, errors, note: `${force ? "manual" : "schedule"}; stopped: ${errors[0]}` }).eq("id", run?.id);
+    throw e;
   }
-  // Score every daily chart date we touched, plus today's date once everything is in.
+  // Scores are per run day; each chart's latest date within the last 2 days counts (Spotify's daily chart
+  // is dated the day before Shazam's).
   const remaining = todo.length - i;
-  if (remaining === 0) {
-    const { data: latest } = await db.from("trend_fetch_log").select("chart_date").eq("run_date", runDate).in("source", ["spotify", "shazam"]).not("chart_date", "is", null);
-    for (const d of latest ?? []) dates.add(d.chart_date);
-  }
   let scored = 0;
-  for (const d of dates) {
-    const { data: n, error: e } = await db.rpc("trend_compute_scores", { p_date: d });
-    if (e) errors.push(`scoring ${d}: ${e.message}`); else scored += Number(n ?? 0);
+  if (saved > 0 || remaining === 0) {
+    const { data: n, error: e } = await db.rpc("trend_compute_scores", { p_date: runDate });
+    if (e) errors.push(`scoring ${runDate}: ${e.message}`); else scored = Number(n ?? 0);
   }
   await db.from("trend_runs").update({ finished_at: new Date().toISOString(), calls, rows_saved: saved, errors: errors.slice(0, 50), note: `${force ? "manual" : "schedule"}; ${i} charts fetched, ${remaining} left, ${scored} scores` }).eq("id", run?.id);
   return { charts_fetched: i, charts_left: remaining, rows_saved: saved, scored, calls, errors: errors.slice(0, 10) };
