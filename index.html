@@ -10,12 +10,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,600;0,700;1,300&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261016f">
+  <link rel="stylesheet" href="styles.css?v=20261016g">
 </head>
 <body>
   <aside class="sidebar" id="sidebar" aria-label="Stellar OS">
-    <a class="brand" href="#/"><img src="assets/stellar-white.png" alt="Stellar" width="80" height="22"><span>OS</span></a>
+    <a class="brand" href="#/"><img src="assets/stellar-white.png" alt="Stellar" width="80" height="22"><span>OS</span><b class="brand-mark" aria-hidden="true">S</b></a>
     <nav class="nav" id="nav" aria-label="Sections"></nav>
+    <button type="button" class="nav-toggle" id="nav-toggle" aria-expanded="true" aria-controls="sidebar" title="Hide the menu labels"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg><span>Collapse</span></button>
     <div class="who" id="who"></div>
   </aside>
   <div class="content">
@@ -23,6 +24,6 @@
     <footer class="foot">N 55° 40’ 44.422’’ E 12° 34’ 10.747’’ &nbsp; CPH, DK</footer>
   </div>
   <div id="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="app.js?v=20261016f"></script>
+  <script type="module" src="app.js?v=20261016g"></script>
 </body>
 </html>

@@ -1,9 +1,9 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016f";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261016f";
-import { renderAnalytics } from "./analytics.js?v=20261016f";
-import { renderTrending } from "./trending.js?v=20261016f";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016f";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016g";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261016g";
+import { renderAnalytics } from "./analytics.js?v=20261016g";
+import { renderTrending } from "./trending.js?v=20261016g";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016g";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -90,7 +90,9 @@ async function isTeamMember() {
 }
 
 function renderWho(user) {
-  who.innerHTML = `<span class="email" title="${esc(user.email)}">${esc(user.email)}</span><button id="signout" type="button">Sign out</button>`;
+  who.innerHTML = `<span class="email" title="${esc(user.email)}">${esc(user.email)}</span><button id="signout" type="button" title="Sign out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg><span>Sign out</span></button>`;
+  // The account's saved menu choice wins over this browser's copy.
+  loadPrefs().then((p) => { if (p?.ui && typeof p.ui.nav_collapsed === "boolean") setNavCollapsed(p.ui.nav_collapsed, false); }).catch(() => {});
   document.getElementById("signout").onclick = async () => { await sb.auth.signOut(); };
 }
 
@@ -124,10 +126,26 @@ const NAV = [
     { key: "trending", href: "#/trending", label: "Trending", icon: "trending" },
   ]],
 ];
+// Collapsible menu: icons only, remembered for this person (browser copy first, so there's no flash).
+const NAV_KEY = "nav-collapsed";
+function setNavCollapsed(on, save = true) {
+  document.body.classList.toggle("nav-collapsed", on);
+  const b = document.getElementById("nav-toggle");
+  if (b) { b.setAttribute("aria-expanded", String(!on)); b.title = on ? "Show the menu labels" : "Hide the menu labels"; b.querySelector("span").textContent = on ? "Expand" : "Collapse"; }
+  if (!save) return;
+  try { localStorage.setItem(NAV_KEY, on ? "1" : "0"); } catch { /* ignore */ }
+  if (PREFS.loaded) savePrefs("ui", { ...(PREFS.data.ui ?? {}), nav_collapsed: on });
+}
+try { if (localStorage.getItem(NAV_KEY) === "1") document.body.classList.add("nav-collapsed"); } catch { /* ignore */ }
+document.getElementById("nav-toggle")?.addEventListener("click", () => setNavCollapsed(!document.body.classList.contains("nav-collapsed")));
+// Ctrl/⌘ + \ toggles it too.
+document.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setNavCollapsed(!document.body.classList.contains("nav-collapsed")); } });
+
 function renderNav(active) {
+  setNavCollapsed(document.body.classList.contains("nav-collapsed"), false);
   document.getElementById("nav").innerHTML = NAV.map(([group, items]) => `
     <div class="nav-group"><div class="nav-label">${esc(group)}</div>
-      ${items.map((it) => `<a href="${it.href}" class="nav-item${it.key === active ? " on" : ""}"${it.key === active ? ' aria-current="page"' : ""}>
+      ${items.map((it) => `<a href="${it.href}" title="${esc(it.label)}${it.soon ? " (soon)" : ""}" class="nav-item${it.key === active ? " on" : ""}"${it.key === active ? ' aria-current="page"' : ""}>
         <svg viewBox="0 0 24 24" aria-hidden="true">${NAV_ICON[it.icon]}</svg><span>${esc(it.label)}</span>${it.soon ? '<i class="soon">Soon</i>' : ""}</a>`).join("")}
     </div>`).join("");
   document.querySelector('.nav-item.on')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });

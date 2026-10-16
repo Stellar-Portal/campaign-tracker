@@ -31,7 +31,9 @@
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
   --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
   --gutter: 32px;
+  --nav-w: 232px;
 }
+body.nav-collapsed { --nav-w: 68px; }
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
@@ -50,8 +52,8 @@ a:hover { text-decoration: underline; }
 
 /* ---------- global nav: Apple's thin black bar, white Stellar logo ---------- */
 /* ---------- Stellar OS shell: black sidebar, white logo, cobalt only on the active section ---------- */
-.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 30; width: 232px; display: flex; flex-direction: column; gap: 22px; padding: 22px 14px 18px; background: var(--black); color: #fff; overflow-y: auto; }
-.content { margin-left: 232px; container-type: inline-size; min-height: 100vh; display: flex; flex-direction: column; }
+.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 30; width: var(--nav-w); transition: width 0.22s ease, padding 0.22s ease; display: flex; flex-direction: column; gap: 22px; padding: 22px 14px 18px; background: var(--black); color: #fff; overflow-y: auto; }
+.content { margin-left: var(--nav-w); transition: margin-left 0.22s ease; container-type: inline-size; min-height: 100vh; display: flex; flex-direction: column; }
 .content main { width: 100%; box-sizing: border-box; }
 .content .foot { margin-top: auto; }
 .brand { display: flex; align-items: center; gap: 10px; color: #fff; padding: 2px 10px; }
@@ -768,3 +770,41 @@ button.danger-solid:hover { background: #a92622; }
 .camp-details dd { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .camp-details .sheet-line { margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--divider); font-size: 12px; }
 .camp-details .sheet-line + .sheet-line { border-top: none; padding-top: 0; margin-top: 4px; }
+
+/* ---------- Menu: collapse toggle and icon-only mode ---------- */
+.brand-mark { display: none; }
+.nav-toggle { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: none; border-radius: var(--r-sm); background: transparent; color: rgba(255,255,255,0.5); font-size: 13px; text-align: left; }
+.nav-toggle:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.nav-toggle svg { width: 18px; height: 18px; flex: 0 0 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.22s ease; }
+.who button { display: inline-flex; align-items: center; gap: 6px; }
+.who button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+body.nav-collapsed .sidebar { padding-left: 10px; padding-right: 10px; overflow-x: hidden; }
+body.nav-collapsed .brand { justify-content: center; padding: 2px 0; }
+body.nav-collapsed .brand img, body.nav-collapsed .brand span { display: none; }
+body.nav-collapsed .brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: #fff; color: #000; font-size: 17px; font-weight: 700; font-style: italic; letter-spacing: -0.04em; }
+body.nav-collapsed .nav-label { font-size: 0; height: 1px; padding: 0; margin: 0 8px 6px; background: rgba(255,255,255,0.14); }
+body.nav-collapsed .nav-item { justify-content: center; padding: 10px 0; }
+body.nav-collapsed .nav-item span { display: none; }
+body.nav-collapsed .nav-item .soon { position: absolute; width: 6px; height: 6px; padding: 0; font-size: 0; border: none; background: rgba(255,255,255,0.4); border-radius: 50%; margin: -14px -22px 0 0; }
+body.nav-collapsed .nav-item { position: relative; }
+body.nav-collapsed .nav-item.on { box-shadow: inset 3px 0 0 var(--accent-on-dark); }
+body.nav-collapsed .nav-toggle { justify-content: center; padding: 10px 0; }
+body.nav-collapsed .nav-toggle span { display: none; }
+body.nav-collapsed .nav-toggle svg { transform: rotate(180deg); }
+body.nav-collapsed .who { align-items: center; padding-left: 0; padding-right: 0; }
+body.nav-collapsed .who .email, body.nav-collapsed .who button span { display: none; }
+body.nav-collapsed .who button { padding: 7px; }
+
+/* ---------- Artist banner flows out of the black menu instead of meeting it at a hard edge ---------- */
+.content .art-band { background: linear-gradient(120deg, #000 0%, #0b0f24 45%, #101a4a 100%); }
+.content .art-band::before { content: ""; position: absolute; inset: 0 auto 0 0; width: min(320px, 40%); z-index: -1; pointer-events: none;
+  background: linear-gradient(90deg, #000 0%, rgba(0,0,0,0.72) 30%, rgba(0,0,0,0.3) 65%, rgba(0,0,0,0) 100%); }
+@media (max-width: 900px) {
+  .nav-toggle { display: none; }
+  body.nav-collapsed { --nav-w: 0px; }
+  body.nav-collapsed .sidebar { padding: 10px var(--gutter) 8px; }
+  body.nav-collapsed .brand img, body.nav-collapsed .brand span, body.nav-collapsed .nav-item span { display: initial; }
+  body.nav-collapsed .brand-mark, body.nav-collapsed .nav-label { display: none; }
+  body.nav-collapsed .nav-item { padding: 6px 12px; }
+  .content .art-band::before { display: none; }
+}
