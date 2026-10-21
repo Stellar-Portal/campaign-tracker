@@ -1317,3 +1317,46 @@ body.drawer-open { overflow: hidden; }
 .cmp-table tfoot .bm-v { font-weight: 600; }
 .cmp-table .ro-names b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @container (max-width: 900px) { .cmp-table table { min-width: 760px; } .cmp-table col.bm-c-name { width: 190px; } }
+/* List header: one calm toolbar */
+.ro-title { display: flex; align-items: center; gap: 10px; }
+.ro-more { position: relative; font-size: 15px; font-weight: 400; letter-spacing: 0; }
+.ro-more > summary { list-style: none; cursor: pointer; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 20px; color: var(--muted); line-height: 1; }
+.ro-more > summary::-webkit-details-marker { display: none; }
+.ro-more > summary:hover, .ro-more[open] > summary { background: var(--parchment); color: var(--ink); }
+.ro-more-pop { position: absolute; z-index: 25; top: calc(100% + 6px); left: 0; min-width: 180px; background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--r-md); box-shadow: 0 12px 32px rgba(0,0,0,0.14); padding: 6px; display: grid; }
+.ro-more-pop button { all: unset; cursor: pointer; padding: 9px 12px; border-radius: 8px; font-size: 14px; }
+.ro-more-pop button:hover { background: var(--parchment); }
+.ro-more-pop .danger-lite { color: #b4592a; }
+.ro-listbar { justify-content: flex-start; padding: 8px; margin: 0 0 16px; background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--pill); }
+.ro-listtools { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; flex: 1 1 auto; min-width: 0; }
+.ro-listtools:empty { display: none; }
+.ro-listtools .ov-sort { height: 36px; border-color: transparent; background: var(--parchment); }
+.ro-listtools .ov-sort select { height: 34px; }
+.ro-addto { margin-left: auto; height: 36px; padding-top: 0; padding-bottom: 0; border: none; background: var(--accent-tint); color: var(--accent); font-weight: 600; }
+.ro-addto:hover { background: #e2e7fc; }
+@media (max-width: 760px) { .ro-listbar { border-radius: var(--r-lg); } .ro-addto { margin-left: 0; } }
+/* Rank chips + focus benchmark */
+.cmp-rank, .cmp-focus { margin: 0 0 14px; }
+.cmp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.cmp-chip { height: 32px; padding: 0 12px; font-size: 13px; border-radius: var(--pill); background: var(--parchment); border: 1px solid transparent; color: var(--ink-80); }
+.cmp-chip.on { background: var(--ink); color: #fff; font-weight: 600; }
+.cmp-chip:disabled { opacity: 0.45; cursor: default; }
+.cmp-focus-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.cmp-focus-top .ov-sort { height: 38px; }
+.cmp-peers { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; margin-bottom: 16px; }
+.cmp-peer { all: unset; box-sizing: border-box; cursor: pointer; display: flex; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: var(--r-md); opacity: 0.6; }
+.cmp-peer.on { opacity: 1; border-color: var(--accent); background: var(--accent-tint); }
+.cmp-peer:focus-visible { outline: 2px solid var(--accent-focus); }
+.cmp-peer-t { display: grid; min-width: 0; gap: 1px; }
+.cmp-peer-t b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmp-peer-t .small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmp-sim { font-size: 11px; font-weight: 600; color: var(--accent); margin-left: 4px; }
+.cmp-focus-grid { display: grid; gap: 14px; }
+.cmp-ft { width: 100%; table-layout: fixed; }
+.cmp-ft th { white-space: normal; }
+.cmp-ft th:first-child, .cmp-ft td:first-child { width: 28%; }
+.cmp-ft td, .cmp-ft th { padding: 10px 12px; vertical-align: middle; font-variant-numeric: tabular-nums; }
+.cmp-ft td.small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmp-diff { display: inline-block; min-width: 3.4em; padding: 1px 8px; border-radius: var(--pill); font-size: 12px; font-weight: 600; text-align: center; }
+.cmp-diff.up { background: #e8f5ec; color: #1f6b3d; } .cmp-diff.down { background: #fbefe9; color: #9b4422; }
+@container (max-width: 900px) { .cmp-ft { min-width: 640px; } }

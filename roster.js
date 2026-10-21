@@ -3,8 +3,8 @@
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261021i";
-import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261021i";
+import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261021k";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261021k";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
@@ -94,9 +94,11 @@ async function renderList(app, sb, ctx, { listId, mode, base }) {
   app.innerHTML = `
     <div data-roster-view>
     <div class="page-head">
-      <div><h1>${list ? esc(list.name) : "Roster"}</h1>
-        <p class="muted small" style="margin:6px 0 0">${list ? `A list of ${creators.length} creator${creators.length === 1 ? "" : "s"} from the roster.` : "Creators Stellar works with on TikTok, Instagram, YouTube, X and Twitch. Numbers come from each creator's recent posts and refresh every week."}</p></div>
-      <a class="btn" href="#/discover">Find new creators</a>
+      <div><h1 class="ro-title">${list ? esc(list.name) : "Roster"}${list ? `
+        <details class="ro-more"><summary aria-label="List options" title="List options">⋯</summary>
+          <div class="ro-more-pop"><button type="button" id="ro-rename">Rename list</button><button type="button" id="ro-dellist" class="danger-lite">Delete list</button></div></details>` : ""}</h1>
+        <p class="muted small" style="margin:6px 0 0">${list ? `${creators.length} creator${creators.length === 1 ? "" : "s"} from the roster` : "Creators Stellar works with on TikTok, Instagram, YouTube, X and Twitch. Numbers come from each creator's recent posts and refresh every week."}</p></div>
+      ${list ? "" : `<a class="btn" href="#/discover">Find new creators</a>`}
     </div>
     <nav class="ro-tabs" aria-label="Roster lists">
       <a href="#/roster" class="ro-tab${list ? "" : " on"}">All creators <span>${all.length}</span></a>
@@ -109,11 +111,8 @@ async function renderList(app, sb, ctx, { listId, mode, base }) {
         <a role="tab" href="#/roster/list/${esc(list.id)}" class="${mode === "creators" ? "on" : ""}" aria-selected="${mode === "creators"}">Creators</a>
         <a role="tab" href="#/roster/list/${esc(list.id)}/compare" class="${mode === "compare" ? "on" : ""}" aria-selected="${mode === "compare"}">Compare</a>
       </div>
-      <div class="ro-listbar-r">
-        <button type="button" id="ro-addto" class="primary">Add creators</button>
-        <button type="button" id="ro-rename">Rename</button>
-        <button type="button" id="ro-dellist" class="danger-lite">Delete list</button>
-      </div>
+      <div class="ro-listtools" id="ro-listtools"></div>
+      <button type="button" id="ro-addto" class="ro-addto">+ Add creators</button>
     </div>` : `
     <form class="ro-add" id="ro-add">
       <label class="ov-pill ro-pf"><span class="ro-pf-ico" id="ro-pf-ico">${PLATFORMS[st.addPlatform].icon}</span><select id="ro-platform" aria-label="Platform">${PLATFORM_ORDER.map((p) => `<option value="${p}"${p === st.addPlatform ? " selected" : ""}>${PLATFORMS[p].name}</option>`).join("")}</select></label>
@@ -136,6 +135,8 @@ async function renderList(app, sb, ctx, { listId, mode, base }) {
     </section>`}
     </div>`;
 
+  const more = app.querySelector(".ro-more");
+  if (more) document.addEventListener("click", (e) => { if (more.open && !more.contains(e.target)) more.open = false; });
   // New list / rename / delete / add creators
   document.getElementById("ro-newlist").onclick = async () => {
     const name = await askText("New list", "Name", "e.g. Football clubs");
@@ -350,8 +351,11 @@ async function listStats(sb, creators) {
     const followers = Number(c.follower_count ?? s?.followers ?? 0) || null;
     const geo = Object.fromEntries((s?.countries ?? []).map((x) => [x.code, { name: x.name, weight: x.weight }]));
     const real = (s?.audience_types ?? []).find((t) => t.code === "real")?.weight ?? null;
+    const female = (s?.genders ?? []).find((g) => g.code === "FEMALE")?.weight ?? null;
+    const ages = Object.fromEntries((s?.ages ?? []).map((a) => [a.code, a.weight]));
     return {
-      c, s, followers, geo, real,
+      c, s, followers, geo, real, female, ages,
+      young: s?.ages?.length ? (ages["13-17"] ?? 0) + (ages["18-24"] ?? 0) : null,
       growth: (m) => (s?.growth?.[`${m}_months_ago`] ?? null),
       engagement: s?.engagement_percent != null ? Number(s.engagement_percent) : c.profile_stats?.engagement != null ? c.profile_stats.engagement * 100 : null,
       views: c.profile_stats?.median_views ?? (s?.avg_views != null ? Number(s.avg_views) : null),
@@ -360,7 +364,52 @@ async function listStats(sb, creators) {
     };
   });
 }
-const cmpState = { platform: "", country: "", months: 3 };
+const cmpState = { platform: "", country: "", months: 3, metric: "aud", focus: "", off: new Set() };
+
+// How alike two creators are (0–1), from what both have: size, where their audience is, audience age and
+// gender, and engagement. Returns the score and the reasons behind it.
+function similarity(a, b) {
+  const parts = [];
+  const reasons = [];
+  if (a.followers && b.followers) {
+    const d = Math.abs(Math.log10(a.followers) - Math.log10(b.followers));
+    const v = Math.max(0, 1 - d / 1.5);
+    parts.push([v, 0.25]);
+    if (v > 0.75) reasons.push("similar size");
+  }
+  const ga = Object.entries(a.geo), gb = b.geo;
+  if (ga.length && Object.keys(gb).length) {
+    let dot = 0, na = 0, nb = 0;
+    for (const [k, x] of ga) { dot += x.weight * (gb[k]?.weight ?? 0); na += x.weight ** 2; }
+    for (const x of Object.values(gb)) nb += x.weight ** 2;
+    const v = na && nb ? dot / Math.sqrt(na * nb) : 0;
+    parts.push([v, 0.4]);
+    const shared = ga.filter(([k]) => gb[k]).map(([k, x]) => [x.name, Math.min(x.weight, gb[k].weight)]).sort((p, q) => q[1] - p[1]).slice(0, 2).map(([n]) => n);
+    if (v > 0.5 && shared.length) reasons.push(`both strong in ${shared.join(" and ")}`);
+  }
+  const ka = Object.keys(a.ages);
+  if (ka.length && Object.keys(b.ages).length) {
+    const keys = new Set([...ka, ...Object.keys(b.ages)]);
+    let l1 = 0; for (const k of keys) l1 += Math.abs((a.ages[k] ?? 0) - (b.ages[k] ?? 0));
+    const v = Math.max(0, 1 - l1 / 2);
+    parts.push([v, 0.15]);
+    if (v > 0.85) reasons.push("same age mix");
+  }
+  if (a.female != null && b.female != null) {
+    const v = 1 - Math.abs(a.female - b.female);
+    parts.push([v, 0.1]);
+    if (v > 0.92) reasons.push("same gender split");
+  }
+  if (a.engagement && b.engagement) {
+    const v = Math.max(0, 1 - Math.abs(Math.log(a.engagement / b.engagement)) / Math.log(4));
+    parts.push([v, 0.1]);
+  }
+  if (a.c.country_code && a.c.country_code === b.c.country_code) reasons.push(`both from ${regionName(a.c.country_code)}`);
+  const w = parts.reduce((t, [, x]) => t + x, 0);
+  // Less shared data means less confidence: a match on size alone counts for less than one on audience too.
+  const raw = w ? parts.reduce((t, [v, x]) => t + v * x, 0) / w : 0;
+  return { score: raw * Math.min(1, 0.4 + w), reasons, basis: w };
+}
 const avgOf = (xs) => { const v = xs.filter((x) => x != null && Number.isFinite(x)); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
 
 async function renderCompare(box, sb, list, creators, base) {
@@ -383,6 +432,7 @@ async function renderCompare(box, sb, list, creators, base) {
     const metric = {
       followers: (r) => r.followers, growth: (r) => r.growth(m), engagement: (r) => r.engagement, views: (r) => r.views,
       aud: (r) => r.audienceIn(cc), share: (r) => (r.shareIn(cc) != null ? r.shareIn(cc) * 100 : null), real: (r) => (r.real != null ? r.real * 100 : null),
+      female: (r) => (r.female != null ? r.female * 100 : null), young: (r) => (r.young != null ? r.young * 100 : null),
     };
     const avg = Object.fromEntries(Object.entries(metric).map(([k, f]) => [k, avgOf(rows.map(f))]));
     const best = Object.fromEntries(Object.entries(metric).map(([k, f]) => [k, rows.filter((r) => f(r) != null).sort((a, b) => f(b) - f(a))[0] ?? null]));
@@ -390,7 +440,11 @@ async function renderCompare(box, sb, list, creators, base) {
     const ranked = (k) => rows.filter((r) => metric[k](r) != null).length;
     const name = (r) => esc(r.c.display_name || r.c.username);
     const fmt = { followers: (v) => big(Math.round(v)), growth: (v) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}%`, engagement: (v) => `${v.toFixed(1)}%`, views: (v) => big(Math.round(v)),
-      aud: (v) => compact(Math.round(v)), share: (v) => `${v.toFixed(1)}%`, real: (v) => `${Math.round(v)}%` };
+      aud: (v) => compact(Math.round(v)), share: (v) => `${v.toFixed(1)}%`, real: (v) => `${Math.round(v)}%`, female: (v) => `${Math.round(v)}%`, young: (v) => `${Math.round(v)}%` };
+    const LABEL = { aud: `Audience in ${cname || "–"}`, share: `Share of audience in ${cname || "–"}`, followers: "Followers", growth: `Growth · ${m} months`, engagement: "Engagement", views: "Median views",
+      female: "Female audience", young: "Audience under 25", real: "Real audience" };
+    const SUB = { aud: "estimated followers there (followers × share of audience)", share: "share of their audience in that country", followers: "", growth: `change over the last ${m} months`,
+      engagement: "interactions per view (Influencers.club)", views: "median views of recent posts", female: "share of followers who are women", young: "share of followers aged 13–24", real: "share of real people in the engaged audience (Instagram)" };
     const tfmt = { ...fmt, followers: (v) => compact(Math.round(v)), views: (v) => compact(Math.round(v)) };
     // Benchmark cells: the value and the rank sit in fixed slots, so every column lines up row after row.
     const bm = (val, rk = "", cls = "", top = false) => `<div class="bm"><span class="bm-v ${cls}">${val}</span><span class="bm-r${top ? " top" : ""}">${rk}</span></div>`;
@@ -415,24 +469,74 @@ async function renderCompare(box, sb, list, creators, base) {
     };
     const missing = rows.filter((r) => !r.s);
     const bestAud = best.aud, bestGrowth = best.growth;
+    if (!metric[cmpState.metric] || !rows.some((r) => metric[cmpState.metric](r) != null)) cmpState.metric = ["aud", "followers", "engagement", "views"].find((k) => rows.some((r) => metric[k](r) != null)) ?? "followers";
+
+    // Focus: one creator against the most similar creators on the list.
+    function focusPanel() {
+      if (rows.length < 3) return "";
+      if (!rows.some((r) => r.c.id === cmpState.focus)) cmpState.focus = (withIns[0] ?? rows[0]).c.id;
+      const f = rows.find((r) => r.c.id === cmpState.focus);
+      const others = rows.filter((r) => r !== f).map((r) => ({ r, ...similarity(f, r) })).sort((x, y) => y.score - x.score);
+      const auto = new Set(others.slice(0, Math.min(3, others.length)).map((o) => o.r.c.id));
+      const peers = others.filter((o) => (cmpState.off.has(o.r.c.id) ? false : auto.has(o.r.c.id) || cmpState.off.has(`+${o.r.c.id}`)));
+      const pr = peers.map((o) => o.r);
+      const KEYS = ["followers", "growth", "engagement", "views", "female", "young", "real"];
+      // Percentages (growth, engagement, audience shares) differ in points; counts differ in percent.
+      const lineRow = (label, fv, vals, fmtv, bestName, points = false) => {
+        if (fv == null && !vals.some((x) => x != null)) return "";
+        const pv = vals.filter((x) => x != null), pa = avgOf(pv);
+        const diff = fv == null || pa == null ? null : points ? fv - pa : pa ? (fv / pa - 1) * 100 : null;
+        const rk = fv != null ? [fv, ...pv].filter((x) => x > fv).length + 1 : null;
+        return `<tr><td>${esc(label)}</td><td class="num"><b class="${diff == null ? "" : diff >= 0 ? "up" : "down"}">${fv != null ? fmtv(fv) : "–"}</b></td>
+          <td class="num">${pa != null ? fmtv(pa) : "–"}</td>
+          <td class="num">${diff != null ? `<span class="cmp-diff ${diff >= 0 ? "up" : "down"}">${diff >= 0 ? "+" : "−"}${points ? `${Math.abs(diff).toFixed(1)} pts` : `${Math.abs(diff).toFixed(0)}%`}</span>` : "–"}</td>
+          <td class="num">${rk ? `#${rk} of ${pv.length + 1}` : "–"}</td>
+          <td class="num small muted">${bestName ?? ""}</td></tr>`;
+      };
+      const bestPeer = (fn) => { const b = pr.filter((r) => fn(r) != null).sort((x, y) => fn(y) - fn(x))[0]; return b ? `${esc(b.c.display_name || b.c.username)} ${fmt[Object.keys(metric).find((k) => metric[k] === fn) ?? "followers"]?.(fn(b)) ?? ""}` : ""; };
+      const metricRows = KEYS.map((k) => lineRow(LABEL[k].replace(` · ${m} months`, ` · ${m} mo`), metric[k](f), pr.map(metric[k]), fmt[k], (() => { const b = pr.filter((r) => metric[k](r) != null).sort((x, y) => metric[k](y) - metric[k](x))[0]; return b ? `${esc(b.c.display_name || b.c.username)} ${fmt[k](metric[k](b))}` : ""; })(), ["growth", "engagement", "female", "young", "real"].includes(k))).join("");
+      const topC = Object.entries(f.geo).sort((x, y) => y[1].weight - x[1].weight).slice(0, 6);
+      const countryRows = topC.map(([code, g]) => {
+        const fv = f.audienceIn(code);
+        const pv = pr.map((r) => r.audienceIn(code));
+        const b = pr.filter((r) => r.audienceIn(code) != null).sort((x, y) => y.audienceIn(code) - x.audienceIn(code))[0];
+        return lineRow(`${flag(code)} ${g.name}`, fv, pv, (v) => compact(Math.round(v)), b ? `${esc(b.c.display_name || b.c.username)} ${compact(Math.round(b.audienceIn(code)))}` : "");
+      }).join("");
+      return `<section class="panel cmp-focus">
+        <div class="cmp-h"><h3>Benchmark one ${list.name.toLowerCase().includes("club") ? "club" : "creator"} against similar ones</h3><span class="muted small">peers picked by audience countries, size, age and gender mix, and engagement</span></div>
+        <div class="cmp-focus-top">
+          <label class="ov-pill ov-sort"><span>Benchmark</span><select id="cmp-focus">${rows.map((r) => `<option value="${esc(r.c.id)}"${r === f ? " selected" : ""}>${esc(r.c.display_name || r.c.username)}${r.s ? "" : " (no insights)"}</option>`).join("")}</select></label>
+          ${!f.s ? `<span class="muted small">Unlock insights for ${esc(f.c.display_name || f.c.username)} to match on audience, not just size.</span>` : ""}
+        </div>
+        <div class="cmp-peers">${others.map((o) => { const on = peers.includes(o);
+          return `<button type="button" class="cmp-peer${on ? " on" : ""}" data-peer="${esc(o.r.c.id)}" aria-pressed="${on}">${avatar(o.r.c, 28)}<span class="cmp-peer-t"><b>${esc(o.r.c.display_name || o.r.c.username)} <span class="cmp-sim">${Math.round(o.score * 100)}% alike</span></b>
+            <span class="muted small">${esc(o.reasons.slice(0, 2).join(" · ") || (o.basis < 0.5 ? "matched on size and engagement only" : "different audience"))}</span></span></button>`; }).join("")}</div>
+        ${pr.length ? `<div class="cmp-focus-grid">
+          <div class="table-wrap"><table class="cmp-ft"><thead><tr><th>Metric</th><th class="num">${esc(f.c.display_name || f.c.username)}</th><th class="num">Peers average</th><th class="num">Difference</th><th class="num">Rank</th><th class="num">Best peer</th></tr></thead><tbody>${metricRows}</tbody></table></div>
+          ${countryRows ? `<div class="table-wrap"><table class="cmp-ft"><thead><tr><th>Audience in its top countries</th><th class="num">${esc(f.c.display_name || f.c.username)}</th><th class="num">Peers average</th><th class="num">Difference</th><th class="num">Rank</th><th class="num">Best peer there</th></tr></thead><tbody>${countryRows}</tbody></table></div>` : ""}
+        </div>` : `<p class="muted small">Pick at least one peer above.</p>`}
+      </section>`;
+    }
+    const tools = document.getElementById("ro-listtools");
+    if (tools) tools.innerHTML = `
+        ${plats.length > 1 ? `<label class="ov-pill ov-sort"><span>Platform</span><select id="cmp-pf">${plats.map((p) => `<option value="${p}"${p === cmpState.platform ? " selected" : ""}>${PLATFORMS[p].name}</option>`).join("")}</select></label>` : ""}
+        <label class="ov-pill ov-sort"><span>Audience in</span><select id="cmp-cc">${countryList.length ? countryList.map(([code, t]) => `<option value="${esc(code)}"${code === cc ? " selected" : ""}>${esc(t.name)}</option>`).join("") : `<option>No data yet</option>`}</select></label>
+        <label class="ov-pill ov-sort"><span>Growth over</span><select id="cmp-m">${[3, 6, 9, 12].map((x) => `<option value="${x}"${x === m ? " selected" : ""}>${x} months</option>`).join("")}</select></label>`;
     box.innerHTML = `
-      <div class="cmp-controls">
-        ${plats.length > 1 ? `<label class="ov-pill ov-sort"><span>Platform</span><select id="cmp-pf">${plats.map((p) => `<option value="${p}"${p === cmpState.platform ? " selected" : ""}>${PLATFORMS[p].name}</option>`).join("")}</select></label>` : `<span class="ro-chip"><span class="ro-pfmini">${PLATFORMS[cmpState.platform].icon}</span>${PLATFORMS[cmpState.platform].name}</span>`}
-        <label class="ov-pill ov-sort"><span>Audience in</span><select id="cmp-cc">${countryList.length ? countryList.map(([code, t]) => `<option value="${esc(code)}"${code === cc ? " selected" : ""}>${esc(t.name)}</option>`).join("") : `<option>No audience data yet</option>`}</select></label>
-        <label class="ov-pill ov-sort"><span>Growth over</span><select id="cmp-m">${[3, 6, 9, 12].map((x) => `<option value="${x}"${x === m ? " selected" : ""}>${x} months</option>`).join("")}</select></label>
-        <span class="muted small">${withIns.length} of ${rows.length} with insights</span>
-      </div>
       <div class="cmp-cards">
         <div class="cmp-card"><div class="l">List average growth · ${m} months</div><div class="n">${avg.growth != null ? fmt.growth(avg.growth) : "–"}</div><div class="s">${bestGrowth ? `Fastest: ${name(bestGrowth)} ${fmt.growth(metric.growth(bestGrowth))}` : "Needs insights"}</div></div>
         <div class="cmp-card"><div class="l">Combined audience in ${esc(cname || "–")}</div><div class="n">${totals[cc] ? compact(Math.round(totals[cc].total)) : "–"}</div><div class="s">${bestAud ? `Largest: ${name(bestAud)} ${fmt.aud(metric.aud(bestAud))}` : "Needs insights"}</div></div>
         <div class="cmp-card"><div class="l">Average engagement</div><div class="n">${avg.engagement != null ? fmt.engagement(avg.engagement) : "–"}</div><div class="s">${best.engagement ? `Highest: ${name(best.engagement)} ${fmt.engagement(metric.engagement(best.engagement))}` : ""}</div></div>
         <div class="cmp-card"><div class="l">Total followers</div><div class="n">${compact(Math.round(rows.reduce((t, r) => t + (r.followers ?? 0), 0)))}</div><div class="s">${rows.length} creator${rows.length === 1 ? "" : "s"} on ${esc(PLATFORMS[cmpState.platform].name)}</div></div>
       </div>
-      <div class="cmp-two">
-        <section class="panel"><div class="cmp-h"><h3>Audience in ${esc(cname || "a country")}</h3><span class="muted small">estimated followers there (followers × share of audience)</span></div>${barList("aud", "", (r) => (r.shareIn(cc) != null ? `${(r.shareIn(cc) * 100).toFixed(0)}%` : ""))}</section>
-        <section class="panel"><div class="cmp-h"><h3>Follower growth</h3><span class="muted small">change over the last ${m} months</span></div>${barList("growth")}</section>
-      </div>
-      <section class="panel cmp-tablep"><div class="cmp-h"><h3>Benchmarks</h3><span class="muted small"><span class="up">green</span> above the list average · <span class="down">red</span> below · #rank in the list</span></div>
+      <section class="panel cmp-rank">
+        <div class="cmp-h"><h3>Rank the list</h3><span class="muted small">${esc(SUB[cmpState.metric] ?? "")}</span></div>
+        <div class="cmp-chips" role="tablist">${Object.keys(LABEL).map((k) => { const nData = rows.filter((r) => metric[k](r) != null).length;
+          return `<button type="button" class="cmp-chip${k === cmpState.metric ? " on" : ""}" data-metric="${k}"${nData ? "" : " disabled title=\"No data yet\""}>${esc(LABEL[k])}${nData ? "" : " · no data"}</button>`; }).join("")}</div>
+        ${barList(cmpState.metric, "", cmpState.metric === "aud" ? (r) => (r.shareIn(cc) != null ? `${(r.shareIn(cc) * 100).toFixed(0)}%` : "") : null)}
+      </section>
+      ${focusPanel()}
+      <section class="panel cmp-tablep"><div class="cmp-h"><h3>Benchmarks <span class="muted small" style="font-weight:400">${PLATFORMS[cmpState.platform].name} · ${withIns.length} of ${rows.length} with insights</span></h3><span class="muted small"><span class="up">green</span> above the list average · <span class="down">red</span> below · #rank in the list</span></div>
         ${(() => {
           const HEAD = { followers: "Followers", growth: `Growth · ${m} mo`, engagement: "Engagement", views: "Median views", aud: `Audience in ${esc(cname || "–")}`, share: `Share of audience`, real: "Real audience" };
           // Leave out columns nobody in the list has data for (e.g. real audience outside Instagram).
@@ -453,9 +557,16 @@ async function renderCompare(box, sb, list, creators, base) {
       ${missing.length ? `<section class="panel cmp-missing"><h3>Not compared yet</h3><p class="muted small">These creators have no insights, so growth and audience per country are missing. Unlocking uses 1 Influencers.club credit each.</p>
         <div class="cmp-miss-list">${missing.map((r) => `<div class="cmp-miss">${avatar(r.c, 28)}<span>${name(r)}</span><button type="button" data-unlock="${esc(r.c.id)}">Unlock insights</button></div>`).join("")}</div></section>` : ""}`;
     view.order = rows.map((r) => r.c.id);
-    box.querySelector("#cmp-pf")?.addEventListener("change", (e) => { cmpState.platform = e.target.value; draw(); });
-    box.querySelector("#cmp-cc").onchange = (e) => { cmpState.country = e.target.value; draw(); };
-    box.querySelector("#cmp-m").onchange = (e) => { cmpState.months = Number(e.target.value); draw(); };
+    document.querySelector("#cmp-pf")?.addEventListener("change", (e) => { cmpState.platform = e.target.value; draw(); });
+    document.querySelector("#cmp-cc").onchange = (e) => { cmpState.country = e.target.value; draw(); };
+    document.querySelector("#cmp-m").onchange = (e) => { cmpState.months = Number(e.target.value); draw(); };
+    box.querySelectorAll("[data-metric]").forEach((b) => (b.onclick = () => { cmpState.metric = b.dataset.metric; draw(); }));
+    box.querySelector("#cmp-focus")?.addEventListener("change", (e) => { cmpState.focus = e.target.value; cmpState.off = new Set(); draw(); });
+    box.querySelectorAll("[data-peer]").forEach((b) => (b.onclick = () => {
+      const id = b.dataset.peer, on = b.getAttribute("aria-pressed") === "true";
+      if (on) { cmpState.off.add(id); cmpState.off.delete(`+${id}`); } else { cmpState.off.delete(id); cmpState.off.add(`+${id}`); }
+      draw();
+    }));
     box.querySelectorAll(".cmp-row").forEach((r) => {
       r.onclick = () => cur().go(`${base}/c/${r.dataset.id}`);
       r.onkeydown = (e) => { if (e.key === "Enter") cur().go(`${base}/c/${r.dataset.id}`); };
