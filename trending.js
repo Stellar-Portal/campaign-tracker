@@ -4,7 +4,7 @@
 // Function and scored in the database (trend_compute_scores).
 //
 // Routes: #/trending (tracks) · #/trending/artists · #/trending/artist/<chartmetric artist id>
-import { esc, flag, ago, compact } from "./report.js?v=20261021r";
+import { esc, flag, ago, compact } from "./report.js?v=20261021s";
 
 const REGIONS = ["Asia", "LATAM", "US"];
 const PLATFORM = { spotify: "Spotify", shazam: "Shazam", tiktok: "TikTok", applemusic: "Apple Music", youtube: "YouTube" };
@@ -74,6 +74,22 @@ const sigChips = (d) => {
   const chip = ([cls, name, v, title]) => `<span class="tr-s ${cls}" title="${esc(title)}">${name} <b>${esc(v)}</b></span>`;
   return s.slice(0, 3).map(chip).join("") + (s.length > 3 ? `<span class="tr-more" title="${esc(s.slice(3).map((x) => x[3]).join("\n"))}">+${s.length - 3}</span>` : "");
 };
+
+// Plain-language rows for one song: label, value, rising?, hover detail.
+function songFacts(d) {
+  const out = [];
+  const tt = d?.tiktok_videos, sp = d?.spotify_streams;
+  if (tt) out.push(["TikTok videos", tt.growth != null ? `${compact(tt.last7)} new this week <span>${pctTxt(tt.growth)} vs last week</span>` : `${compact(tt.total ?? tt.last7)} so far <span>new on TikTok</span>`, (tt.points ?? 0) >= 15,
+    `Videos using the song, worldwide${tt.total != null ? ` · ${compact(tt.total)} in total` : ""}`]);
+  if (sp) out.push(["Spotify streams", sp.growth != null ? `${compact(sp.last7)} this week <span>${pctTxt(sp.growth)} vs last week</span>` : `${compact(sp.last7)} this week <span>new release</span>`, (sp.points ?? 0) >= 10, "Spotify streams worldwide, last 7 days"]);
+  for (const [k, name] of [["spotify", "Spotify chart"], ["shazam", "Shazam chart"]]) {
+    const c = d?.[k];
+    if (!c) continue;
+    const move = c.pre_rank == null ? "new entry" : c.change > 0 ? `up ${c.change}` : c.change < 0 ? `down ${-c.change}` : "no change";
+    out.push([name, `#${c.rank} <span>${move}</span>`, c.pre_rank == null || c.change > 0, `${name} position in its best country`]);
+  }
+  return out;
+}
 
 export async function renderTrending(app, sb, { isCurrent, go, parts, toast }) {
   const tab = parts[1] === "artists" ? "artists" : parts[1] === "artist" && parts[2] ? "artist" : "tracks";
@@ -310,10 +326,14 @@ export async function renderTrending(app, sb, { isCurrent, go, parts, toast }) {
       </section>
       <section class="panel">
         <h2>Songs</h2>
-        ${trackList.length ? `<ul class="tr-songlist">${trackList.map((t) => `
-          <li><div class="tr-song">${thumb(t.image_url)}<div><div class="artist">${esc(t.title)}${t.breakout ? ' <span class="badge on">Breakout</span>' : ""}</div>
-            <div class="tr-plats">${platformLine(t.detail)}</div>
-            <div class="muted small">${t.where.map((c) => `${flag(c)} ${esc(c)}`).join("  ")}</div></div></div></li>`).join("")}</ul>` : `<p class="muted small">None right now.</p>`}
+        ${trackList.length ? `<ul class="tr-songlist">${trackList.map((t) => {
+          const where = t.where.filter((c) => c !== "GLOBAL");
+          return `
+          <li><div class="tr-song">${thumb(t.image_url)}<div class="artist">${esc(t.title)}${t.breakout ? ' <span class="badge on">Breakout</span>' : ""}</div></div>
+            <dl class="tr-facts">${songFacts(t.detail).map(([k, v, up, title]) => `<div title="${esc(title)}"><dt>${k}</dt><dd${up ? ' class="up"' : ""}>${v}</dd></div>`).join("")}
+              ${where.length ? `<div><dt>Trending in</dt><dd>${where.length} countr${where.length === 1 ? "y" : "ies"} <span class="tr-fflags">${where.map((c) => `<span title="${esc(cName[c] ?? c)}">${flag(c)}</span>`).join("")}</span></dd></div>` : ""}
+            </dl></li>`;
+        }).join("")}</ul>` : `<p class="muted small">None right now.</p>`}
       </section>
     </div>
     <section class="panel" style="margin-top:20px">

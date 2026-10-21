@@ -3,8 +3,8 @@
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261021r";
-import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261021r";
+import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261021s";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261021s";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
