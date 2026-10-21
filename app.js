@@ -1,9 +1,10 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261016k";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261016k";
-import { renderAnalytics } from "./analytics.js?v=20261016k";
-import { renderTrending } from "./trending.js?v=20261016k";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261016k";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261021a";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261021a";
+import { renderRoster } from "./roster.js?v=20261021a";
+import { renderAnalytics } from "./analytics.js?v=20261021a";
+import { renderTrending } from "./trending.js?v=20261021a";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261021a";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -109,12 +110,14 @@ const NAV_ICON = {
   creators: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/>',
   invoices: '<path d="M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h5"/>',
   analytics: '<path d="M3 20l5-7 4 4 8-11"/><path d="M16 6h4v4"/>',
+  roster: '<path d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.8l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>',
   trending: '<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
 };
 const NAV = [
   ["Campaigns", [
     { key: "overview", href: "#/", label: "Campaign overview", icon: "overview" },
     { key: "campaigns", href: "#/campaigns", label: "Tracker", icon: "tracker" },
+    { key: "roster", href: "#/roster", label: "Roster", icon: "roster" },
   ]],
   ["Money", [
     { key: "payouts", href: "#/payouts", label: "PayPal payouts", icon: "payouts", soon: true },
@@ -1359,7 +1362,7 @@ async function loadPosts(token, id, camp) {
   try {
     [posts, { data: folders }] = await Promise.all([
       fetchAll(() => sb.from("posts")
-        .select("id,folder_id,tiktok_video_id,url,caption,published_at,country_code,cover_path,status,created_at,sound:sounds(title),creator:creators(username,display_name,follower_count,is_verified,avatar_url,country_code)")
+        .select("id,folder_id,tiktok_video_id,url,caption,published_at,country_code,cover_path,status,created_at,sound:sounds(title),creator:creators(id,username,display_name,follower_count,is_verified,avatar_url,country_code,on_roster,platform)")
         .eq("campaign_id", id).order("created_at", { ascending: false })),
       sb.from("campaign_folders").select("id,name,market,position,hidden,created_at").eq("campaign_id", id).order("position").order("created_at"),
     ]);
@@ -1384,7 +1387,7 @@ async function loadPosts(token, id, camp) {
     return {
       id: p.id, campaign_id: id, folder_id: p.folder_id, video_id: p.tiktok_video_id, url: p.url, caption: p.caption, published_at: p.published_at, created_at: p.created_at,
       country: p.creator?.country_code ?? p.country_code ?? null, sound_title: p.sound?.title ?? null, gone: p.status !== "active", has_cover: !!p.cover_path,
-      creator: p.creator ? { username: p.creator.username, name: p.creator.display_name, followers: p.creator.follower_count, verified: p.creator.is_verified, avatar: p.creator.avatar_url } : null,
+      creator: p.creator ? { id: p.creator.id, on_roster: p.creator.on_roster, platform: p.creator.platform, username: p.creator.username, name: p.creator.display_name, followers: p.creator.follower_count, verified: p.creator.is_verified, avatar: p.creator.avatar_url } : null,
       plays: st.plays ?? null, likes: st.likes ?? null, comments: st.comments ?? null, shares: st.shares ?? null, stats_date: st.stat_date ?? null,
     };
   });
@@ -1625,6 +1628,9 @@ async function loadPosts(token, id, camp) {
         <td class="num plays-cell">${n(p.plays)}</td><td class="num">${n(p.likes)}</td><td class="num">${n(p.comments)}</td><td class="num">${n(p.shares)}</td>
         <td class="num">${pct(engagement(p))}</td><td class="num">${compact(p.creator?.followers)}</td>
         <td class="row-actions"><div class="card-actions">
+          ${p.creator?.platform === "tiktok" ? (p.creator.on_roster
+            ? `<a href="#/creator/${esc(p.creator.id)}" class="ro-star on" title="On the roster: open their page" aria-label="Open @${esc(p.creator.username)} on the roster">★</a>`
+            : `<button type="button" class="ro-star" data-ract="roster" data-id="${esc(p.id)}" title="Add @${esc(p.creator.username)} to the roster" aria-label="Add @${esc(p.creator.username)} to the roster">☆</button>`) : ""}
           <button type="button" data-ract="copy" data-id="${esc(p.id)}" title="Copy link" aria-label="Copy link">${ICON.link}</button>
           <a href="${esc(p.url)}" target="_blank" rel="noopener" title="Open on ${platformName(p)}" aria-label="Open on ${platformName(p)}">${ICON.open}</a>
           <button type="button" data-ract="remove" data-id="${esc(p.id)}" title="Remove from campaign" aria-label="Remove from campaign">${ICON.trash}</button>
@@ -1732,6 +1738,15 @@ async function loadPosts(token, id, camp) {
       sec.querySelectorAll("[data-page]").forEach((b) => (b.onclick = () => { pages[key] = Number(b.dataset.page); drawSections(); sec.scrollIntoView({ block: "nearest" }); }));
       sec.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => openPostModal(g.posts, g.posts.findIndex((p) => p.id === b.dataset.open), ctx)));
       sec.querySelectorAll("[data-ract=copy]").forEach((b) => (b.onclick = () => copyLink(list.find((p) => p.id === b.dataset.id).url)));
+      sec.querySelectorAll("[data-ract=roster]").forEach((b) => (b.onclick = async () => {
+        const p = list.find((x) => x.id === b.dataset.id);
+        b.disabled = true; b.textContent = "…";
+        const { data: r, error: e } = await sb.functions.invoke("roster", { body: { action: "add", input: `@${p.creator.username}` } });
+        if (e || r?.error) { b.disabled = false; b.textContent = "☆"; toast(`Couldn't add: ${r?.error ?? e.message}`); return; }
+        toast(`Added @${p.creator.username} to the roster`);
+        list.filter((x) => x.creator?.username === p.creator.username).forEach((x) => { x.creator.on_roster = true; x.creator.id = r.id; });
+        b.outerHTML = `<a href="#/creator/${esc(r.id)}" class="ro-star on" title="On the roster: open their page" aria-label="Open @${esc(p.creator.username)} on the roster">★</a>`;
+      }));
       sec.querySelectorAll("[data-ract=remove]").forEach((b) => (b.onclick = async () => {
         const p = list.find((x) => x.id === b.dataset.id);
         if (!confirm(`Remove @${p.creator?.username ?? "this creator"}'s video from the campaign? Its numbers will no longer count.`)) return;
@@ -1891,11 +1906,12 @@ async function route() {
   renderWho(user);
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   window.scrollTo(0, 0);
-  const section = !parts[0] || parts[0] === "overview" ? "overview" : SOON[parts[0]] || parts[0] === "analytics" || parts[0] === "trending" ? parts[0] : "campaigns";
+  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster"].includes(parts[0]) ? parts[0] : "campaigns";
   renderNav(section);
   if (section === "overview") return renderOverview(token);
   if (section === "analytics") return renderAnalytics(app, sb, { isCurrent: () => token === routeToken, go });
   if (section === "trending") return renderTrending(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
+  if (section === "roster") return renderRoster(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (SOON[parts[0]]) return renderSoon(parts[0]);
   if (parts[0] === "campaigns") return renderList(token);
   if (parts[0] === "new") return renderForm(token);
