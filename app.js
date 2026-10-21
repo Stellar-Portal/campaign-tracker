@@ -1,11 +1,11 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261021h";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261021h";
-import { renderRoster } from "./roster.js?v=20261021h";
-import { renderDiscover } from "./discover.js?v=20261021h";
-import { renderAnalytics } from "./analytics.js?v=20261021h";
-import { renderTrending } from "./trending.js?v=20261021h";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261021h";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261021i";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261021i";
+import { renderRoster } from "./roster.js?v=20261021i";
+import { renderDiscover } from "./discover.js?v=20261021i";
+import { renderAnalytics } from "./analytics.js?v=20261021i";
+import { renderTrending } from "./trending.js?v=20261021i";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261021i";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");

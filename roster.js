@@ -3,8 +3,8 @@
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261021h";
-import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261021h";
+import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261021i";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261021i";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
@@ -391,12 +391,15 @@ async function renderCompare(box, sb, list, creators, base) {
     const name = (r) => esc(r.c.display_name || r.c.username);
     const fmt = { followers: (v) => big(Math.round(v)), growth: (v) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}%`, engagement: (v) => `${v.toFixed(1)}%`, views: (v) => big(Math.round(v)),
       aud: (v) => compact(Math.round(v)), share: (v) => `${v.toFixed(1)}%`, real: (v) => `${Math.round(v)}%` };
+    const tfmt = { ...fmt, followers: (v) => compact(Math.round(v)), views: (v) => compact(Math.round(v)) };
+    // Benchmark cells: the value and the rank sit in fixed slots, so every column lines up row after row.
+    const bm = (val, rk = "", cls = "", top = false) => `<div class="bm"><span class="bm-v ${cls}">${val}</span><span class="bm-r${top ? " top" : ""}">${rk}</span></div>`;
     const cell = (k, r) => {
       const v = metric[k](r);
-      if (v == null) return `<td class="num muted">–</td>`;
+      if (v == null) return `<td class="num">${bm('<span class="muted">–</span>')}</td>`;
       const a = avg[k], rk = rank(k, r), n = ranked(k);
       const cls = a == null || n < 2 ? "" : v > a * 1.001 ? "up" : v < a * 0.999 ? "down" : "";
-      return `<td class="num"><span class="cmp-v ${cls}">${fmt[k](v)}</span>${n > 1 ? `<span class="cmp-rk${rk === 1 ? " top" : ""}">#${rk}</span>` : ""}</td>`;
+      return `<td class="num">${bm(tfmt[k](v), n > 1 ? `#${rk}` : "", cls, n > 1 && rk === 1)}</td>`;
     };
     const barList = (k, label, sub) => {
       const xs = rows.filter((r) => metric[k](r) != null).sort((a, b) => metric[k](b) - metric[k](a));
@@ -429,15 +432,22 @@ async function renderCompare(box, sb, list, creators, base) {
         <section class="panel"><div class="cmp-h"><h3>Audience in ${esc(cname || "a country")}</h3><span class="muted small">estimated followers there (followers × share of audience)</span></div>${barList("aud", "", (r) => (r.shareIn(cc) != null ? `${(r.shareIn(cc) * 100).toFixed(0)}%` : ""))}</section>
         <section class="panel"><div class="cmp-h"><h3>Follower growth</h3><span class="muted small">change over the last ${m} months</span></div>${barList("growth")}</section>
       </div>
-      <section class="panel cmp-tablep"><div class="cmp-h"><h3>Benchmarks</h3><span class="muted small">green above the list average, red below · #rank in the list</span></div>
-        <div class="table-wrap cmp-table"><table>
-          <thead><tr><th>Creator</th><th class="num">Followers</th><th class="num">Growth ${m} mo</th><th class="num">Engagement</th><th class="num">Median views</th><th class="num">Audience in ${esc(cname || "–")}</th><th class="num">Share there</th><th class="num">Real audience</th></tr></thead>
-          <tbody>${rows.slice().sort((a, b) => (metric.aud(b) ?? -1) - (metric.aud(a) ?? -1) || (b.followers ?? 0) - (a.followers ?? 0)).map((r) => `
-            <tr class="cmp-row" data-id="${esc(r.c.id)}" tabindex="0"><td><div class="ro-who">${avatar(r.c, 32)}<div class="ro-names"><b>${name(r)}</b><span class="muted small">@${esc(r.c.username)}${r.s ? "" : " · no insights"}</span></div></div></td>
-              ${["followers", "growth", "engagement", "views", "aud", "share", "real"].map((k) => cell(k, r)).join("")}</tr>`).join("")}</tbody>
-          <tfoot><tr><td>List average</td>${["followers", "growth", "engagement", "views", "aud", "share", "real"].map((k) => `<td class="num">${avg[k] != null ? fmt[k](avg[k]) : "–"}</td>`).join("")}</tr>
-            <tr><td>Best in the list</td>${["followers", "growth", "engagement", "views", "aud", "share", "real"].map((k) => `<td class="num">${best[k] ? `${fmt[k](metric[k](best[k]))} <small class="muted">${name(best[k])}</small>` : "–"}</td>`).join("")}</tr></tfoot>
-        </table></div>
+      <section class="panel cmp-tablep"><div class="cmp-h"><h3>Benchmarks</h3><span class="muted small"><span class="up">green</span> above the list average · <span class="down">red</span> below · #rank in the list</span></div>
+        ${(() => {
+          const HEAD = { followers: "Followers", growth: `Growth · ${m} mo`, engagement: "Engagement", views: "Median views", aud: `Audience in ${esc(cname || "–")}`, share: `Share of audience`, real: "Real audience" };
+          // Leave out columns nobody in the list has data for (e.g. real audience outside Instagram).
+          const cols = Object.keys(HEAD).filter((k) => rows.some((r) => metric[k](r) != null));
+          const sorted = rows.slice().sort((a, b) => (metric.aud(b) ?? -1) - (metric.aud(a) ?? -1) || (b.followers ?? 0) - (a.followers ?? 0));
+          return `<div class="table-wrap cmp-table"><table>
+          <colgroup><col class="bm-c-name">${cols.map(() => "<col>").join("")}</colgroup>
+          <thead><tr><th>Creator</th>${cols.map((k) => `<th class="num"><span class="bm-h">${HEAD[k]}</span></th>`).join("")}</tr></thead>
+          <tbody>${sorted.map((r) => `
+            <tr class="cmp-row" data-id="${esc(r.c.id)}" tabindex="0"><td><div class="ro-who">${avatar(r.c, 32)}<div class="ro-names"><b>${name(r)}</b><span class="muted small">@${esc(r.c.username)}</span>${r.s ? "" : `<span class="bm-tag">No insights</span>`}</div></div></td>
+              ${cols.map((k) => cell(k, r)).join("")}</tr>`).join("")}</tbody>
+          <tfoot><tr><td>List average</td>${cols.map((k) => `<td class="num">${bm(avg[k] != null ? tfmt[k](avg[k]) : "–")}</td>`).join("")}</tr>
+            <tr><td>Best in the list</td>${cols.map((k) => `<td class="num">${best[k] ? `${bm(tfmt[k](metric[k](best[k])))}<div class="bm-who">${name(best[k])}</div>` : bm("–")}</td>`).join("")}</tr></tfoot>
+          </table></div>${cols.length < Object.keys(HEAD).length ? `<p class="muted small" style="margin:8px 0 0">Not shown, no data yet: ${Object.keys(HEAD).filter((k) => !cols.includes(k)).map((k) => HEAD[k].toLowerCase()).join(", ")}.</p>` : ""}`;
+        })()}
         <p class="muted small" style="margin:10px 0 0">Growth, audience per country and real audience come from Influencers.club insights (real audience: Instagram only). Followers and median views come from the weekly roster refresh.</p>
       </section>
       ${missing.length ? `<section class="panel cmp-missing"><h3>Not compared yet</h3><p class="muted small">These creators have no insights, so growth and audience per country are missing. Unlocking uses 1 Influencers.club credit each.</p>
