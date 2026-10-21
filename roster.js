@@ -3,8 +3,8 @@
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261021k";
-import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261021k";
+import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261021m";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261021m";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
@@ -290,8 +290,12 @@ function ensureDrawer() {
         <button type="button" class="ro-drawer-x" data-dclose aria-label="Close">×</button>
       </header>
       <div class="ro-drawer-body"><main class="ro-drawer-main"></main></div>
+      <button type="button" class="to-top in-panel" data-dtop aria-label="Back to the top" title="Back to the top"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15.5V5M5 9.5 10 4.5l5 5"/></svg></button>
     </aside>`;
   document.body.appendChild(el);
+  const body = el.querySelector(".ro-drawer-body"), top = el.querySelector("[data-dtop]");
+  body.addEventListener("scroll", () => top.classList.toggle("on", body.scrollTop > 500), { passive: true });
+  top.onclick = () => body.scrollTo({ top: 0, behavior: "smooth" });
   window.addEventListener("hashchange", () => { if (!/^#\/roster(\/|$)/.test(location.hash)) { closeDrawer(true); view.base = null; } });
   el.querySelectorAll("[data-dclose]").forEach((b) => (b.onclick = () => cur().go(view.base)));
   el.querySelectorAll("[data-dstep]").forEach((b) => (b.onclick = () => {

@@ -1360,3 +1360,17 @@ body.drawer-open { overflow: hidden; }
 .cmp-diff { display: inline-block; min-width: 3.4em; padding: 1px 8px; border-radius: var(--pill); font-size: 12px; font-weight: 600; text-align: center; }
 .cmp-diff.up { background: #e8f5ec; color: #1f6b3d; } .cmp-diff.down { background: #fbefe9; color: #9b4422; }
 @container (max-width: 900px) { .cmp-ft { min-width: 640px; } }
+/* Home (next to Back) and back to top */
+.backbar { display: flex; gap: 8px; }
+.backbar[hidden] { display: none; }
+.home-btn[hidden] { display: none; }
+.home-btn { padding: 0 14px 0 11px; }
+.to-top { position: fixed; right: 24px; bottom: 24px; z-index: 46; width: 46px; height: 46px; padding: 0; border-radius: 50%; display: grid; place-items: center;
+  background: rgba(29,29,31,0.88); color: #fff; border: none; box-shadow: 0 6px 20px rgba(0,0,0,0.22); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  opacity: 0; transform: translateY(12px); pointer-events: none; transition: opacity 0.2s, transform 0.2s; }
+.to-top.on { opacity: 1; transform: none; pointer-events: auto; }
+.to-top:hover { background: #000; }
+.to-top svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.to-top.in-panel { position: absolute; right: 20px; bottom: 20px; }
+body.signin .to-top { display: none; }
+@media (max-width: 760px) { .to-top { right: 16px; bottom: 16px; } }

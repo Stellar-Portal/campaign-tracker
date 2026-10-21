@@ -1,11 +1,11 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261021k";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261021k";
-import { renderRoster } from "./roster.js?v=20261021k";
-import { renderDiscover } from "./discover.js?v=20261021k";
-import { renderAnalytics } from "./analytics.js?v=20261021k";
-import { renderTrending } from "./trending.js?v=20261021k";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261021k";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261021m";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261021m";
+import { renderRoster } from "./roster.js?v=20261021m";
+import { renderDiscover } from "./discover.js?v=20261021m";
+import { renderAnalytics } from "./analytics.js?v=20261021m";
+import { renderTrending } from "./trending.js?v=20261021m";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261021m";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -37,18 +37,48 @@ const toast = (msg) => {
 const fail = (err) => `<p class="error">${esc(err?.message ?? err)}</p>`;
 const go = (hash) => { location.hash = hash; };
 
-// ---------- Back ----------
-// The app keeps its own history of pages (per tab), so "Back" returns to the page you came from; when you
-// arrived by a link, it goes to the page one level up instead (a campaign → the tracker, a creator → the roster).
-const NAV_KEY_STACK = "navstack";
-let navStack = (() => { try { return JSON.parse(sessionStorage.getItem(NAV_KEY_STACK) ?? "[]"); } catch { return []; } })();
-const normHash = (h) => (h && h !== "#" ? h : "#/");
+// ---------- Back, Home, back to top ----------
+// Each sidebar section keeps its own trail of pages. Back walks up that trail and stops at the section's
+// first page (it never jumps to another section); Home goes straight to the section's first page.
+const SECTION_HOME = { overview: "#/", campaigns: "#/campaigns", roster: "#/roster", discover: "#/discover", analytics: "#/analytics", trending: "#/trending", payouts: "#/payouts", payments: "#/payments", invoices: "#/invoices" };
+const SECTION_NAME = { overview: "Campaign overview", campaigns: "Tracker", roster: "Roster", discover: "Discover", analytics: "Analytics", trending: "Trending", payouts: "PayPal payouts", payments: "Creator payments", invoices: "Invoices" };
+const normHash = (h) => (!h || h === "#" || h === "#/overview" ? "#/" : h);
+function sectionOf(hash) {
+  const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  if (!p.length || p[0] === "overview") return "overview";
+  if (p[0] === "creator" || p[0] === "roster") return "roster";
+  if (["c", "new", "report", "campaigns"].includes(p[0])) return "campaigns";
+  return SECTION_HOME[p[0]] ? p[0] : "campaigns";
+}
+let trails = (() => { try { return JSON.parse(sessionStorage.getItem("navtrails") ?? "{}"); } catch { return {}; } })();
+let lastHash = null, prevHash = null;
+// How deep a page sits in its section: 0 = the section's first page (or one of its tabs).
+function depthOf(hash) {
+  const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  if (!p.length) return 0;
+  if (p[0] === "roster") {
+    const base = p[p.length - 2] === "c" ? p.slice(0, -2) : p;
+    return (base[1] === "list" ? 1 : 0) + (base.length !== p.length ? 1 : 0);
+  }
+  if (p[0] === "creator") return 2;
+  if (p[0] === "c") return p[2] ? 2 : 1;
+  if (p[0] === "new" || p[0] === "report") return 1;
+  if (p[0] === "trending") return p[1] === "artist" ? 1 : 0;
+  return 0;
+}
 function trackHistory() {
-  const h = normHash(location.hash);
-  if (navStack.length >= 2 && navStack[navStack.length - 2] === h) navStack.pop();
-  else if (navStack[navStack.length - 1] !== h) navStack.push(h);
-  navStack = navStack.slice(-60);
-  try { sessionStorage.setItem(NAV_KEY_STACK, JSON.stringify(navStack)); } catch { /* private window */ }
+  const h = normHash(location.hash), sec = sectionOf(h), home = SECTION_HOME[sec];
+  let t = trails[sec] ?? [];
+  const cameFrom = lastHash ? sectionOf(lastHash) : null;
+  if (h === home) t = [home];                                         // a section's first page starts its trail afresh
+  else if ((cameFrom && cameFrom !== sec) || (!cameFrom && t[t.length - 1] !== h)) t = [h];   // arrived from another section, or a reload
+  else {
+    const i = t.lastIndexOf(h);
+    t = i >= 0 ? t.slice(0, i + 1) : [...t, h];                       // returning to a page drops what came after it
+  }
+  trails[sec] = t.slice(-40);
+  prevHash = lastHash; lastHash = h;
+  try { sessionStorage.setItem("navtrails", JSON.stringify(trails)); } catch { /* private window */ }
 }
 function parentOf(hash) {
   const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
@@ -90,20 +120,44 @@ function rememberTitle(hash) {
   }, 1500);
 }
 function updateBack() {
-  const bar = document.getElementById("backbar"), btn = document.getElementById("back-btn");
+  const bar = document.getElementById("backbar");
   if (!bar) return;
-  const here = normHash(location.hash);
-  const prev = navStack.length >= 2 ? navStack[navStack.length - 2] : null;
-  const target = prev && prev !== here ? prev : parentOf(here);
-  const show = !!target && !document.body.classList.contains("signin");
+  const here = normHash(location.hash), sec = sectionOf(here), home = SECTION_HOME[sec];
+  const t = trails[sec] ?? [];
+  // Where Back goes: the previous page in this section's trail, else one level up, never outside the section.
+  // Back goes up a level: to the last page you were on that sits above this one (a list above a creator,
+  // the tracker above a campaign), else to the page directly above, else to the section's first page.
+  const d = depthOf(here);
+  const fromTrail = [...t.slice(0, -1)].reverse().find((x) => depthOf(x) < d);
+  const up = parentOf(here);
+  // Of the two, the one closest above this page wins (a list beats the roster for a creator opened from it).
+  let target = [fromTrail, up].filter((x) => x && sectionOf(x) === sec && depthOf(x) < d).sort((a, b) => depthOf(b) - depthOf(a))[0];
+  if (!target) target = home;
+  const show = here !== home && !document.body.classList.contains("signin");
   bar.hidden = !show;
   document.body.classList.toggle("has-back", show);
   if (!show) return;
   const generic = pageName(target);
   const named = pageTitles[target];
-  document.getElementById("back-label").textContent = `Back to ${named && ["List", "Campaign", "Artist", "Comparison", "Creator"].includes(generic) ? named : generic}`;
-  btn.onclick = () => { if (prev && prev !== here) history.back(); else go(target); };
+  document.getElementById("back-label").textContent = target === home ? `Back to ${SECTION_NAME[sec]}` : `Back to ${named && ["List", "Campaign", "Artist", "Comparison", "Creator"].includes(generic) ? named : generic}`;
+  document.getElementById("back-btn").onclick = () => { if (prevHash === target) history.back(); else go(target); };
+  const homeBtn = document.getElementById("home-btn");
+  homeBtn.hidden = target === home;   // Back already goes there
+  homeBtn.title = `${SECTION_NAME[sec]}: first page`;
+  homeBtn.setAttribute("aria-label", `Go to the first page of ${SECTION_NAME[sec]}`);
+  document.getElementById("home-label").textContent = SECTION_NAME[sec];
+  homeBtn.onclick = () => go(home);
 }
+
+// Back to top: appears once you've scrolled a screen or so down.
+(() => {
+  const btn = document.getElementById("to-top");
+  if (!btn) return;
+  const sync = () => { btn.classList.toggle("on", window.scrollY > Math.max(600, window.innerHeight * 0.9)); };
+  window.addEventListener("scroll", sync, { passive: true });
+  btn.onclick = () => window.scrollTo({ top: 0, behavior: "smooth" });
+  sync();
+})();
 
 // Supabase returns at most 1,000 rows per request, so page through bigger results.
 async function fetchAll(build, pageSize = 1000) {
