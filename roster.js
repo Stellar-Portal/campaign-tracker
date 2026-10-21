@@ -3,7 +3,7 @@
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big, pct } from "./report.js?v=20261021b";
+import { esc, flag, regionName, ago, compact, big, pct } from "./report.js?v=20261021c";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
@@ -202,8 +202,6 @@ async function renderCreator(app, sb, { isCurrent, go, toast }, id) {
     </div>
     <p class="muted small ro-basis">${s.sample ? `Based on their ${s.sample} most recent videos (pinned videos left out).` : "No recent videos found yet."}</p>
 
-    <section class="panel ro-insights" id="cr-insights">${insRes.error ? `<p class="muted small" style="margin:0">Couldn't load audience insights: ${esc(insRes.error.message)}</p>` : insightsHtml(ins, c)}</section>
-
     <div class="ro-cols">
       <section class="panel">
         <div class="section-head" style="margin:0 0 10px"><h3 style="margin:0">Campaigns with Stellar</h3></div>
@@ -217,6 +215,8 @@ async function renderCreator(app, sb, { isCurrent, go, toast }, id) {
         <p class="muted small" id="cr-notes-msg" style="margin:6px 0 0">Visible to the team only.</p>
       </section>
     </div>
+
+    <div class="ro-insights" id="cr-insights">${insRes.error ? `<section class="panel"><p class="muted small" style="margin:0">Couldn't load audience insights: ${esc(insRes.error.message)}</p></section>` : insightsHtml(ins, c)}</div>
 
     <h3 class="ro-h3">Recent videos</h3>
     ${rv.length ? `<div class="wall sh-wall ro-wall">${rv.map((v) => `
@@ -269,46 +269,194 @@ function bars(rows, { max = 6, label = (r) => r.name ?? r.code } = {}) {
   const hi = Math.max(...top.map((r) => r.weight), 0.0001);
   return `<div class="ro-bars">${top.map((r) => `<div class="ro-bar"><span class="ro-bar-l">${label(r)}</span><span class="ro-bar-t"><i style="width:${Math.max(2, (r.weight / hi) * 100)}%"></i></span><span class="ro-bar-v">${pctW(r.weight)}</span></div>`).join("")}</div>`;
 }
+const IC_NAV = [["sig", "Signals"], ["reach", "Reachability"], ["growth", "Growth"], ["demo", "Demographics"], ["geo", "Geography & language"], ["brands", "Brand collaborations"], ["notable", "Notable followers"], ["look", "Lookalikes"]];
+const icSection = (n, key, title, sub, body) => `<section class="panel ic-sec" id="ic-${key}"><div class="ic-head"><span class="ic-n">${String(n).padStart(2, "0")}</span><h3>${esc(title)}</h3>${sub ? `<span class="ic-sub">${esc(sub)}</span>` : ""}</div>${body}</section>`;
+const icAvatar = (pic, name, size) => avatar({ avatar_url: pic, display_name: name }, size);
+const fmtPct = (v, d = 1) => (v == null ? "–" : `${Number(v).toFixed(d)}%`);
+const REACH = [["-500", "Follow under 500 accounts", "#2f7a4f"], ["500-1000", "500–1,000", "#d9a23b"], ["1000-1500", "1,000–1,500", "#4a7fdc"], ["1500-", "Over 1,500", "#b4592a"]];
+
 function insightsHtml(ins, c) {
-  if (!ins) return `
+  if (!ins) return `<section class="panel ro-insights">
     <div class="ro-ins-empty">
       <div><h3 style="margin:0 0 4px">Audience insights</h3>
-        <p class="muted small" style="margin:0">Where their followers are, gender and age, languages, notable followers, and a contact email when one is public. From Influencers.club; uses 1 credit, then kept for 60 days.</p></div>
+        <p class="muted small" style="margin:0">Where their followers are, gender and age, growth, brand deals, notable followers, similar creators and a contact email when one is public. From Influencers.club; uses 1 credit, then kept for 60 days.</p></div>
       <button type="button" class="primary" id="cr-unlock">Unlock insights</button>
-    </div>`;
+    </div></section>`;
   const r = ins.data?.result ?? {};
   const p = r[c.platform ?? "tiktok"] ?? {};
   const a = p?.audience?.audience_followers?.data ?? {};
   const countries = a.audience_geo?.countries ?? [];
   const genders = a.audience_genders ?? [];
-  const ages = (a.audience_ages ?? []).filter((x) => x.code !== "65-" || x.weight > 0);
+  const ages = (a.audience_ages ?? []).filter((x) => x.weight > 0);
+  const byAge = a.audience_genders_per_age ?? [];
   const langs = a.audience_languages ?? [];
-  const notable = (a.notable_users ?? []).slice(0, 6);
+  const notable = a.notable_users ?? [];
+  const looks = a.audience_lookalikes ?? [];
+  const reach = a.audience_reachability ?? [];
   const male = genders.find((g) => g.code === "MALE")?.weight, female = genders.find((g) => g.code === "FEMALE")?.weight;
   const email = r.email && r.email_status !== "invalid" ? r.email : null;
-  return `
-    <div class="ro-ins-head"><h3 style="margin:0">Audience insights</h3>
-      <span class="muted small">From Influencers.club, ${esc(ago(ins.fetched_at))}. Followers' audience, not viewers.</span></div>
-    <div class="ro-ins-grid">
-      <div><h4>Top countries</h4>${countries.length ? bars(countries, { label: (x) => `${flag(x.code)} ${esc(x.name)}` }) : `<p class="muted small">Too few followers to estimate.</p>`}</div>
-      <div><h4>Gender</h4>${male != null ? `<div class="ro-split"><i style="flex:${female ?? 0}"></i><i style="flex:${male ?? 0}"></i></div>
-        <div class="ro-split-l"><span><b>${pctW(female)}</b> female</span><span><b>${pctW(male)}</b> male</span></div>` : `<p class="muted small">Not available.</p>`}
-        <h4 style="margin-top:18px">Age</h4>${ages.length ? bars(ages, { max: 6, label: (x) => esc(x.code === "65-" ? "65+" : x.code) }) : `<p class="muted small">Not available.</p>`}</div>
-      <div><h4>Languages</h4>${langs.length ? bars(langs, { max: 4, label: (x) => esc(x.name ?? x.code) }) : `<p class="muted small">Not available.</p>`}
-        <h4 style="margin-top:18px">Contact</h4>
-        <p class="small" style="margin:0">${email ? `<a href="mailto:${esc(email)}">${esc(email)}</a> <span class="muted">${esc(r.email_status === "valid" ? "verified" : r.email_status ?? "")}</span>` : `<span class="muted">No public email found.</span>`}</p></div>
+  const growth = p.creator_follower_growth ?? {};
+  const followers = p.follower_count ?? c.follower_count;
+  const niche = [...new Set([...(p.niche_class ?? []), ...(p.niche_sub_class ?? [])].map((x) => x.charAt(0).toUpperCase() + x.slice(1)))];
+  const lastPost = p.most_recent_post_date;
+  const daysSince = lastPost ? Math.floor((Date.now() - Date.parse(lastPost)) / 86_400_000) : null;
+  const sponsored = p.sponsored_posts ?? [];
+  const brands = (p.brands_found ?? []).filter((b) => b && b.length > 2);
+  const tagged = p.tagged ?? [];
+  const top = countries[0];
+  const sig = (label, value, sub = "", cls = "") => `<div class="ic-sig ${cls}"><div class="l">${esc(label)}</div><div class="n">${value}</div>${sub ? `<div class="s">${sub}</div>` : ""}</div>`;
+  const g3 = growth["3_months_ago"];
+
+  const reachBody = reach.length ? (() => {
+    const w = Object.fromEntries(reach.map((x) => [x.code, x.weight]));
+    const low = w["-500"] ?? 0;
+    return `<p class="muted small ic-lead">Followers who follow few accounts see more of what this creator posts; followers who follow thousands are often low-quality or bot-like.</p>
+      <div class="ic-stack">${REACH.map(([k, , col]) => `<i style="flex:${w[k] ?? 0};background:${col}" title="${esc(fmtPct((w[k] ?? 0) * 100))}"></i>`).join("")}</div>
+      <div class="ic-legend">${REACH.map(([k, l, col]) => `<span><b style="background:${col}"></b><strong>${fmtPct((w[k] ?? 0) * 100, 0)}</strong> ${esc(l)}</span>`).join("")}</div>
+      <p class="small ic-verdict">${low >= 0.5 ? "Strong: most followers follow few accounts." : low >= 0.3 ? "Average: a fair share of followers follow few accounts." : "Weak: most followers follow many accounts, so fewer of them will see the posts."}</p>`;
+  })() : `<p class="muted small">Not available for this creator.</p>`;
+
+  const growthBody = Object.keys(growth).length && followers ? `
+    <div class="ic-growth" data-followers="${followers}" data-growth="${esc(JSON.stringify(growth))}">
+      <div class="ic-growth-top"><span class="ic-cap">Follower change</span>
+        <div class="ic-seg" role="group" aria-label="Period">${[3, 6, 9, 12].map((m) => `<button type="button" data-m="${m}"${m === 12 ? ' class="on"' : ""}>${m} mo</button>`).join("")}</div></div>
+      <div class="ic-growth-plot"></div>
+    </div>` : `<p class="muted small">No growth history for this creator.</p>`;
+
+  const ageRows = byAge.length ? byAge.filter((x) => (x.male ?? 0) + (x.female ?? 0) > 0.001) : ages.map((x) => ({ code: x.code, total: x.weight }));
+  const ageHi = Math.max(...ageRows.map((x) => x.total ?? (x.male + x.female)), 0.0001);
+  const ageLabel = (code) => (code === "65-" ? "65+" : code.replace("-", "–"));
+  const demoBody = `<div class="ic-two">
+      <div class="ic-card"><div class="ic-cap">Gender</div>${male != null ? `
+        <div class="ic-donut-row"><div class="ic-donut" style="--f:${(female ?? 0) * 100}"><div><b>${fmtPct((Math.max(female ?? 0, male ?? 0)) * 100, 0)}</b><span>${(female ?? 0) >= (male ?? 0) ? "Female" : "Male"}</span></div></div>
+          <div class="ic-legend col"><span><b style="background:var(--ic-f)"></b><strong>${fmtPct((female ?? 0) * 100, 0)}</strong> Female</span><span><b style="background:var(--ic-m)"></b><strong>${fmtPct((male ?? 0) * 100, 0)}</strong> Male</span></div></div>` : `<p class="muted small">Not available.</p>`}</div>
+      <div class="ic-card"><div class="ic-cap">Age${byAge.length ? ` <span class="ic-mini"><b style="background:var(--ic-f)"></b>female <b style="background:var(--ic-m)"></b>male</span>` : ""}</div>
+        ${ageRows.length ? `<div class="ic-ages">${ageRows.map((x) => {
+          const tot = x.total ?? ((x.male ?? 0) + (x.female ?? 0));
+          return `<div class="ic-age"><span>${esc(ageLabel(x.code))}</span><span class="ic-age-t">${x.total != null ? `<i style="width:${(tot / ageHi) * 100}%;background:var(--accent)"></i>` : `<i style="width:${((x.female ?? 0) / ageHi) * 100}%;background:var(--ic-f)"></i><i style="width:${((x.male ?? 0) / ageHi) * 100}%;background:var(--ic-m)"></i>`}</span><span class="ic-age-v">${fmtPct(tot * 100)}</span></div>`;
+        }).join("")}</div>` : `<p class="muted small">Not available.</p>`}</div>
+    </div>`;
+
+  const geoBody = `<div class="ic-two flat">
+      <div><div class="ic-cap">Top countries</div>${countries.length ? bars(countries, { max: 8, label: (x) => `${flag(x.code)} ${esc(x.name)}` }) : `<p class="muted small">Too few followers to estimate.</p>`}</div>
+      <div><div class="ic-cap">Languages</div>${langs.length ? bars(langs, { max: 8, label: (x) => esc(x.name ?? x.code) }) : `<p class="muted small">Not available.</p>`}</div>
+    </div>`;
+
+  const flagCard = (label, yes, detail) => `<div class="ic-flag${yes ? " yes" : ""}"><span class="ic-flag-i">${yes ? "✓" : "–"}</span><div><div class="ic-cap">${esc(label)}</div><b>${yes ? esc(detail || "Yes") : "None found"}</b></div></div>`;
+  const brandsBody = `
+    <div class="ic-flags">
+      ${flagCard("Paid partnerships", p.has_paid_partnership || p.paid_partnership || sponsored.length > 0, sponsored.length ? `${sponsored.length} sponsored post${sponsored.length === 1 ? "" : "s"}` : "Yes")}
+      ${flagCard("Affiliate links", !!p.promotes_affiliate_links)}
+      ${flagCard("Merch", !!(p.has_merch || r.has_merch))}
     </div>
-    ${notable.length ? `<h4 style="margin:18px 0 8px">Notable followers</h4><div class="ro-notable">${notable.map((n) => `<a href="https://www.tiktok.com/@${encodeURIComponent(n.username)}" target="_blank" rel="noopener" class="ro-chip">@${esc(n.username)} <span class="muted">${big(n.followers)}</span></a>`).join("")}</div>` : ""}`;
+    ${brands.length ? `<div class="ic-cap ic-gap">Brands mentioned</div><div class="ro-notable">${brands.map((b) => `<span class="ro-chip">${esc(b)}</span>`).join("")}</div>` : ""}
+    ${sponsored.length ? `<div class="ic-cap ic-gap">Sponsored posts</div><div class="ic-spons">${sponsored.slice(0, 8).map((x) => `
+      <a class="ic-spon" href="${esc(x.post_url)}" target="_blank" rel="noopener">
+        <span class="ic-spon-img">${x.thumbnail ? `<img src="${esc(x.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}</span>
+        <span class="ic-spon-t">${esc((x.caption || "").slice(0, 90) || "Sponsored post")}</span>
+        <span class="ic-spon-m">${x.created_at ? esc(ago(x.created_at)) : ""}${x.engagement?.likes != null ? ` · ${big(x.engagement.likes)} likes` : ""}</span></a>`).join("")}</div>` : ""}
+    ${tagged.length ? `<div class="ic-cap ic-gap">Recently tagged accounts</div><div class="ro-notable">${tagged.slice(0, 16).map((t) => { const u = typeof t === "string" ? t : t.username ?? t.name ?? ""; return u ? `<a class="ro-chip" href="https://www.tiktok.com/@${encodeURIComponent(u)}" target="_blank" rel="noopener">@${esc(u)}</a>` : ""; }).join("")}</div>` : ""}
+    ${(p.hashtags ?? []).length ? `<div class="ic-cap ic-gap">Hashtags they use</div><div class="ro-notable">${p.hashtags.slice(0, 16).map((h) => `<span class="ro-chip">#${esc(h)}</span>`).join("")}</div>` : ""}`;
+
+  const person = (u) => `<a class="ic-person" href="https://www.tiktok.com/@${encodeURIComponent(u.username)}" target="_blank" rel="noopener">${icAvatar(u.picture, u.fullname || u.username, 32)}<span class="ic-person-n"><b>${esc(u.fullname || u.username)}${u.is_verified ? ' <span class="tick">✓</span>' : ""}</b><span>${big(u.followers)} followers</span></span></a>`;
+  const notableBody = notable.length ? `<p class="muted small ic-lead">${a.notable_users_ratio != null ? `${fmtPct(a.notable_users_ratio * 100)} of their followers are creators with a sizeable audience of their own. ` : ""}Largest ${Math.min(notable.length, 12)} shown.</p>
+      <div class="ic-people">${[...notable].sort((x, y) => (y.followers ?? 0) - (x.followers ?? 0)).slice(0, 12).map(person).join("")}</div>` : `<p class="muted small">None found.</p>`;
+
+  const lookCard = (u) => `<div class="ic-look">
+      <a href="https://www.tiktok.com/@${encodeURIComponent(u.username)}" target="_blank" rel="noopener" class="ic-look-a">${icAvatar(u.picture, u.fullname || u.username, 64)}
+        <b>${esc(u.fullname || u.username)}${u.is_verified ? ' <span class="tick">✓</span>' : ""}</b><span class="muted">@${esc(u.username)}</span></a>
+      <span class="ic-look-f">${big(u.followers)} followers${u.geo?.country?.code ? ` · ${flag(u.geo.country.code)}` : ""}</span>
+      <button type="button" class="ic-look-add" data-add="${esc(u.username)}">☆ Add to roster</button></div>`;
+  const lookBody = looks.length ? `<p class="muted small ic-lead">Creators whose audience overlaps most with this one's.</p>
+      <div class="ic-looks">${looks.slice(0, 10).map(lookCard).join("")}</div>
+      ${looks.length > 10 ? `<div class="ic-looks ic-more" hidden>${looks.slice(10).map(lookCard).join("")}</div><button type="button" class="link-btn ic-gap" id="ic-more">Show all ${looks.length}</button>` : ""}` : `<p class="muted small">None found.</p>`;
+
+  return `
+    <div class="ic-top panel">
+      <div class="ic-top-row">
+        <div><h3 style="margin:0">Audience insights</h3>
+          <span class="muted small">From Influencers.club, ${esc(ago(ins.fetched_at)).toLowerCase()}. Audience means their followers.</span></div>
+        <button type="button" id="cr-reunlock">Update (1 credit)</button>
+      </div>
+      <div class="ic-tags">
+        ${r.location ? `<span class="ro-chip">📍 ${esc(r.location)}</span>` : ""}
+        ${r.speaking_language ? `<span class="ro-chip">Speaks ${esc(new Intl.DisplayNames(["en"], { type: "language" }).of(r.speaking_language) ?? r.speaking_language)}</span>` : ""}
+        ${niche.map((n) => `<span class="ro-chip ic-niche">${esc(n)}</span>`).join("")}
+        ${email ? `<a class="ro-chip ic-mail" href="mailto:${esc(email)}">✓ ${esc(email)}${r.email_status === "valid" ? " · verified" : ""}</a>` : `<span class="ro-chip">No public email found</span>`}
+      </div>
+      <nav class="ic-nav" aria-label="Insight sections">${IC_NAV.map(([k, l], i) => `<a href="#ic-${k}" data-jump="ic-${k}"><span>${String(i + 1).padStart(2, "0")}</span>${esc(l)}</a>`).join("")}</nav>
+    </div>
+    ${icSection(1, "sig", "Signals", "the numbers brand managers filter on", `<div class="ic-sigs">
+      ${sig("Engagement rate", fmtPct(p.engagement_percent), "likes, comments, shares per view")}
+      ${sig("Avg plays / video", big(p.play_count_avg), p.play_count_median != null ? `median ${big(p.play_count_median)}` : "")}
+      ${sig("Follower growth · 90 days", g3 != null ? `<span class="${g3 >= 0 ? "up" : "down"}">${g3 >= 0 ? "↑" : "↓"} ${fmtPct(Math.abs(g3))}</span>` : "–", "vs 3 months ago")}
+      ${sig("Posting frequency", p.posting_frequency_recent_months != null ? `${Math.round(p.posting_frequency_recent_months)} <small>/ month</small>` : "–", "recent months")}
+      ${sig("Top audience country", top ? fmtPct(top.weight * 100) : "–", top ? `${flag(top.code)} ${esc(top.name)}` : "")}
+      ${sig("Most recent post", daysSince == null ? "–" : daysSince <= 1 ? "Today" : `${daysSince} days ago`, daysSince != null && daysSince > 60 ? '<span class="down">inactive</span>' : "active", daysSince != null && daysSince > 60 ? "warn" : "")}
+      ${sig("Median likes", big(p.likes_median == null ? null : Math.round(p.likes_median)), p.comments_median != null ? `${big(Math.round(p.comments_median))} comments` : "")}
+      ${sig("Avg video length", p.duration_avg != null ? `${Math.round(p.duration_avg)} <small>sec</small>` : "–", "")}
+    </div>`)}
+    ${icSection(2, "reach", "Audience reachability", "how many accounts their followers follow", reachBody)}
+    ${icSection(3, "growth", "Growth & trajectory", "3 / 6 / 9 / 12 month history", growthBody)}
+    ${icSection(4, "demo", "Audience demographics", "gender · age", demoBody)}
+    ${icSection(5, "geo", "Audience geography & language", "countries · languages", geoBody)}
+    ${icSection(6, "brands", "Brand collaborations", "paid partnerships · sponsored posts · monetisation", brandsBody)}
+    ${icSection(7, "notable", "Notable followers", "creators who follow them", notableBody)}
+    ${icSection(8, "look", "Lookalikes", "similar creators worth a look", lookBody)}`;
 }
+
+// Follower count over the chosen period, estimated back from today's count and the growth percentages.
+function growthSvg(followers, growth, months, width = 1000) {
+  const pts = [12, 9, 6, 3].filter((m) => m <= months && growth[`${m}_months_ago`] != null)
+    .map((m) => ({ m, v: followers / (1 + growth[`${m}_months_ago`] / 100) })).concat([{ m: 0, v: followers }]);
+  if (pts.length < 2) return `<p class="muted small">Not enough history for this period.</p>`;
+  const W = Math.max(320, Math.round(width)), H = W < 600 ? 190 : 210, L = 8, R = 8, T = 24, B = 26;
+  const lo = Math.min(...pts.map((x) => x.v)), hi = Math.max(...pts.map((x) => x.v));
+  const pad = (hi - lo) * 0.25 || hi * 0.01;
+  const x = (m) => L + ((months - m) / months) * (W - L - R), y = (v) => T + (1 - (v - (lo - pad)) / (hi + pad - (lo - pad))) * (H - T - B);
+  const line = pts.map((p) => `${x(p.m).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
+  const change = (followers / pts[0].v - 1) * 100;
+  return `<div class="ic-growth-sum"><b class="${change >= 0 ? "up" : "down"}">${change >= 0 ? "+" : "−"}${big(Math.abs(Math.round(followers - pts[0].v)))}</b> followers (${change >= 0 ? "+" : "−"}${Math.abs(change).toFixed(1)}%) in ${months} months</div>
+    <svg viewBox="0 0 ${W} ${H}" class="ic-gsvg" role="img" aria-label="Follower count over the last ${months} months">
+      <polygon points="${x(pts[0].m)},${H - B} ${line} ${x(0)},${H - B}" class="area"/>
+      <polyline points="${line}" class="ln"/>
+      ${pts.map((p) => `<circle cx="${x(p.m)}" cy="${y(p.v)}" r="4.5" class="dot"><title>${p.m ? `${p.m} months ago` : "Now"}: about ${big(Math.round(p.v))}</title></circle>
+        <text x="${x(p.m)}" y="${y(p.v) - 10}" text-anchor="${p.m === months ? "start" : p.m === 0 ? "end" : "middle"}" class="val">${compact(Math.round(p.v))}</text>
+        <text x="${x(p.m)}" y="${H - 6}" text-anchor="${p.m === months ? "start" : p.m === 0 ? "end" : "middle"}" class="ax">${p.m ? (W < 600 ? `${p.m} mo` : `${p.m} mo ago`) : "Now"}</text>`).join("")}
+    </svg>`;
+}
+
 function bindInsights(app, sb, ctx, c, id) {
-  document.getElementById("cr-unlock")?.addEventListener("click", async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true; btn.textContent = "Unlocking…";
+  const unlock = (refresh) => async (e) => {
+    const btn = e.currentTarget, old = btn.textContent;
+    btn.disabled = true; btn.textContent = refresh ? "Updating…" : "Unlocking…";
     try {
-      await invoke(sb, "creator-insights", { handle: c.username, platform: c.platform ?? "tiktok" });
+      await invoke(sb, "creator-insights", { handle: c.username, platform: c.platform ?? "tiktok", ...(refresh ? { refresh: true } : {}) });
       if (!ctx.isCurrent()) return;
-      ctx.toast("Insights unlocked");
+      ctx.toast(refresh ? "Insights updated" : "Insights unlocked");
       renderCreator(app, sb, ctx, id);
-    } catch (err) { ctx.toast(err.message); btn.disabled = false; btn.textContent = "Unlock insights"; }
+    } catch (err) { ctx.toast(err.message); btn.disabled = false; btn.textContent = old; }
+  };
+  document.getElementById("cr-unlock")?.addEventListener("click", unlock(false));
+  document.getElementById("cr-reunlock")?.addEventListener("click", (e) => {
+    if (confirm("Get fresh insights from Influencers.club? This uses 1 credit.")) unlock(true)(e);
   });
+  const box = app.querySelector(".ic-growth");
+  if (box) {
+    const followers = Number(box.dataset.followers), growth = JSON.parse(box.dataset.growth);
+    const plot = box.querySelector(".ic-growth-plot");
+    const draw = (m) => { plot.innerHTML = growthSvg(followers, growth, m, plot.clientWidth || 1000); box.querySelectorAll("[data-m]").forEach((b) => b.classList.toggle("on", Number(b.dataset.m) === m)); };
+    box.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => draw(Number(b.dataset.m))));
+    draw(12);
+  }
+  app.querySelectorAll("[data-jump]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); document.getElementById(a.dataset.jump)?.scrollIntoView({ behavior: "smooth", block: "start" }); }));
+  app.querySelector("#ic-more")?.addEventListener("click", (e) => { app.querySelector(".ic-more").hidden = false; e.currentTarget.remove(); });
+  app.querySelectorAll("[data-add]").forEach((b) => (b.onclick = async () => {
+    b.disabled = true; b.textContent = "Adding…";
+    try {
+      const r = await invoke(sb, "roster", { action: "add", input: `@${b.dataset.add}` });
+      b.outerHTML = `<a class="ic-look-add on" href="#/creator/${esc(r.id)}">★ On the roster</a>`;
+      ctx.toast(`Added @${b.dataset.add} to the roster`);
+    } catch (err) { ctx.toast(err.message); b.disabled = false; b.textContent = "☆ Add to roster"; }
+  }));
 }
