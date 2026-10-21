@@ -4,7 +4,7 @@
 // Function and scored in the database (trend_compute_scores).
 //
 // Routes: #/trending (tracks) · #/trending/artists · #/trending/artist/<chartmetric artist id>
-import { esc, flag, ago, compact } from "./report.js?v=20261021q";
+import { esc, flag, ago, compact } from "./report.js?v=20261021r";
 
 const REGIONS = ["Asia", "LATAM", "US"];
 const PLATFORM = { spotify: "Spotify", shazam: "Shazam", tiktok: "TikTok", applemusic: "Apple Music", youtube: "YouTube" };
@@ -342,12 +342,8 @@ export async function renderTrending(app, sb, { isCurrent, go, parts, toast }) {
       if (!isCurrent()) return;
       row = data;
     }
-    if (!row) {
-      box.innerHTML = `<p class="muted small" style="margin-top:0">Audience isn't loaded for this artist yet. Loading it uses Chartmetric credits once, then it's kept for 30 days.</p>
-        <button type="button" class="primary" id="tr-aud-load">Load ${esc(PLATFORM[plat] ?? "Instagram")} audience</button>`;
-      document.getElementById("tr-aud-load").onclick = () => showAudience(true);
-      return;
-    }
+    // Not stored yet (or older than 30 days): fetch it straight away; the result is kept for 30 days.
+    if (!row || (!load && Date.now() - Date.parse(row.fetched_at) > 30 * 864e5)) { if (!load) return showAudience(true); box.innerHTML = `<p class="muted small" style="margin-top:0">Chartmetric has no ${esc(PLATFORM[plat] ?? "Instagram")} audience for this artist.</p>`; return; }
     box.innerHTML = audienceHtml(row) + `<p class="muted small" style="margin-top:16px">From Chartmetric · loaded ${esc(ago(row.fetched_at).toLowerCase())} · <button type="button" class="link-btn" id="tr-aud-refresh">Refresh</button></p>`;
     document.getElementById("tr-aud-refresh").onclick = () => showAudience(true, true);
   }
