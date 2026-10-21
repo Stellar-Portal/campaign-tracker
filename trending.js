@@ -1,9 +1,10 @@
-// Trending: songs and artists breaking out per country, from Chartmetric charts
-// (Spotify daily, Shazam, TikTok weekly breakout and popular), collected each morning by the
-// chartmetric-sync Edge Function and scored in the database (trend_compute_scores).
+// Trending: songs and artists breaking out per country, from Chartmetric: the Spotify daily Top 200 and
+// Shazam charts per country, plus worldwide momentum for the day's 40 strongest songs (Spotify streams and
+// TikTok videos using the song, week on week). Collected each morning by the chartmetric-sync Edge
+// Function and scored in the database (trend_compute_scores).
 //
 // Routes: #/trending (tracks) · #/trending/artists · #/trending/artist/<chartmetric artist id>
-import { esc, flag, ago, compact } from "./report.js?v=20261021m";
+import { esc, flag, ago, compact } from "./report.js?v=20261021n";
 
 const REGIONS = ["Asia", "LATAM", "US"];
 const PLATFORM = { spotify: "Spotify", shazam: "Shazam", tiktok: "TikTok", applemusic: "Apple Music", youtube: "YouTube" };
@@ -25,19 +26,31 @@ const thumb = (url, alt = "") => url
   ? `<img class="tr-thumb" src="${esc(url)}" alt="${esc(alt)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'tr-thumb'}))">`
   : `<span class="tr-thumb" aria-hidden="true"></span>`;
 
-// What one platform says about a track, e.g. "Shazam #4 · new" or "Spotify #37 ↑52".
+// What each platform says about a track, e.g. "Shazam #4 · new", "Spotify #37 ↑52",
+// "Spotify streams +48%" or "TikTok videos +120% · 3.4K new".
+const pctTxt = (g) => `${g >= 0 ? "+" : "−"}${Math.abs(g * 100) >= 100 ? Math.round(Math.abs(g * 100)) : Math.abs(g * 100).toFixed(0)}%`;
 function platformLine(detail) {
-  const by = {};
+  const out = [];
   for (const [src, d] of Object.entries(detail ?? {})) {
+    if (src === "spotify_streams" || src === "tiktok_videos") continue;
     const p = SOURCE_PLATFORM[src] ?? src;
     const label = src === "tiktok_breakout" ? "TikTok breakout" : PLATFORM[p] ?? p;
     const move = d.pre_rank == null ? "new" : d.change > 0 ? `↑${d.change}` : d.change < 0 ? `↓${-d.change}` : "=";
     const rising = src === "tiktok_breakout" || d.pre_rank == null || d.change > 0;
-    (by[p] ??= []).push({ label, rank: d.rank, move, rising, breakout: src === "tiktok_breakout" });
+    out.push({ order: 2, html: `<span class="tr-plat${rising ? " up" : ""}" title="${esc(label)} chart: number ${d.rank}${move === "new" ? ", new on the chart" : move === "=" ? ", no change" : `, ${move.startsWith("↑") ? "up" : "down"} ${move.slice(1)} places`}">${esc(label)} <b>#${d.rank}</b> <i>${esc(move)}</i></span>` });
   }
-  return Object.values(by).flat()
-    .sort((a, b) => Number(b.breakout) - Number(a.breakout))
-    .map((x) => `<span class="tr-plat${x.rising ? " up" : ""}" title="${esc(x.label)}: number ${x.rank}${x.move === "new" ? ", new on the chart" : x.move === "=" ? ", no change" : `, ${x.move.startsWith("↑") ? "up" : "down"} ${x.move.slice(1)} places`}">${esc(x.label)} <b>#${x.rank}</b> <i>${esc(x.move)}</i></span>`).join("");
+  const sp = detail?.spotify_streams, tt = detail?.tiktok_videos;
+  if (sp) {
+    const up = (sp.points ?? 0) >= 10;
+    const txt = sp.growth != null ? pctTxt(sp.growth) : sp.new ? "new" : "";
+    out.push({ order: up ? 0 : 3, html: `<span class="tr-plat tr-mom${up ? " up" : ""}" title="Spotify streams worldwide: ${compact(sp.last7)} in the last 7 days${sp.prev7 != null ? `, ${compact(sp.prev7)} the week before` : sp.new ? " (released recently)" : ""}">Spotify streams <b>${esc(txt)}</b> <i>${esc(compact(sp.last7))}/wk</i></span>` });
+  }
+  if (tt) {
+    const up = (tt.points ?? 0) >= 15;
+    const txt = tt.growth != null ? pctTxt(tt.growth) : tt.new ? "new" : "";
+    out.push({ order: up ? 0 : 3, html: `<span class="tr-plat tr-mom tt${up ? " up" : ""}" title="TikTok videos using the song, worldwide: ${compact(tt.last7)} new in the last 7 days${tt.prev7 != null ? `, ${compact(tt.prev7)} the week before` : ""}${tt.total != null ? ` · ${compact(tt.total)} in total` : ""}">TikTok videos <b>${esc(txt)}</b> <i>${esc(tt.new && tt.total != null ? `${compact(tt.total)} so far` : `${compact(tt.last7)} new/wk`)}</i></span>` });
+  }
+  return out.sort((a, b) => a.order - b.order).map((x) => x.html).join("");
 }
 
 export async function renderTrending(app, sb, { isCurrent, go, parts, toast }) {
@@ -183,7 +196,7 @@ export async function renderTrending(app, sb, { isCurrent, go, parts, toast }) {
               <td class="tr-where">${t.where.slice(0, 6).map((c) => `<span title="${esc(cName[c] ?? c)}${t.scores ? `: ${Math.round(t.scores[c])}` : ""}">${flag(c)} ${esc(c)}</span>`).join(" ")}${t.where.length > 6 ? ` <span class="muted">+${t.where.length - 6}</span>` : ""}</td>
             </tr>`).join("")}</tbody></table></div>
         ${list.length > shown.length ? `<p class="muted small">Showing the top ${shown.length} of ${list.length}. Pick a country or search to narrow it down.</p>` : ""}`}
-        <p class="muted small tr-note">How the score works: a new entry or a climb on Spotify (streams) or Shazam (people looking a song up) earns up to 40 points each; the weekly TikTok breakout chart earns 30–40; rising on two platforms at once adds 20, on three adds 35. "Breakout" means it's rising on at least two platforms. TikTok charts are weekly; Spotify and Shazam daily.</p>`;
+        <p class="muted small tr-note">How the score works: a new entry or a climb on the Spotify Top 200 or Shazam chart in a country earns up to 40 points each. For the day's 40 strongest songs we also check momentum worldwide: Spotify streams growing week on week (up to 30 points) and the number of new TikTok videos using the song growing (up to 45). A song rising only on Shazam is capped at 40. Rising on two platforms adds 20, on three adds 35; "Breakout" means rising on at least two. Charts update daily; Spotify's Top 200 is two days behind.</p>`;
       if (rebuild) {
         app.innerHTML = head + controls() + `<div id="tr-out"></div>`;
         bindControls(draw);

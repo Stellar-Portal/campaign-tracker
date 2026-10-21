@@ -1374,3 +1374,6 @@ body.drawer-open { overflow: hidden; }
 .to-top.in-panel { position: absolute; right: 20px; bottom: 20px; }
 body.signin .to-top { display: none; }
 @media (max-width: 760px) { .to-top { right: 16px; bottom: 16px; } }
+.tr-plat.tr-mom { background: var(--parchment); }
+.tr-plat.tr-mom.up { background: #e8f5ec; color: #1f6b3d; }
+.tr-plat.tr-mom.tt.up { background: #fde8f0; color: #a3164f; }

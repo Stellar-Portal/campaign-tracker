@@ -1,11 +1,15 @@
 // chartmetric-sync: the data behind the Trending section.
 //
 // 1. Daily charts (schedule, every 5 minutes in the early morning, or "Collect now" by a team member):
-//    for every followed country, fetches the latest Spotify daily chart, Shazam chart and the weekly
-//    TikTok breakout and popular charts from Chartmetric, stores them in trend_chart_rows and scores
-//    them (trend_compute_scores). trend_fetch_log records each chart fetched per day, so each run
-//    continues where the last one stopped and no chart is paid for twice in a day.
-// 2. Artist audience ({action:"audience", cm_artist, platform}, team members only): TikTok, Instagram
+//    for every followed country, fetches the latest Spotify daily chart and Shazam chart from Chartmetric,
+//    stores them in trend_chart_rows and scores them (trend_compute_scores). trend_fetch_log records each
+//    chart fetched per day, so each run continues where the last one stopped and no chart is paid for
+//    twice in a day. (TikTok's weekly charts stopped updating in May 2026, so they're no longer fetched.)
+// 2. Momentum signals (same runs, after the charts): for the day's 40 strongest candidate songs, each
+//    song's daily Spotify streams and the number of TikTok videos using it, from Chartmetric's track stats
+//    (2 calls per song). The 7-day growth of both feeds the score, so a song can rise on Spotify or TikTok
+//    without being on a chart. Kept in trend_track_signals; each song is fetched at most once a day.
+// 3. Artist audience ({action:"audience", cm_artist, platform}, team members only): TikTok, Instagram
 //    or YouTube audience for one artist, kept 30 days in trend_artist_audience.
 //
 // Needs the Supabase secret CHARTMETRIC_REFRESH_TOKEN (Chartmetric API refresh token).
@@ -146,16 +150,6 @@ const SOURCES: { source: string; fetch: (country: string) => Promise<any[]> }[] 
       const d = j?.obj?.data ?? j?.obj ?? [];
       return Array.isArray(d) ? d : [];
     } },
-  { source: "tiktok_breakout", fetch: async (c) => {
-      if (c === "GLOBAL") return [];
-      const j = await cmGet("/api/charts/tiktok/tracks/breakout", { code2: c, interval: "weekly", latest: true, limit: 100 });
-      return Array.isArray(j?.obj) ? j.obj : [];
-    } },
-  { source: "tiktok_popular", fetch: async (c) => {
-      if (c === "GLOBAL") return [];
-      const j = await cmGet("/api/charts/tiktok/tracks/popular", { code2: c, interval: "weekly", latest: true, limit: 100 });
-      return Array.isArray(j?.obj) ? j.obj : [];
-    } },
 ];
 
 async function fetchOne(runDate: string, source: (typeof SOURCES)[number], country: string) {
@@ -188,10 +182,6 @@ async function syncCharts(force: boolean) {
   if (error) throw new Error(error.message);
   const { data: done } = await db.from("trend_fetch_log").select("source,country,status,fetched_at").eq("run_date", runDate);
   const doneSet = new Set((done ?? []).filter((d) => d.status !== "error" || (force ? false : Date.now() - Date.parse(d.fetched_at) < 20 * 60_000)).map((d) => `${d.source}|${d.country}`));
-  // TikTok charts are weekly: fetched once every 6 days per country, not daily (saves credits).
-  const weekAgo = new Date(Date.parse(runDate + "T12:00:00Z") - 6 * 86_400_000).toISOString().slice(0, 10);
-  const { data: recentTt } = await db.from("trend_fetch_log").select("source,country").like("source", "tiktok%").in("status", ["ok", "empty"]).gte("run_date", weekAgo);
-  for (const d of recentTt ?? []) doneSet.add(`${d.source}|${d.country}`);
   const todo: [(typeof SOURCES)[number], string][] = [];
   for (const c of countries ?? []) for (const s of SOURCES) if (!doneSet.has(`${s.source}|${c.code}`)) todo.push([s, c.code]);
 
@@ -214,13 +204,90 @@ async function syncCharts(force: boolean) {
   // Scores are per run day; each chart's latest date within the last 2 days counts (Spotify's daily chart
   // is dated the day before Shazam's).
   const remaining = todo.length - i;
-  let scored = 0;
+  let scored = 0, sig = { fetched: 0, left: 0 };
+  if (remaining === 0) {
+    // Charts are done: score them, pick the day's candidates, fetch their momentum, then score again.
+    if (saved > 0) await db.rpc("trend_compute_scores", { p_date: runDate });
+    sig = await syncSignals(runDate, started);
+    if (sig.fetched > 0) saved += sig.fetched;
+  }
   if (saved > 0 || remaining === 0) {
     const { data: n, error: e } = await db.rpc("trend_compute_scores", { p_date: runDate });
     if (e) errors.push(`scoring ${runDate}: ${e.message}`); else scored = Number(n ?? 0);
   }
-  await db.from("trend_runs").update({ finished_at: new Date().toISOString(), calls, rows_saved: saved, errors: errors.slice(0, 50), note: `${force ? "manual" : "schedule"}; ${i} charts fetched, ${remaining} left, ${scored} scores` }).eq("id", run?.id);
-  return { charts_fetched: i, charts_left: remaining, rows_saved: saved, scored, calls, errors: errors.slice(0, 10) };
+  await db.from("trend_runs").update({ finished_at: new Date().toISOString(), calls, rows_saved: saved, errors: errors.slice(0, 50), note: `${force ? "manual" : "schedule"}; ${i} charts fetched, ${remaining} left, ${sig.fetched} songs' momentum fetched (${sig.left} left), ${scored} scores` }).eq("id", run?.id);
+  return { charts_fetched: i, charts_left: remaining, signals_fetched: sig.fetched, signals_left: sig.left, rows_saved: saved, scored, calls, errors: errors.slice(0, 10) };
+}
+
+// ---------- momentum signals: Spotify streams and TikTok videos per song ----------
+const CANDIDATES = 40;
+// Chartmetric's track stats are running totals (Spotify streams to date, TikTok videos to date). Days can
+// be missing and the TikTok count can dip when videos are deleted, so growth compares the totals 7 and 14
+// days back (read off the series, between the nearest days on either side).
+function weekOverWeek(points: { timestp: string; value: number }[]) {
+  const pts = points.filter((p) => p && Number.isFinite(Number(p.value)) && dateOnly(p.timestp))
+    .map((p) => ({ t: Date.parse(dateOnly(p.timestp)! + "T00:00:00Z") / 86_400_000, v: Number(p.value) }))
+    .sort((a, b) => a.t - b.t);
+  const none = { last7: null as number | null, prev7: null as number | null, growth: null as number | null, latest: pts.at(-1)?.v ?? null, isNew: false };
+  if (pts.length < 2) return none;
+  const at = (t: number) => {
+    if (t < pts[0].t || t > pts[pts.length - 1].t) return null;
+    for (let i = 1; i < pts.length; i++) if (pts[i].t >= t) {
+      const a = pts[i - 1], b = pts[i];
+      return b.t === a.t ? b.v : a.v + (b.v - a.v) * ((t - a.t) / (b.t - a.t));
+    }
+    return pts[pts.length - 1].v;
+  };
+  const L = pts[pts.length - 1].t, now = pts[pts.length - 1].v;
+  const t7 = at(L - 7), t14 = at(L - 14);
+  if (t7 == null) {
+    // Less than a week of history (a new song): the rate so far, scaled to a week.
+    const span = L - pts[0].t;
+    if (span < 2) return none;
+    return { ...none, last7: Math.max(0, Math.round(((now - pts[0].v) / span) * 7)), isNew: true };
+  }
+  const last7 = Math.max(0, Math.round(now - t7));
+  const prev7 = t14 == null ? null : Math.max(0, Math.round(t7 - t14));
+  return { ...none, last7, prev7, growth: prev7 && prev7 > 0 ? last7 / prev7 - 1 : null };
+}
+async function trackStat(cmTrack: number, platform: "spotify" | "tiktok", type: string, since: string) {
+  try {
+    const j = await cmGet(`/api/track/${cmTrack}/${platform}/stats/most-history`, { type, since });
+    const obj = Array.isArray(j?.obj) ? j.obj[0] : j?.obj;
+    return { data: Array.isArray(obj?.data) ? obj.data : [], error: null as string | null };
+  } catch (e) {
+    return { data: [], error: e instanceof NoData ? "no data" : String((e as Error).message).slice(0, 160) };
+  }
+}
+async function syncSignals(runDate: string, started: number) {
+  // Candidates: today's highest-scoring songs (best score across countries) that have a Chartmetric id.
+  const { data: top } = await db.from("trend_scores").select("cm_track,score").eq("score_date", runDate).not("cm_track", "is", null).order("score", { ascending: false }).limit(400);
+  const best = new Map<number, number>();
+  for (const r of top ?? []) if (!best.has(Number(r.cm_track))) best.set(Number(r.cm_track), Number(r.score));
+  const candidates = [...best.keys()].slice(0, CANDIDATES);
+  if (!candidates.length) return { fetched: 0, left: 0 };
+  const { data: done } = await db.from("trend_track_signals").select("cm_track").eq("signal_date", runDate).in("cm_track", candidates);
+  const doneSet = new Set((done ?? []).map((d) => Number(d.cm_track)));
+  // At most 40 songs a day, even if fresh momentum lifts new songs into the top 40 later in the morning.
+  const { count: doneToday } = await db.from("trend_track_signals").select("cm_track", { count: "exact", head: true }).eq("signal_date", runDate);
+  const todo = candidates.filter((c) => !doneSet.has(c)).slice(0, Math.max(0, CANDIDATES - (doneToday ?? 0)));
+  const since = new Date(Date.parse(runDate + "T12:00:00Z") - 21 * 86_400_000).toISOString().slice(0, 10);
+  let fetched = 0;
+  for (const id of todo) {
+    if (Date.now() - started > TIME_BUDGET_MS) break;
+    const [sp, tt] = await Promise.all([trackStat(id, "spotify", "streams", since), trackStat(id, "tiktok", "posts", since)]);
+    const s = weekOverWeek(sp.data), t = weekOverWeek(tt.data);
+    const totalPosts = t.latest;
+    await db.from("trend_track_signals").upsert({
+      cm_track: id, signal_date: runDate,
+      spotify_streams_7d: s.last7, spotify_streams_prev7d: s.prev7, spotify_growth: s.growth, spotify_total: s.latest, spotify_new: s.isNew,
+      tiktok_posts_7d: t.last7, tiktok_posts_prev7d: t.prev7, tiktok_growth: t.growth, tiktok_posts_total: totalPosts, tiktok_new: t.isNew,
+      error: [sp.error && `Spotify: ${sp.error}`, tt.error && `TikTok: ${tt.error}`].filter(Boolean).join("; ") || null,
+      fetched_at: new Date().toISOString(),
+    }, { onConflict: "cm_track,signal_date" });
+    fetched++;
+  }
+  return { fetched, left: todo.length - fetched };
 }
 
 // ---------- artist audience ----------
@@ -267,6 +334,13 @@ Deno.serve(async (req) => {
   const member = fromCron ? false : await teamMember(req);
   if (!fromCron && !member) return json({ error: "Not allowed" }, 401);
   try {
+    if (body?.action === "probe_track" && fromCron) {
+      const id = Number(body.cm_track);
+      const since = new Date(Date.now() - 21 * 86_400_000).toISOString().slice(0, 10);
+      const [sp, tt] = await Promise.all([trackStat(id, "spotify", "streams", since), trackStat(id, "tiktok", "posts", since)]);
+      return json({ spotify: sp.data.slice(-16), spotify_error: sp.error, tiktok: tt.data.slice(-16), tiktok_error: tt.error,
+        spotify_wow: weekOverWeek(sp.data), tiktok_wow: weekOverWeek(tt.data) });
+    }
     if (body?.action === "audience") {
       if (!member) return json({ error: "Not allowed" }, 401);
       const id = Number(body.cm_artist);
