@@ -4,7 +4,7 @@
 // Function and scored in the database (trend_compute_scores).
 //
 // Routes: #/trending (tracks) · #/trending/artists · #/trending/artist/<chartmetric artist id>
-import { esc, flag, ago, compact } from "./report.js?v=20261021s";
+import { esc, flag, ago, compact } from "./report.js?v=20261021t";
 
 const REGIONS = ["Asia", "LATAM", "US"];
 const PLATFORM = { spotify: "Spotify", shazam: "Shazam", tiktok: "TikTok", applemusic: "Apple Music", youtube: "YouTube" };
@@ -318,10 +318,11 @@ export async function renderTrending(app, sb, { isCurrent, go, parts, toast }) {
     </div>
     <div class="tr-artist-grid">
       <section class="panel">
-        <h2>Where they're trending</h2>
+        <h2 style="margin-bottom:4px">Where they're trending</h2>
+        <p class="muted small" style="margin:0 0 14px">Trend score per country: how strongly their songs are breaking out there (new entries, chart climbs, streaming and TikTok growth), added up across their songs.</p>
         ${countriesSorted.length ? `<div class="hbars">${countriesSorted.slice(0, 12).map(([c, v]) => {
           const max = countriesSorted[0][1] || 1;
-          return `<div class="hb-row"><span class="hb-label">${flag(c)} ${esc(cName[c] ?? c)}</span><span class="hb-track"><i style="width:${Math.max(0.6, (v / max) * 100)}%;background:${ONE}"></i></span><span class="hb-val">${Math.round(v)}</span></div>`;
+          return `<div class="hb-row"><span class="hb-label">${flag(c)} ${esc(cName[c] ?? c)}</span><span class="hb-track"><i style="width:${Math.max(0.6, (v / max) * 100)}%;background:${ONE}"></i></span><span class="hb-val" title="Trend score">${Math.round(v)}</span></div>`;
         }).join("")}</div>` : `<p class="muted small">No chart positions in the followed countries.</p>`}
       </section>
       <section class="panel">
@@ -331,7 +332,7 @@ export async function renderTrending(app, sb, { isCurrent, go, parts, toast }) {
           return `
           <li><div class="tr-song">${thumb(t.image_url)}<div class="artist">${esc(t.title)}${t.breakout ? ' <span class="badge on">Breakout</span>' : ""}</div></div>
             <dl class="tr-facts">${songFacts(t.detail).map(([k, v, up, title]) => `<div title="${esc(title)}"><dt>${k}</dt><dd${up ? ' class="up"' : ""}>${v}</dd></div>`).join("")}
-              ${where.length ? `<div><dt>Trending in</dt><dd>${where.length} countr${where.length === 1 ? "y" : "ies"} <span class="tr-fflags">${where.map((c) => `<span title="${esc(cName[c] ?? c)}">${flag(c)}</span>`).join("")}</span></dd></div>` : ""}
+              ${where.length ? `<div><dt>Trending in</dt><dd>${where.length} countr${where.length === 1 ? "y" : "ies"} <span class="tr-fflags">${where.map((c) => `<span>${flag(c)} ${esc(cName[c] ?? c)}</span>`).join("")}</span></dd></div>` : ""}
             </dl></li>`;
         }).join("")}</ul>` : `<p class="muted small">None right now.</p>`}
       </section>

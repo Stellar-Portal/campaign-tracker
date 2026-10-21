@@ -1405,3 +1405,5 @@ body.signin .to-top { display: none; }
 .tr-facts dd.up span { color: #1f7a45; font-weight: 500; }
 .tr-facts > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .tr-fflags { display: block; margin: 4px 0 0 !important; font-size: 16px; letter-spacing: 3px; line-height: 1.4; color: inherit !important; }
+.tr-facts .tr-fflags { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px 12px; margin: 8px 0 0 !important; font-size: 13px; letter-spacing: 0; font-weight: 400; color: var(--ink-80) !important; }
+.tr-facts .tr-fflags span { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-80); font-weight: 400; }
