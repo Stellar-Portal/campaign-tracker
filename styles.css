@@ -1293,3 +1293,8 @@ button.cmp-row.open { background: var(--accent-tint); }
 .cmp-mini .n { font-size: 20px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .ro-cmp-snip { margin-top: 14px; }
 @container (max-width: 900px) { .cmp-cards, .cmp-minis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .cmp-two { grid-template-columns: 1fr; } }
+/* Side panel: dim and soften everything behind it so the panel is the only thing in focus. */
+.ro-drawer-back { cursor: pointer; transition: background 0.22s ease, backdrop-filter 0.22s ease, -webkit-backdrop-filter 0.22s ease; }
+.ro-drawer.in .ro-drawer-back { background: rgba(10,12,20,0.45); backdrop-filter: blur(3px) saturate(0.85); -webkit-backdrop-filter: blur(3px) saturate(0.85); }
+.ro-drawer-panel { box-shadow: -24px 0 64px rgba(0,0,0,0.28); }
+body.drawer-open { overflow: hidden; }
