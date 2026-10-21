@@ -4,7 +4,7 @@
 // Function and scored in the database (trend_compute_scores).
 //
 // Routes: #/trending (tracks) · #/trending/artists · #/trending/artist/<chartmetric artist id>
-import { esc, flag, ago, compact } from "./report.js?v=20261021n";
+import { esc, flag, ago, compact } from "./report.js?v=20261021p";
 
 const REGIONS = ["Asia", "LATAM", "US"];
 const PLATFORM = { spotify: "Spotify", shazam: "Shazam", tiktok: "TikTok", applemusic: "Apple Music", youtube: "YouTube" };
@@ -28,7 +28,7 @@ const thumb = (url, alt = "") => url
 
 // What each platform says about a track, e.g. "Shazam #4 · new", "Spotify #37 ↑52",
 // "Spotify streams +48%" or "TikTok videos +120% · 3.4K new".
-const pctTxt = (g) => `${g >= 0 ? "+" : "−"}${Math.abs(g * 100) >= 100 ? Math.round(Math.abs(g * 100)) : Math.abs(g * 100).toFixed(0)}%`;
+const pctTxt = (g) => { const v = Math.round(g * 100); return v === 0 ? "0%" : `${v > 0 ? "+" : "−"}${Math.abs(v)}%`; };
 function platformLine(detail) {
   const out = [];
   for (const [src, d] of Object.entries(detail ?? {})) {
@@ -51,6 +51,28 @@ function platformLine(detail) {
     out.push({ order: up ? 0 : 3, html: `<span class="tr-plat tr-mom tt${up ? " up" : ""}" title="TikTok videos using the song, worldwide: ${compact(tt.last7)} new in the last 7 days${tt.prev7 != null ? `, ${compact(tt.prev7)} the week before` : ""}${tt.total != null ? ` · ${compact(tt.total)} in total` : ""}">TikTok videos <b>${esc(txt)}</b> <i>${esc(tt.new && tt.total != null ? `${compact(tt.total)} so far` : `${compact(tt.last7)} new/wk`)}</i></span>` });
   }
   return out.sort((a, b) => a.order - b.order).map((x) => x.html).join("");
+}
+
+// One signal per column, each a main value with a small line under it, so rows read straight across.
+const sigCell = (main, sub, state, title = "") => `<td class="tr-sig ${state}"${title ? ` title="${esc(title)}"` : ""}><b>${main}</b>${sub ? `<span>${sub}</span>` : ""}</td>`;
+const NONE = `<td class="tr-sig none"><b>–</b></td>`;
+function chartCell(d, name) {
+  if (!d) return NONE;
+  const move = d.pre_rank == null ? "new entry" : d.change > 0 ? `↑ ${d.change}` : d.change < 0 ? `↓ ${-d.change}` : "no change";
+  const state = d.pre_rank == null || d.change > 0 ? "up" : d.change < 0 ? "down" : "flat";
+  return sigCell(`#${d.rank}`, move, state, `${name} chart in this country: number ${d.rank}, ${move}`);
+}
+function streamsCell(sp) {
+  if (!sp) return NONE;
+  const up = (sp.points ?? 0) >= 10;
+  if (sp.growth == null) return sigCell(sp.new ? "New" : "–", sp.last7 != null ? `${compact(sp.last7)} / wk` : "", sp.new && up ? "up" : "flat", "Spotify streams worldwide; released recently, so no week-on-week comparison yet");
+  return sigCell(pctTxt(sp.growth), `${compact(sp.last7)} / wk`, up ? "up" : sp.growth < -0.05 ? "down" : "flat", `Spotify streams worldwide: ${compact(sp.last7)} in the last 7 days, ${compact(sp.prev7)} the week before`);
+}
+function tiktokCell(tt) {
+  if (!tt) return NONE;
+  const up = (tt.points ?? 0) >= 15;
+  if (tt.growth == null) return sigCell(tt.new ? "New" : "–", tt.total != null ? `${compact(tt.total)} videos` : "", tt.new && up ? "up" : "flat", "TikTok videos using the song, worldwide; new on TikTok, so no week-on-week comparison yet");
+  return sigCell(pctTxt(tt.growth), `${compact(tt.last7)} new / wk`, up ? "up" : tt.growth < -0.05 ? "down" : "flat", `New TikTok videos using the song, worldwide: ${compact(tt.last7)} in the last 7 days, ${compact(tt.prev7)} the week before${tt.total != null ? `; ${compact(tt.total)} in total` : ""}`);
 }
 
 export async function renderTrending(app, sb, { isCurrent, go, parts, toast }) {
@@ -186,14 +208,23 @@ export async function renderTrending(app, sb, { isCurrent, go, parts, toast }) {
         </div>
         ${!shown.length ? `<div class="panel"><p class="muted" style="margin:0">Nothing matches this selection.</p></div>` : `
         <div class="table-wrap"><table class="tr-table">
-          <thead><tr><th class="num">#</th><th>Song</th><th class="num" title="${st.country ? "Higher = breaking out faster. New entries, places climbed and rising on several platforms at once all add up." : "Best country's score, plus 15% of its score in every other country it's trending in."}">Score</th><th>Where it's moving</th><th>${st.country ? "Country" : "Trending in"}</th></tr></thead>
+          <colgroup><col class="tr-c-n"><col class="tr-c-song"><col class="tr-c-score"><col class="tr-c-sig"><col class="tr-c-sig"><col class="tr-c-sig"><col class="tr-c-sig"><col class="tr-c-where"></colgroup>
+          <thead>
+            <tr class="tr-grp"><th colspan="3"></th><th colspan="2" class="tr-g">Spotify</th><th class="tr-g">TikTok</th><th class="tr-g">Shazam</th><th></th></tr>
+            <tr><th class="num">#</th><th>Song</th><th class="num" title="${st.country ? "Higher = breaking out faster. New entries, places climbed and rising on several platforms at once all add up." : "Best country's score, plus 15% of its score in every other country it's trending in."}">Score</th>
+              <th class="tr-sig-h" title="Position on Spotify's daily Top 200 ${st.country ? "in this country" : "in its best country"}">Chart</th>
+              <th class="tr-sig-h" title="Spotify streams worldwide, last 7 days vs the 7 before">Streams</th>
+              <th class="tr-sig-h" title="New TikTok videos using the song, worldwide, last 7 days vs the 7 before">Videos</th>
+              <th class="tr-sig-h" title="Position on the Shazam chart ${st.country ? "in this country" : "in its best country"}">Chart</th>
+              <th>${st.country ? "Country" : "Trending in"}</th></tr>
+          </thead>
           <tbody>${shown.map((t, i) => `
             <tr${t.cm_artist_ids?.[0] ? ` data-artist="${t.cm_artist_ids[0]}"` : ""}>
               <td class="num muted">${i + 1}</td>
-              <td><div class="tr-song">${thumb(t.image_url)}<div><div class="artist">${esc(t.title)}${t.breakout ? ' <span class="badge on">Breakout</span>' : ""}</div><div class="muted small">${artistLinks(t.artist_names, t.cm_artist_ids)}</div></div></div></td>
-              <td class="num"><b>${Math.round(t.rankScore ?? t.score)}</b></td>
-              <td><div class="tr-plats">${platformLine(t.detail)}</div></td>
-              <td class="tr-where">${t.where.slice(0, 6).map((c) => `<span title="${esc(cName[c] ?? c)}${t.scores ? `: ${Math.round(t.scores[c])}` : ""}">${flag(c)} ${esc(c)}</span>`).join(" ")}${t.where.length > 6 ? ` <span class="muted">+${t.where.length - 6}</span>` : ""}</td>
+              <td><div class="tr-song">${thumb(t.image_url)}<div><div class="artist">${esc(t.title)}</div><div class="muted small">${artistLinks(t.artist_names, t.cm_artist_ids)}</div></div></div></td>
+              <td class="num tr-score"><b>${Math.round(t.rankScore ?? t.score)}</b>${(t.rising ?? []).length >= 2 ? `<span title="Breakout: rising on ${t.rising.map((x) => PLATFORM[x] ?? x).join(", ")}">${t.rising.length} platforms</span>` : ""}</td>
+              ${chartCell(t.detail?.spotify, "Spotify")}${streamsCell(t.detail?.spotify_streams)}${tiktokCell(t.detail?.tiktok_videos)}${chartCell(t.detail?.shazam, "Shazam")}
+              <td class="tr-where">${t.where.slice(0, 3).map((c) => `<span class="tr-cc" title="${esc(cName[c] ?? c)}${t.scores ? `: score ${Math.round(t.scores[c])}` : ""}">${flag(c)} ${esc(c)}</span>`).join("")}${t.where.length > 3 ? `<span class="tr-cc more" title="${esc(t.where.slice(3).map((c) => cName[c] ?? c).join(", "))}">+${t.where.length - 3}</span>` : ""}</td>
             </tr>`).join("")}</tbody></table></div>
         ${list.length > shown.length ? `<p class="muted small">Showing the top ${shown.length} of ${list.length}. Pick a country or search to narrow it down.</p>` : ""}`}
         <p class="muted small tr-note">How the score works: a new entry or a climb on the Spotify Top 200 or Shazam chart in a country earns up to 40 points each. For the day's 40 strongest songs we also check momentum worldwide: Spotify streams growing week on week (up to 30 points) and the number of new TikTok videos using the song growing (up to 45). A song rising only on Shazam is capped at 40. Rising on two platforms adds 20, on three adds 35; "Breakout" means rising on at least two. Charts update daily; Spotify's Top 200 is two days behind.</p>`;
