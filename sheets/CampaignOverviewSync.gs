@@ -11,8 +11,10 @@
  */
 const SECRET = "PASTE_SECRET_HERE";
 const SPREADSHEET_ID = "1e3ce1Q7uW5iH4FQqN9Oo_Dw5Y51UcBx87nOAz1wp6Tk";
-const SHEET_GID = 1649746959;          // the tab the tracker writes to
+// The tab is found by its NAME, so deleting and recreating it (which gives it a new hidden id) is fine
+// as long as the name stays the same. The id is only a fallback for a renamed tab.
 const SHEET_NAME = "Copy of CAMPAIGN OVERVIEW FY26/27";
+const SHEET_GID = 349085962;
 const HEADER_ROW = 2;
 const FIRST_DATA_ROW = 4;              // row 3 is the worked example
 const TAG = "stellar_campaign_id";     // hidden tag on a row: which tracker campaign it belongs to.
@@ -190,9 +192,16 @@ function maxPo_() {
 
 function getSheet_() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sh = ss.getSheets().find((s) => s.getSheetId() === SHEET_GID)
-    || ss.getSheetByName(SHEET_NAME);
-  if (!sh) throw new Error('Tab "' + SHEET_NAME + '" not found');
+  const tabs = ss.getSheets();
+  const tidy = (x) => String(x || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const sh = ss.getSheetByName(SHEET_NAME)
+    || tabs.find((t) => tidy(t.getName()) === tidy(SHEET_NAME))       // same name, different spacing/case
+    || tabs.find((t) => t.getSheetId() === SHEET_GID);                  // renamed, but still the same tab
+  if (!sh) throw new Error('Tab "' + SHEET_NAME + '" not found. Name the campaign tab exactly that (or update SHEET_NAME in the script).');
+  // Never write into a tab with a different layout.
+  const headers = sh.getRange(HEADER_ROW, 1, 1, sh.getLastColumn()).getValues()[0].map(tidy);
+  if (headers.indexOf("artist name") < 0 || headers.indexOf("stellar po no.") < 0)
+    throw new Error('Tab "' + sh.getName() + '" has no "Artist Name" / "Stellar PO no." headers in row ' + HEADER_ROW + '. Is it the campaign overview layout?');
   return sh;
 }
 function indexOf_(n, keyAt, key) { for (let i = 0; i < n; i++) if (keyAt(i) === key) return i; return -1; }

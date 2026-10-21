@@ -46,3 +46,6 @@ The look follows `DESIGN.md`: Apple's design language from [awesome-design-md](h
 
 ## Artist search
 The campaign form's artist search (`artist-search` function) uses Chartmetric: official Spotify artist photos, ranked by monthly listeners, at 1 API credit ($0.01) per search. Each picked artist is saved in `artists` with its Chartmetric id (`cm_artist`), which also identifies them in Trending. If Chartmetric is unavailable (no credits, outage), the search falls back to Deezer automatically.
+
+## If the sheet tab is recreated
+The sheet script finds the campaign tab by its name (`SHEET_NAME`), so a tab that is deleted and recreated keeps working as long as it has exactly the same name and the same layout (headers in row 2, data from row 4). The hidden row tags travel with a duplicated tab; on a tab rebuilt by pasting, rows are matched by Artist + Song + PO and re-tagged the next time the platform writes them. If the tab can't be found, the Campaign overview page shows "last refresh failed" with the reason.
