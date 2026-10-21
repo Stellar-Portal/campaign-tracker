@@ -3,7 +3,8 @@
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big, pct } from "./report.js?v=20261021c";
+import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261021d";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261021d";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
@@ -13,7 +14,7 @@ const SORTS = {
   campaigns: ["Most campaigns with us", (c) => c._campaigns ?? 0, -1],
   name: ["Name A–Z", (c) => (c.display_name || c.username || "").toLowerCase(), 1],
 };
-const st = { q: "", country: "", sort: "added" };   // kept while moving between pages
+const st = { q: "", country: "", platform: "", sort: "added", addPlatform: "tiktok" };   // kept while moving between pages
 
 const avatar = (c, size = 40) => {
   const letter = esc((c.display_name || c.username || "?").trim().charAt(0).toUpperCase());
@@ -41,7 +42,7 @@ export async function renderRoster(app, sb, ctx) {
 async function renderList(app, sb, { isCurrent, go, toast }) {
   app.innerHTML = `<p class="muted pad">Loading the roster…</p>`;
   const { data: creators, error } = await sb.from("creators")
-    .select("id,username,display_name,avatar_url,follower_count,is_verified,country_code,profile_stats,stats_checked_at,stats_error,roster_added_at")
+    .select("id,username,display_name,avatar_url,follower_count,is_verified,country_code,platform,profile_stats,stats_checked_at,stats_error,roster_added_at")
     .eq("on_roster", true).order("roster_added_at", { ascending: false });
   if (!isCurrent()) return;
   if (error) { app.innerHTML = `<div class="panel"><p class="warn-note">${esc(error.message)}</p></div>`; return; }
@@ -53,41 +54,49 @@ async function renderList(app, sb, { isCurrent, go, toast }) {
   if (!isCurrent()) return;
   const camps = {};
   for (const p of posts.data ?? []) (camps[p.creator_id] ??= new Set()).add(p.campaign_id);
-  const unlocked = new Set((insights.data ?? []).filter((x) => !x.error && x.platform === "tiktok").map((x) => x.handle));
-  for (const c of creators) { c._campaigns = camps[c.id]?.size ?? 0; c._insights = unlocked.has(c.username); }
+  const unlocked = new Set((insights.data ?? []).filter((x) => !x.error).map((x) => `${x.platform}:${x.handle}`));
+  for (const c of creators) { c.platform ??= "tiktok"; c._campaigns = camps[c.id]?.size ?? 0; c._insights = unlocked.has(`${c.platform}:${String(c.username).toLowerCase()}`); }
+  const platformsUsed = PLATFORM_ORDER.filter((p) => creators.some((c) => c.platform === p));
   const countries = [...new Set(creators.map((c) => c.country_code).filter(Boolean))].sort((a, b) => regionName(a).localeCompare(regionName(b)));
 
   app.innerHTML = `
     <div class="page-head">
       <div><h1>Roster</h1>
-        <p class="muted small" style="margin:6px 0 0">Creators Stellar works with. Numbers come from each creator's last 20 TikTok videos and refresh every week.</p></div>
+        <p class="muted small" style="margin:6px 0 0">Creators Stellar works with on TikTok, Instagram, YouTube, X and Twitch. Numbers come from each creator's recent posts and refresh every week.</p></div>
+      <a class="btn" href="#/discover">Find new creators</a>
     </div>
     <form class="ro-add" id="ro-add">
-      <input id="ro-input" type="text" autocomplete="off" placeholder="Paste a TikTok profile link, a video link or @handle" aria-label="TikTok profile link, video link or handle">
+      <label class="ov-pill ro-pf"><span class="ro-pf-ico" id="ro-pf-ico">${PLATFORMS[st.addPlatform].icon}</span><select id="ro-platform" aria-label="Platform">${PLATFORM_ORDER.map((p) => `<option value="${p}"${p === st.addPlatform ? " selected" : ""}>${PLATFORMS[p].name}</option>`).join("")}</select></label>
+      <input id="ro-input" type="text" autocomplete="off" placeholder="Paste a profile link, a video link or @handle" aria-label="Profile link, video link or handle">
       <button type="submit" class="primary">Add to roster</button>
       <span class="small muted ro-add-msg" id="ro-msg" role="status"></span>
     </form>
     ${creators.length ? `
     <div class="ov-bar">
       <label class="ov-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input id="ro-q" type="search" placeholder="Search name or handle" aria-label="Search the roster"></label>
+      ${platformsUsed.length > 1 ? `<select id="ro-pfilter" class="ov-pill" aria-label="Platform"><option value="">All platforms</option>${platformsUsed.map((p) => `<option value="${p}">${PLATFORMS[p].name}</option>`).join("")}</select>` : ""}
       <select id="ro-country" class="ov-pill" aria-label="Country"><option value="">All countries</option>${countries.map((x) => `<option value="${esc(x)}">${esc(regionName(x))}</option>`).join("")}</select>
       <label class="ov-pill ov-sort"><span>Sort</span><select id="ro-sort" aria-label="Sort by">${Object.entries(SORTS).map(([k, [l]]) => `<option value="${k}">${esc(l)}</option>`).join("")}</select></label>
     </div>
     <div id="ro-list"></div>` : `
     <section class="panel ro-empty">
       <h3>No creators on the roster yet</h3>
-      <p class="muted">Paste a creator's TikTok profile link, any of their video links, or their @handle above. You can also add creators straight from a campaign: open a campaign and use the ☆ next to a creator.</p>
+      <p class="muted">Paste a creator's profile link, any of their video links, or their @handle above (pick the platform for a bare handle). You can also add creators from a campaign (the ☆ next to a creator) or from <a href="#/discover">Discover</a>.</p>
     </section>`}`;
 
   const form = document.getElementById("ro-add"), msg = document.getElementById("ro-msg");
+  const pfSel = document.getElementById("ro-platform"), pfIco = document.getElementById("ro-pf-ico"), inputEl = document.getElementById("ro-input");
+  const setPf = (p) => { st.addPlatform = p; pfSel.value = p; pfIco.innerHTML = PLATFORMS[p].icon; };
+  pfSel.onchange = () => setPf(pfSel.value);
+  inputEl.oninput = () => { const p = detectPlatform(inputEl.value); if (p && p !== st.addPlatform) setPf(p); };
   form.onsubmit = async (e) => {
     e.preventDefault();
-    const input = document.getElementById("ro-input").value.trim();
+    const input = inputEl.value.trim();
     if (!input) return;
-    const btn = form.querySelector("button"); btn.disabled = true; btn.textContent = "Adding…";
-    msg.textContent = "Reading their profile and recent videos. This takes about 20 seconds.";
+    const btn = form.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Adding…";
+    msg.textContent = "Reading their profile and recent posts. This takes about 20 seconds.";
     try {
-      const r = await invoke(sb, "roster", { action: "add", input });
+      const r = await invoke(sb, "roster", { action: "add", input, platform: detectPlatform(input) ?? st.addPlatform });
       if (!isCurrent()) return;
       toast(`Added @${r.username} to the roster`);
       go(`#/creator/${r.id}`);
@@ -103,14 +112,14 @@ async function renderList(app, sb, { isCurrent, go, toast }) {
     const q = st.q.trim().toLowerCase().replace(/^@/, "");
     const [, key, dir] = SORTS[st.sort];
     const list = creators
-      .filter((c) => (!st.country || c.country_code === st.country) && (!q || `${c.username} ${c.display_name ?? ""}`.toLowerCase().includes(q)))
+      .filter((c) => (!st.platform || c.platform === st.platform) && (!st.country || c.country_code === st.country) && (!q || `${c.username} ${c.display_name ?? ""}`.toLowerCase().includes(q)))
       .sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * dir; });
     listEl.innerHTML = !list.length ? `<div class="panel"><p class="muted">No creators match.</p></div>` : `
       <div class="table-wrap ro-table"><table>
         <thead><tr><th>Creator</th><th>Country</th><th class="num">Followers</th><th class="num">Median views</th><th class="num">Engagement</th><th class="num">Posts / week</th><th class="num">Campaigns</th><th>Insights</th></tr></thead>
         <tbody>${list.map((c) => { const s = c.profile_stats ?? {}; return `
           <tr class="ro-row" data-id="${esc(c.id)}" tabindex="0">
-            <td><div class="ro-who">${avatar(c)}<div class="ro-names"><b>${esc(c.display_name || c.username)}${c.is_verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</b><span class="muted small">@${esc(c.username)}</span></div></div></td>
+            <td><div class="ro-who">${avatar(c)}<div class="ro-names"><b>${esc(c.display_name || c.username)}${c.is_verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</b><span class="muted small ro-handle"><span class="ro-pfmini" title="${esc(platformOf(c.platform).name)}">${platformOf(c.platform).icon}</span>@${esc(c.username)}</span></div></div></td>
             <td class="small">${place(c.country_code)}</td>
             <td class="num" title="${c.follower_count ?? ""}">${big(c.follower_count)}</td>
             <td class="num">${big(s.median_views)}</td>
@@ -127,6 +136,7 @@ async function renderList(app, sb, { isCurrent, go, toast }) {
   };
   const bind = (id, k) => { const el = document.getElementById(id); el.value = st[k]; el.oninput = () => { st[k] = el.value; draw(); }; };
   bind("ro-q", "q"); bind("ro-country", "country"); bind("ro-sort", "sort");
+  if (document.getElementById("ro-pfilter")) bind("ro-pfilter", "platform");
   draw();
 }
 
@@ -138,7 +148,7 @@ async function renderCreator(app, sb, { isCurrent, go, toast }, id) {
   if (error || !c) { app.innerHTML = `<div class="panel"><p>This creator doesn't exist.</p><p><a href="#/roster">Back to the roster</a></p></div>`; return; }
   const [postsRes, insRes] = await Promise.all([
     sb.from("posts").select("campaign_id,tiktok_video_id,published_at,campaign:campaigns(id,artist,song,status)").eq("creator_id", id),
-    sb.from("creator_insights").select("*").eq("platform", c.platform ?? "tiktok").eq("handle", c.username).maybeSingle(),
+    sb.from("creator_insights").select("*").eq("platform", c.platform ?? "tiktok").eq("handle", String(c.username).toLowerCase()).maybeSingle(),
   ]);
   if (!isCurrent()) return;
   const posts = postsRes.data ?? [];
@@ -163,7 +173,9 @@ async function renderCreator(app, sb, { isCurrent, go, toast }, id) {
   }
   if (!isCurrent()) return;
   const ins = insRes.data && !insRes.data.error ? insRes.data : null;
-  const tiktokUrl = `https://www.tiktok.com/@${encodeURIComponent(c.username)}`;
+  const pf = platformOf(c.platform);
+  const tiktokUrl = pf.url(c.username);
+  const perFollower = s.engagement_basis === "followers";
 
   app.innerHTML = `
     <section class="band sh-band art-band${c.avatar_url ? " has-img" : ""}"${c.avatar_url ? ` style="--art:url('${esc(c.avatar_url)}')"` : ""}>
@@ -174,7 +186,7 @@ async function renderCreator(app, sb, { isCurrent, go, toast }, id) {
           <div class="art-avatar">${c.avatar_url ? `<img src="${esc(c.avatar_url)}" alt="" referrerpolicy="no-referrer">` : `<span>${esc((c.display_name || c.username || "?").charAt(0).toUpperCase())}</span>`}</div>
           <div class="art-text">
             <h1>${esc(c.display_name || c.username)}</h1>
-            <div class="voice"><a href="${esc(tiktokUrl)}" target="_blank" rel="noopener">@${esc(c.username)}</a></div>
+            <div class="voice"><a href="${esc(tiktokUrl)}" target="_blank" rel="noopener"><span class="ro-pfmini lg">${pf.icon}</span>@${esc(c.username)}</a></div>
             <div class="hero-keys">
               ${c.on_roster ? `<span class="key-chip">On the roster</span>` : `<span class="key-chip">Not on the roster</span>`}
               ${c.country_code ? `<span class="key-chip">${place(c.country_code)}</span>` : ""}
@@ -186,21 +198,21 @@ async function renderCreator(app, sb, { isCurrent, go, toast }, id) {
         <div class="actions hero-actions">
           ${c.on_roster ? "" : `<button type="button" class="primary" id="cr-add">Add to roster</button>`}
           <button type="button" id="cr-refresh">Refresh numbers</button>
-          <a class="btn" href="${esc(tiktokUrl)}" target="_blank" rel="noopener">Open on TikTok</a>
+          <a class="btn" href="${esc(tiktokUrl)}" target="_blank" rel="noopener">Open on ${esc(pf.name)}</a>
           ${c.on_roster ? `<button type="button" id="cr-remove" class="danger-lite">Remove from roster</button>` : ""}
         </div>
       </div>
     </section>
     ${c.stats_error ? `<p class="warn-note small" style="margin-top:12px">Last refresh: ${esc(c.stats_error)}</p>` : ""}
     <div class="stats ro-stats">
-      ${tile("Followers", big(c.follower_count ?? s.followers), c.follower_count)}
-      ${tile("Median views", big(s.median_views), s.median_views, s.avg_views != null ? `avg ${big(s.avg_views)}` : "")}
-      ${tile("Engagement rate", eng(s.engagement), null, "interactions per view")}
+      ${tile(c.platform === "youtube" ? "Subscribers" : "Followers", big(c.follower_count ?? s.followers), c.follower_count)}
+      ${tile(c.platform === "instagram" ? "Median reel plays" : c.platform === "twitch" ? "Median broadcast views" : "Median views", big(s.median_views), s.median_views, s.avg_views != null ? `avg ${big(s.avg_views)}` : "")}
+      ${tile("Engagement rate", eng(s.engagement), null, perFollower ? "interactions per post, of followers" : "interactions per view")}
       ${tile("Median likes", big(s.median_likes), s.median_likes)}
-      ${tile("Median shares", big(s.median_shares), s.median_shares, s.median_comments != null ? `${big(s.median_comments)} comments` : "")}
-      ${tile("Posts per week", perWeek(s.posts_per_week), null, s.last_post ? `last ${ago(s.last_post)}` : "")}
+      ${s.median_shares != null ? tile("Median shares", big(s.median_shares), s.median_shares, s.median_comments != null ? `${big(s.median_comments)} comments` : "") : tile("Median comments", big(s.median_comments), s.median_comments)}
+      ${tile(c.platform === "twitch" ? "Broadcasts per week" : "Posts per week", perWeek(s.posts_per_week), null, s.last_post ? `last ${ago(s.last_post)}` : "")}
     </div>
-    <p class="muted small ro-basis">${s.sample ? `Based on their ${s.sample} most recent videos (pinned videos left out).` : "No recent videos found yet."}</p>
+    <p class="muted small ro-basis">${s.sample ? `Based on their ${s.sample} most recent ${c.platform === "instagram" ? "posts" : c.platform === "twitch" ? "broadcasts" : "videos"}${c.platform === "tiktok" ? " (pinned videos left out)" : ""}.` : c.platform === "twitter" ? "X numbers come from the profile only." : "No recent posts found yet."}</p>
 
     <div class="ro-cols">
       <section class="panel">
@@ -218,13 +230,13 @@ async function renderCreator(app, sb, { isCurrent, go, toast }, id) {
 
     <div class="ro-insights" id="cr-insights">${insRes.error ? `<section class="panel"><p class="muted small" style="margin:0">Couldn't load audience insights: ${esc(insRes.error.message)}</p></section>` : insightsHtml(ins, c)}</div>
 
-    <h3 class="ro-h3">Recent videos</h3>
+    <h3 class="ro-h3">${c.platform === "instagram" ? "Recent posts" : c.platform === "twitch" ? "Recent broadcasts" : "Recent videos"}</h3>
     ${rv.length ? `<div class="wall sh-wall ro-wall">${rv.map((v) => `
       <article class="post"><div class="cover-wrap">
-        <a class="cover" href="${esc(v.url)}" target="_blank" rel="noopener" title="${esc(`${big(v.views)} views · ${big(v.likes)} likes · ${big(v.comments)} comments · ${big(v.shares)} shares`)}">
-          ${covers[v.cover_path] ? `<img src="${esc(covers[v.cover_path])}" alt="" loading="lazy">` : ""}
+        <a class="cover" href="${esc(v.url)}" target="_blank" rel="noopener" title="${esc([v.views != null && `${big(v.views)} views`, v.likes != null && `${big(v.likes)} likes`, v.comments != null && `${big(v.comments)} comments`, v.shares != null && `${big(v.shares)} shares`].filter(Boolean).join(" · "))}">
+          ${covers[v.cover_path] || v.cover_url ? `<img src="${esc(covers[v.cover_path] || v.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}
           ${v.posted ? `<span class="chip tr">${esc(ago(v.posted))}</span>` : ""}
-          <span class="cap"><span class="plays">${compact(v.views)}</span></span>
+          <span class="cap"><span class="plays">${v.views != null ? compact(v.views) : v.likes != null ? `♥ ${compact(v.likes)}` : ""}</span></span>
         </a></div></article>`).join("")}</div>` : `<p class="muted small">No recent videos yet.</p>`}`;
 
   // Actions
@@ -237,7 +249,7 @@ async function renderCreator(app, sb, { isCurrent, go, toast }, id) {
     toast("Numbers updated"); renderCreator(app, sb, { isCurrent, go, toast }, id);
   });
   document.getElementById("cr-add")?.addEventListener("click", (e) => run(e.currentTarget, "Adding…", async () => {
-    await invoke(sb, "roster", { action: "add", input: `@${c.username}` });
+    await invoke(sb, "roster", { action: "add", input: `@${c.username}`, platform: c.platform ?? "tiktok" });
     toast("Added to the roster"); renderCreator(app, sb, { isCurrent, go, toast }, id);
   }));
   document.getElementById("cr-remove")?.addEventListener("click", (e) => run(e.currentTarget, "Removing…", async () => {
@@ -355,15 +367,15 @@ function insightsHtml(ins, c) {
         <span class="ic-spon-img">${x.thumbnail ? `<img src="${esc(x.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}</span>
         <span class="ic-spon-t">${esc((x.caption || "").slice(0, 90) || "Sponsored post")}</span>
         <span class="ic-spon-m">${x.created_at ? esc(ago(x.created_at)) : ""}${x.engagement?.likes != null ? ` · ${big(x.engagement.likes)} likes` : ""}</span></a>`).join("")}</div>` : ""}
-    ${tagged.length ? `<div class="ic-cap ic-gap">Recently tagged accounts</div><div class="ro-notable">${tagged.slice(0, 16).map((t) => { const u = typeof t === "string" ? t : t.username ?? t.name ?? ""; return u ? `<a class="ro-chip" href="https://www.tiktok.com/@${encodeURIComponent(u)}" target="_blank" rel="noopener">@${esc(u)}</a>` : ""; }).join("")}</div>` : ""}
+    ${tagged.length ? `<div class="ic-cap ic-gap">Recently tagged accounts</div><div class="ro-notable">${tagged.slice(0, 16).map((t) => { const u = typeof t === "string" ? t : t.username ?? t.name ?? ""; return u ? `<a class="ro-chip" href="${esc(platformOf(c.platform).url(u))}" target="_blank" rel="noopener">@${esc(u)}</a>` : ""; }).join("")}</div>` : ""}
     ${(p.hashtags ?? []).length ? `<div class="ic-cap ic-gap">Hashtags they use</div><div class="ro-notable">${p.hashtags.slice(0, 16).map((h) => `<span class="ro-chip">#${esc(h)}</span>`).join("")}</div>` : ""}`;
 
-  const person = (u) => `<a class="ic-person" href="https://www.tiktok.com/@${encodeURIComponent(u.username)}" target="_blank" rel="noopener">${icAvatar(u.picture, u.fullname || u.username, 32)}<span class="ic-person-n"><b>${esc(u.fullname || u.username)}${u.is_verified ? ' <span class="tick">✓</span>' : ""}</b><span>${big(u.followers)} followers</span></span></a>`;
+  const person = (u) => `<a class="ic-person" href="${esc(platformOf(c.platform).url(u.username))}" target="_blank" rel="noopener">${icAvatar(u.picture, u.fullname || u.username, 32)}<span class="ic-person-n"><b>${esc(u.fullname || u.username)}${u.is_verified ? ' <span class="tick">✓</span>' : ""}</b><span>${big(u.followers)} followers</span></span></a>`;
   const notableBody = notable.length ? `<p class="muted small ic-lead">${a.notable_users_ratio != null ? `${fmtPct(a.notable_users_ratio * 100)} of their followers are creators with a sizeable audience of their own. ` : ""}Largest ${Math.min(notable.length, 12)} shown.</p>
       <div class="ic-people">${[...notable].sort((x, y) => (y.followers ?? 0) - (x.followers ?? 0)).slice(0, 12).map(person).join("")}</div>` : `<p class="muted small">None found.</p>`;
 
   const lookCard = (u) => `<div class="ic-look">
-      <a href="https://www.tiktok.com/@${encodeURIComponent(u.username)}" target="_blank" rel="noopener" class="ic-look-a">${icAvatar(u.picture, u.fullname || u.username, 64)}
+      <a href="${esc(platformOf(c.platform).url(u.username))}" target="_blank" rel="noopener" class="ic-look-a">${icAvatar(u.picture, u.fullname || u.username, 64)}
         <b>${esc(u.fullname || u.username)}${u.is_verified ? ' <span class="tick">✓</span>' : ""}</b><span class="muted">@${esc(u.username)}</span></a>
       <span class="ic-look-f">${big(u.followers)} followers${u.geo?.country?.code ? ` · ${flag(u.geo.country.code)}` : ""}</span>
       <button type="button" class="ic-look-add" data-add="${esc(u.username)}">☆ Add to roster</button></div>`;
@@ -431,7 +443,7 @@ function bindInsights(app, sb, ctx, c, id) {
     const btn = e.currentTarget, old = btn.textContent;
     btn.disabled = true; btn.textContent = refresh ? "Updating…" : "Unlocking…";
     try {
-      await invoke(sb, "creator-insights", { handle: c.username, platform: c.platform ?? "tiktok", ...(refresh ? { refresh: true } : {}) });
+      await invoke(sb, "creator-insights", { handle: String(c.username).toLowerCase(), platform: c.platform ?? "tiktok", ...(refresh ? { refresh: true } : {}) });
       if (!ctx.isCurrent()) return;
       ctx.toast(refresh ? "Insights updated" : "Insights unlocked");
       renderCreator(app, sb, ctx, id);
@@ -454,7 +466,7 @@ function bindInsights(app, sb, ctx, c, id) {
   app.querySelectorAll("[data-add]").forEach((b) => (b.onclick = async () => {
     b.disabled = true; b.textContent = "Adding…";
     try {
-      const r = await invoke(sb, "roster", { action: "add", input: `@${b.dataset.add}` });
+      const r = await invoke(sb, "roster", { action: "add", input: `@${b.dataset.add}`, platform: c.platform ?? "tiktok" });
       b.outerHTML = `<a class="ic-look-add on" href="#/creator/${esc(r.id)}">★ On the roster</a>`;
       ctx.toast(`Added @${b.dataset.add} to the roster`);
     } catch (err) { ctx.toast(err.message); b.disabled = false; b.textContent = "☆ Add to roster"; }

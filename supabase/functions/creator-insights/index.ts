@@ -17,7 +17,7 @@ function serviceKey(): string {
 const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey(), { auth: { persistSession: false } });
 const KEY = Deno.env.get("INFLUENCERS_CLUB_API_KEY") ?? "";
 const CACHE_DAYS = 60;
-const PLATFORMS = ["tiktok", "instagram", "youtube"];
+const PLATFORMS = ["tiktok", "instagram", "youtube", "twitter", "twitch"];
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -75,7 +75,7 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { /* ignore */ }
   const platform = String(body?.platform ?? "tiktok").toLowerCase();
   const handle = cleanHandle(body?.handle);
-  if (!PLATFORMS.includes(platform)) return json({ error: "Platform must be tiktok, instagram or youtube" }, 400);
+  if (!PLATFORMS.includes(platform)) return json({ error: "Platform must be tiktok, instagram, youtube, twitter or twitch" }, 400);
   if (!handle) return json({ error: "Missing handle" }, 400);
 
   if (!body?.refresh) {

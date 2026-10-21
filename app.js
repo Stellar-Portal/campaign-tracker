@@ -1,10 +1,11 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261021c";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261021c";
-import { renderRoster } from "./roster.js?v=20261021c";
-import { renderAnalytics } from "./analytics.js?v=20261021c";
-import { renderTrending } from "./trending.js?v=20261021c";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261021c";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261021d";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261021d";
+import { renderRoster } from "./roster.js?v=20261021d";
+import { renderDiscover } from "./discover.js?v=20261021d";
+import { renderAnalytics } from "./analytics.js?v=20261021d";
+import { renderTrending } from "./trending.js?v=20261021d";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261021d";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -111,6 +112,7 @@ const NAV_ICON = {
   invoices: '<path d="M6 3h9l4 4v14H6zM14 3v5h5M9 13h7M9 17h5"/>',
   analytics: '<path d="M3 20l5-7 4 4 8-11"/><path d="M16 6h4v4"/>',
   roster: '<path d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.8l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>',
+  discover: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5M10.5 7.5v6M7.5 10.5h6"/>',
   trending: '<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
 };
 const NAV = [
@@ -118,6 +120,7 @@ const NAV = [
     { key: "overview", href: "#/", label: "Campaign overview", icon: "overview" },
     { key: "campaigns", href: "#/campaigns", label: "Tracker", icon: "tracker" },
     { key: "roster", href: "#/roster", label: "Roster", icon: "roster" },
+    { key: "discover", href: "#/discover", label: "Discover", icon: "discover" },
   ]],
   ["Money", [
     { key: "payouts", href: "#/payouts", label: "PayPal payouts", icon: "payouts", soon: true },
@@ -1741,7 +1744,7 @@ async function loadPosts(token, id, camp) {
       sec.querySelectorAll("[data-ract=roster]").forEach((b) => (b.onclick = async () => {
         const p = list.find((x) => x.id === b.dataset.id);
         b.disabled = true; b.textContent = "…";
-        const { data: r, error: e } = await sb.functions.invoke("roster", { body: { action: "add", input: `@${p.creator.username}` } });
+        const { data: r, error: e } = await sb.functions.invoke("roster", { body: { action: "add", input: `@${p.creator.username}`, platform: p.creator.platform ?? "tiktok" } });
         if (e || r?.error) { b.disabled = false; b.textContent = "☆"; toast(`Couldn't add: ${r?.error ?? e.message}`); return; }
         toast(`Added @${p.creator.username} to the roster`);
         list.filter((x) => x.creator?.username === p.creator.username).forEach((x) => { x.creator.on_roster = true; x.creator.id = r.id; });
@@ -1906,12 +1909,13 @@ async function route() {
   renderWho(user);
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   window.scrollTo(0, 0);
-  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster"].includes(parts[0]) ? parts[0] : "campaigns";
+  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover"].includes(parts[0]) ? parts[0] : "campaigns";
   renderNav(section);
   if (section === "overview") return renderOverview(token);
   if (section === "analytics") return renderAnalytics(app, sb, { isCurrent: () => token === routeToken, go });
   if (section === "trending") return renderTrending(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (section === "roster") return renderRoster(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
+  if (section === "discover") return renderDiscover(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (SOON[parts[0]]) return renderSoon(parts[0]);
   if (parts[0] === "campaigns") return renderList(token);
   if (parts[0] === "new") return renderForm(token);
