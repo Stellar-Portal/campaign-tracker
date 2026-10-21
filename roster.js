@@ -3,7 +3,7 @@
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big, pct } from "./report.js?v=20261021a";
+import { esc, flag, regionName, ago, compact, big, pct } from "./report.js?v=20261021b";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
@@ -202,7 +202,7 @@ async function renderCreator(app, sb, { isCurrent, go, toast }, id) {
     </div>
     <p class="muted small ro-basis">${s.sample ? `Based on their ${s.sample} most recent videos (pinned videos left out).` : "No recent videos found yet."}</p>
 
-    <section class="panel ro-insights" id="cr-insights">${insightsHtml(ins, c)}</section>
+    <section class="panel ro-insights" id="cr-insights">${insRes.error ? `<p class="muted small" style="margin:0">Couldn't load audience insights: ${esc(insRes.error.message)}</p>` : insightsHtml(ins, c)}</section>
 
     <div class="ro-cols">
       <section class="panel">
