@@ -3,7 +3,7 @@
 // chartmetric-sync Edge Function and scored in the database (trend_compute_scores).
 //
 // Routes: #/trending (tracks) · #/trending/artists · #/trending/artist/<chartmetric artist id>
-import { esc, flag, ago, compact } from "./report.js?v=20261021e";
+import { esc, flag, ago, compact } from "./report.js?v=20261021g";
 
 const REGIONS = ["Asia", "LATAM", "US"];
 const PLATFORM = { spotify: "Spotify", shazam: "Shazam", tiktok: "TikTok", applemusic: "Apple Music", youtube: "YouTube" };
@@ -259,7 +259,6 @@ export async function renderTrending(app, sb, { isCurrent, go, parts, toast }) {
   const trackList = [...tracks.values()].sort((a, b) => b.score - a.score);
 
   app.innerHTML = `
-    <p class="back"><a href="#/trending/artists">← Trending artists</a></p>
     <div class="page-head">
       <div><h1>${esc(name)}</h1>
         <p class="muted small" style="margin:6px 0 0">${trackList.length ? `${trackList.length} song${trackList.length === 1 ? "" : "s"} on the charts in ${countriesSorted.length} countr${countriesSorted.length === 1 ? "y" : "ies"}` : "Not on the followed charts right now"}</p></div>

@@ -1,11 +1,11 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261021e";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261021e";
-import { renderRoster } from "./roster.js?v=20261021e";
-import { renderDiscover } from "./discover.js?v=20261021e";
-import { renderAnalytics } from "./analytics.js?v=20261021e";
-import { renderTrending } from "./trending.js?v=20261021e";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261021e";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261021g";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261021g";
+import { renderRoster } from "./roster.js?v=20261021g";
+import { renderDiscover } from "./discover.js?v=20261021g";
+import { renderAnalytics } from "./analytics.js?v=20261021g";
+import { renderTrending } from "./trending.js?v=20261021g";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261021g";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -36,6 +36,73 @@ const toast = (msg) => {
 };
 const fail = (err) => `<p class="error">${esc(err?.message ?? err)}</p>`;
 const go = (hash) => { location.hash = hash; };
+
+// ---------- Back ----------
+// The app keeps its own history of pages (per tab), so "Back" returns to the page you came from; when you
+// arrived by a link, it goes to the page one level up instead (a campaign → the tracker, a creator → the roster).
+const NAV_KEY_STACK = "navstack";
+let navStack = (() => { try { return JSON.parse(sessionStorage.getItem(NAV_KEY_STACK) ?? "[]"); } catch { return []; } })();
+const normHash = (h) => (h && h !== "#" ? h : "#/");
+function trackHistory() {
+  const h = normHash(location.hash);
+  if (navStack.length >= 2 && navStack[navStack.length - 2] === h) navStack.pop();
+  else if (navStack[navStack.length - 1] !== h) navStack.push(h);
+  navStack = navStack.slice(-60);
+  try { sessionStorage.setItem(NAV_KEY_STACK, JSON.stringify(navStack)); } catch { /* private window */ }
+}
+function parentOf(hash) {
+  const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  if (!p.length) return null;
+  if (p[0] === "c" && p[1]) return p[2] ? `#/c/${p[1]}` : "#/campaigns";
+  if (p[0] === "new" || p[0] === "report") return "#/campaigns";
+  if (p[0] === "creator") return "#/roster";
+  if (p[0] === "roster" && p.length > 1) {
+    if (p[p.length - 2] === "c") return `#/${p.slice(0, -2).join("/")}`;
+    if (p[1] === "list" && p[3]) return `#/roster/list/${p[2]}`;
+    return "#/roster";
+  }
+  if (p[0] === "trending" && p.length > 1) return p[1] === "artist" ? "#/trending/artists" : "#/trending";
+  return null;
+}
+function pageName(hash) {
+  const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  if (!p.length || p[0] === "overview") return "Campaign overview";
+  if (p[0] === "campaigns") return "Tracker";
+  if (p[0] === "c") return p[2] === "edit" ? "Edit campaign" : p[2] === "add" ? "Add links" : "Campaign";
+  if (p[0] === "new") return "New campaign";
+  if (p[0] === "report") return "Client view";
+  if (p[0] === "creator") return "Creator";
+  if (p[0] === "roster") return p[p.length - 2] === "c" ? "Creator" : p[1] === "list" ? (p[3] === "compare" ? "Comparison" : "List") : "Roster";
+  if (p[0] === "trending") return p[1] === "artist" ? "Artist" : p[1] === "artists" ? "Trending artists" : "Trending";
+  return { analytics: "Analytics", discover: "Discover", payouts: "PayPal payouts", payments: "Creator payments", invoices: "Invoices" }[p[0]] ?? "Previous page";
+}
+// Page titles as they were shown ("Football clubs", a campaign's song), so Back can name the page it returns to.
+const pageTitles = (() => { try { return JSON.parse(sessionStorage.getItem("navtitles") ?? "{}"); } catch { return {}; } })();
+function rememberTitle(hash) {
+  setTimeout(() => {
+    if (normHash(location.hash) !== hash) return;
+    const h = document.querySelector(".content > main h1");
+    const t = h?.textContent?.trim();
+    if (!t || t.length > 60) return;
+    pageTitles[hash] = t;
+    try { sessionStorage.setItem("navtitles", JSON.stringify(pageTitles)); } catch { /* private window */ }
+  }, 1500);
+}
+function updateBack() {
+  const bar = document.getElementById("backbar"), btn = document.getElementById("back-btn");
+  if (!bar) return;
+  const here = normHash(location.hash);
+  const prev = navStack.length >= 2 ? navStack[navStack.length - 2] : null;
+  const target = prev && prev !== here ? prev : parentOf(here);
+  const show = !!target && !document.body.classList.contains("signin");
+  bar.hidden = !show;
+  document.body.classList.toggle("has-back", show);
+  if (!show) return;
+  const generic = pageName(target);
+  const named = pageTitles[target];
+  document.getElementById("back-label").textContent = `Back to ${named && ["List", "Campaign", "Artist", "Comparison", "Creator"].includes(generic) ? named : generic}`;
+  btn.onclick = () => { if (prev && prev !== here) history.back(); else go(target); };
+}
 
 // Supabase returns at most 1,000 rows per request, so page through bigger results.
 async function fetchAll(build, pageSize = 1000) {
@@ -1116,7 +1183,7 @@ async function renderCampaign(token, id) {
     loadCovers: async (ids) => (await call({ covers: ids })).covers ?? {},
     postDaily: async (vid) => (await sb.from("post_daily_stats").select("stat_date,plays,likes,comments,shares").eq("tiktok_video_id", vid).order("stat_date")).data ?? [],
     remove: async (p) => { const { error: e } = await sb.from("posts").delete().eq("campaign_id", id).eq("tiktok_video_id", p.video_id); if (e) toast(e.message); return !e; },
-    header: `<a href="#/campaigns" class="back">All campaigns</a>`,
+    header: "",
     avatarAction: `<button type="button" class="art-edit" id="art-edit">Change</button>`,
     heroMeta: `<span class="key-chip status-chip s-${esc(c.status)}">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span class="key-chip po"><span class="key-sub">PO</span><span class="key-text">${esc(c.po_number)}</span>${copyBtn(c.po_number)}</span>` : ""}`,
     heroActions: `
@@ -1783,7 +1850,6 @@ function renderReport(token, artist) {
       return !error;
     },
     header: `<div class="client-view-note">
-        <a href="#/campaigns" class="back">All campaigns</a>
         <span>Client view: what a client link shows with every setting on. Upcoming campaigns appear here but not on client links.</span>
         <button type="button" id="rep-share" aria-expanded="false" aria-controls="share-panel">Share with client</button>
       </div>`,
@@ -1908,7 +1974,11 @@ async function route() {
   document.body.classList.remove("signin");
   renderWho(user);
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
-  window.scrollTo(0, 0);
+  trackHistory(); updateBack(); rememberTitle(normHash(location.hash));
+  // Opening or closing a creator's side panel on the roster keeps the page where it is.
+  const pageKey = parts[0] === "roster" && parts[parts.length - 2] === "c" ? `#/${parts.slice(0, -2).join("/")}` : normHash(location.hash);
+  if (pageKey !== lastPageKey) window.scrollTo(0, 0);
+  lastPageKey = pageKey;
   const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover"].includes(parts[0]) ? parts[0] : "campaigns";
   renderNav(section);
   if (section === "overview") return renderOverview(token);
@@ -1928,6 +1998,7 @@ async function route() {
   return renderList(token);
 }
 
+let lastPageKey = null;
 window.addEventListener("hashchange", route);
 // Supabase also reports SIGNED_IN when a tab regains focus, so only re-render when the user actually changes.
 // Work is deferred with setTimeout: calling Supabase inside this callback can deadlock the client.
