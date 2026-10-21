@@ -3,8 +3,8 @@
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261021d";
-import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261021d";
+import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261021e";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261021e";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
@@ -281,7 +281,8 @@ function bars(rows, { max = 6, label = (r) => r.name ?? r.code } = {}) {
   const hi = Math.max(...top.map((r) => r.weight), 0.0001);
   return `<div class="ro-bars">${top.map((r) => `<div class="ro-bar"><span class="ro-bar-l">${label(r)}</span><span class="ro-bar-t"><i style="width:${Math.max(2, (r.weight / hi) * 100)}%"></i></span><span class="ro-bar-v">${pctW(r.weight)}</span></div>`).join("")}</div>`;
 }
-const IC_NAV = [["sig", "Signals"], ["reach", "Reachability"], ["growth", "Growth"], ["demo", "Demographics"], ["geo", "Geography & language"], ["brands", "Brand collaborations"], ["notable", "Notable followers"], ["look", "Lookalikes"]];
+const TYPES = [["real", "Real people", "#2f7a4f"], ["mass_followers", "Mass followers", "#d9a23b"], ["influencers", "Influencers", "#4a7fdc"], ["suspicious", "Suspicious", "#b4592a"]];
+const CRED = { best: "Excellent", high: "High", good: "Good", normal: "Medium", low: "Low", bad: "Poor" };
 const icSection = (n, key, title, sub, body) => `<section class="panel ic-sec" id="ic-${key}"><div class="ic-head"><span class="ic-n">${String(n).padStart(2, "0")}</span><h3>${esc(title)}</h3>${sub ? `<span class="ic-sub">${esc(sub)}</span>` : ""}</div>${body}</section>`;
 const icAvatar = (pic, name, size) => avatar({ avatar_url: pic, display_name: name }, size);
 const fmtPct = (v, d = 1) => (v == null ? "–" : `${Number(v).toFixed(d)}%`);
@@ -319,14 +320,39 @@ function insightsHtml(ins, c) {
   const sig = (label, value, sub = "", cls = "") => `<div class="ic-sig ${cls}"><div class="l">${esc(label)}</div><div class="n">${value}</div>${sub ? `<div class="s">${sub}</div>` : ""}</div>`;
   const g3 = growth["3_months_ago"];
 
+  // Credibility: Influencers.club measures it for Instagram audiences (the engaged audience, i.e. likers, when available).
+  const al = p?.audience?.audience_likers?.data ?? {};
+  const engaged = (al.audience_types ?? []).length > 0;
+  const types = engaged ? al.audience_types : a.audience_types ?? [];
+  const credScore = engaged ? al.audience_credibility ?? a.audience_credibility : a.audience_credibility;
+  const credClass = engaged ? al.credibility_class ?? a.credibility_class : a.credibility_class;
+  const credBody = types.length ? (() => {
+    const w = Object.fromEntries(types.map((x) => [x.code, x.weight]));
+    return `<div class="ic-cred-head"><div><div class="ic-subh">Audience credibility</div><span class="muted small">based on the ${engaged ? "engaged audience (people who like their posts)" : "followers"}</span></div>
+        ${credScore != null ? `<span class="ic-score ic-${esc(credClass ?? "normal")}"><b>${Math.round(credScore * 100)}</b><small>/100</small><i>${esc(CRED[credClass] ?? credClass ?? "")}</i></span>` : ""}</div>
+      <div class="ic-stack">${TYPES.map(([k, l, col]) => `<i style="flex:${w[k] ?? 0};background:${col}" title="${esc(`${l}: ${fmtPct((w[k] ?? 0) * 100)}`)}"></i>`).join("")}</div>
+      <div class="ic-legend">${TYPES.map(([k, l, col]) => `<span><b style="background:${col}"></b><strong>${fmtPct((w[k] ?? 0) * 100, 0)}</strong> ${esc(l)}</span>`).join("")}</div>`;
+  })() : `<p class="muted small ic-lead" style="margin:0">Influencers.club only measures audience credibility (real people vs suspicious accounts) for Instagram audiences.${c.platform !== "instagram" ? " Add this creator's Instagram to the roster and unlock it to see it." : ""}</p>`;
   const reachBody = reach.length ? (() => {
     const w = Object.fromEntries(reach.map((x) => [x.code, x.weight]));
     const low = w["-500"] ?? 0;
-    return `<p class="muted small ic-lead">Followers who follow few accounts see more of what this creator posts; followers who follow thousands are often low-quality or bot-like.</p>
+    return `<div class="ic-subh ic-gap">Reachability</div>
+      <p class="muted small ic-lead" style="margin-top:2px">How many accounts their followers follow. Followers who follow few accounts see more of what this creator posts; followers who follow thousands are often low-quality or bot-like.</p>
       <div class="ic-stack">${REACH.map(([k, , col]) => `<i style="flex:${w[k] ?? 0};background:${col}" title="${esc(fmtPct((w[k] ?? 0) * 100))}"></i>`).join("")}</div>
       <div class="ic-legend">${REACH.map(([k, l, col]) => `<span><b style="background:${col}"></b><strong>${fmtPct((w[k] ?? 0) * 100, 0)}</strong> ${esc(l)}</span>`).join("")}</div>
       <p class="small ic-verdict">${low >= 0.5 ? "Strong: most followers follow few accounts." : low >= 0.3 ? "Average: a fair share of followers follow few accounts." : "Weak: most followers follow many accounts, so fewer of them will see the posts."}</p>`;
-  })() : `<p class="muted small">Not available for this creator.</p>`;
+  })() : "";
+  const qualityBody = credBody + reachBody;
+
+  // Interests and brand affinity: Instagram audiences only.
+  const interests = [...(a.audience_interests ?? al.audience_interests ?? [])].sort((x, y) => y.weight - x.weight);
+  const brandAff = [...(a.audience_brand_affinity ?? [])].sort((x, y) => y.weight - x.weight);
+  const intHi = Math.max(...interests.map((r) => r.weight), 0.0001);
+  const intRows = (rows) => { const hi = intHi; return rows.map((r) => `<div class="ic-int"><span class="ic-int-l">${esc(r.name)}</span><span class="ic-int-t"><i style="width:${(r.weight / hi) * 100}%"></i></span><span class="ic-int-v">${fmtPct(r.weight * 100)}</span></div>`).join(""); };
+  const interestsBody = interests.length ? `<p class="muted small ic-lead">Share of their followers interested in each topic.</p>
+      <div class="ic-ints"><div>${intRows(interests.slice(0, 7))}</div><div>${intRows(interests.slice(7, 14))}</div></div>
+      ${brandAff.length ? `<div class="ic-cap ic-gap">Brands their audience follows</div><div class="ro-notable">${brandAff.slice(0, 14).map((b) => `<span class="ro-chip" title="${esc(fmtPct(b.weight * 100))} of followers">${esc(b.name)} <span class="muted">${fmtPct(b.weight * 100, 0)}</span></span>`).join("")}</div>` : ""}`
+    : null;
 
   const growthBody = Object.keys(growth).length && followers ? `
     <div class="ic-growth" data-followers="${followers}" data-growth="${esc(JSON.stringify(growth))}">
@@ -383,6 +409,17 @@ function insightsHtml(ins, c) {
       <div class="ic-looks">${looks.slice(0, 10).map(lookCard).join("")}</div>
       ${looks.length > 10 ? `<div class="ic-looks ic-more" hidden>${looks.slice(10).map(lookCard).join("")}</div><button type="button" class="link-btn ic-gap" id="ic-more">Show all ${looks.length}</button>` : ""}` : `<p class="muted small">None found.</p>`;
 
+  const secs = [
+    ["sig", "Signals", "", "", "Signals"],
+    ["quality", "Audience quality", "credibility · reachability", qualityBody, "Audience quality"],
+    ...(interestsBody ? [["interests", "Audience interests", "interests · brand affinity", interestsBody, "Interests"]] : []),
+    ["growth", "Growth & trajectory", "3 / 6 / 9 / 12 month history", growthBody, "Growth"],
+    ["demo", "Audience demographics", "gender · age", demoBody, "Demographics"],
+    ["geo", "Audience geography & language", "countries · languages", geoBody, "Geography & language"],
+    ["brands", "Brand collaborations", "paid partnerships · sponsored posts · monetisation", brandsBody, "Brand collaborations"],
+    ["notable", "Notable followers", "creators who follow them", notableBody, "Notable followers"],
+    ["look", "Lookalikes", "similar creators worth a look", lookBody, "Lookalikes"],
+  ];
   return `
     <div class="ic-top panel">
       <div class="ic-top-row">
@@ -396,7 +433,7 @@ function insightsHtml(ins, c) {
         ${niche.map((n) => `<span class="ro-chip ic-niche">${esc(n)}</span>`).join("")}
         ${email ? `<a class="ro-chip ic-mail" href="mailto:${esc(email)}">✓ ${esc(email)}${r.email_status === "valid" ? " · verified" : ""}</a>` : `<span class="ro-chip">No public email found</span>`}
       </div>
-      <nav class="ic-nav" aria-label="Insight sections">${IC_NAV.map(([k, l], i) => `<a href="#ic-${k}" data-jump="ic-${k}"><span>${String(i + 1).padStart(2, "0")}</span>${esc(l)}</a>`).join("")}</nav>
+      <nav class="ic-nav" aria-label="Insight sections">${secs.map(([k, , , , l], i) => `<a href="#ic-${k}" data-jump="ic-${k}"><span>${String(i + 1).padStart(2, "0")}</span>${esc(l)}</a>`).join("")}</nav>
     </div>
     ${icSection(1, "sig", "Signals", "the numbers brand managers filter on", `<div class="ic-sigs">
       ${sig("Engagement rate", fmtPct(p.engagement_percent), "likes, comments, shares per view")}
@@ -408,13 +445,7 @@ function insightsHtml(ins, c) {
       ${sig("Median likes", big(p.likes_median == null ? null : Math.round(p.likes_median)), p.comments_median != null ? `${big(Math.round(p.comments_median))} comments` : "")}
       ${sig("Avg video length", p.duration_avg != null ? `${Math.round(p.duration_avg)} <small>sec</small>` : "–", "")}
     </div>`)}
-    ${icSection(2, "reach", "Audience reachability", "how many accounts their followers follow", reachBody)}
-    ${icSection(3, "growth", "Growth & trajectory", "3 / 6 / 9 / 12 month history", growthBody)}
-    ${icSection(4, "demo", "Audience demographics", "gender · age", demoBody)}
-    ${icSection(5, "geo", "Audience geography & language", "countries · languages", geoBody)}
-    ${icSection(6, "brands", "Brand collaborations", "paid partnerships · sponsored posts · monetisation", brandsBody)}
-    ${icSection(7, "notable", "Notable followers", "creators who follow them", notableBody)}
-    ${icSection(8, "look", "Lookalikes", "similar creators worth a look", lookBody)}`;
+    ${secs.slice(1).map(([key, title, sub, body], i) => icSection(i + 2, key, title, sub, body)).join("")}`;
 }
 
 // Follower count over the chosen period, estimated back from today's count and the growth percentages.
