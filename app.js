@@ -1,11 +1,12 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261021t";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261021t";
-import { renderRoster } from "./roster.js?v=20261021t";
-import { renderDiscover } from "./discover.js?v=20261021t";
-import { renderAnalytics } from "./analytics.js?v=20261021t";
-import { renderTrending } from "./trending.js?v=20261021t";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261021t";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023a";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023a";
+import { renderRoster } from "./roster.js?v=20261023a";
+import { renderDiscover } from "./discover.js?v=20261023a";
+import { renderAnalytics } from "./analytics.js?v=20261023a";
+import { renderTrending } from "./trending.js?v=20261023a";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023a";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023a";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -41,7 +42,7 @@ const go = (hash) => { location.hash = hash; };
 // Each sidebar section keeps its own trail of pages. Back walks up that trail and stops at the section's
 // first page (it never jumps to another section); Home goes straight to the section's first page.
 const SECTION_HOME = { overview: "#/", campaigns: "#/campaigns", roster: "#/roster", discover: "#/discover", analytics: "#/analytics", trending: "#/trending", payouts: "#/payouts", payments: "#/payments", invoices: "#/invoices" };
-const SECTION_NAME = { overview: "Campaign overview", campaigns: "Tracker", roster: "Roster", discover: "Discover", analytics: "Analytics", trending: "Trending", payouts: "PayPal payouts", payments: "Creator payments", invoices: "Invoices" };
+const SECTION_NAME = { overview: "Campaign overview", campaigns: "Tracker", roster: "Roster", discover: "Discover", analytics: "Analytics", trending: "Trending", payouts: "Payouts", payments: "Creator payments", invoices: "Invoices" };
 const normHash = (h) => (!h || h === "#" || h === "#/overview" ? "#/" : h);
 function sectionOf(hash) {
   const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
@@ -61,7 +62,7 @@ function depthOf(hash) {
     return (base[1] === "list" ? 1 : 0) + (base.length !== p.length ? 1 : 0);
   }
   if (p[0] === "creator") return 2;
-  if (p[0] === "c") return p[2] ? 2 : 1;
+  if (p[0] === "c") return p[2] && p[2] !== "payouts" ? 2 : 1;
   if (p[0] === "new" || p[0] === "report") return 1;
   if (p[0] === "trending") return p[1] === "artist" ? 1 : 0;
   return 0;
@@ -83,7 +84,7 @@ function trackHistory() {
 function parentOf(hash) {
   const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   if (!p.length) return null;
-  if (p[0] === "c" && p[1]) return p[2] ? `#/c/${p[1]}` : "#/campaigns";
+  if (p[0] === "c" && p[1]) return p[2] && p[2] !== "payouts" ? `#/c/${p[1]}` : "#/campaigns";
   if (p[0] === "new" || p[0] === "report") return "#/campaigns";
   if (p[0] === "creator") return "#/roster";
   if (p[0] === "roster" && p.length > 1) {
@@ -104,7 +105,7 @@ function pageName(hash) {
   if (p[0] === "creator") return "Creator";
   if (p[0] === "roster") return p[p.length - 2] === "c" ? "Creator" : p[1] === "list" ? (p[3] === "compare" ? "Comparison" : "List") : "Roster";
   if (p[0] === "trending") return p[1] === "artist" ? "Artist" : p[1] === "artists" ? "Trending artists" : "Trending";
-  return { analytics: "Analytics", discover: "Discover", payouts: "PayPal payouts", payments: "Creator payments", invoices: "Invoices" }[p[0]] ?? "Previous page";
+  return { analytics: "Analytics", discover: "Discover", payouts: "Payouts", payments: "Creator payments", invoices: "Invoices" }[p[0]] ?? "Previous page";
 }
 // Page titles as they were shown ("Football clubs", a campaign's song), so Back can name the page it returns to.
 const pageTitles = (() => { try { return JSON.parse(sessionStorage.getItem("navtitles") ?? "{}"); } catch { return {}; } })();
@@ -245,8 +246,7 @@ const NAV = [
     { key: "discover", href: "#/discover", label: "Discover", icon: "discover" },
   ]],
   ["Money", [
-    { key: "payouts", href: "#/payouts", label: "PayPal payouts", icon: "payouts", soon: true },
-    { key: "creator-payments", href: "#/creator-payments", label: "Creator payments", icon: "creators", soon: true },
+    { key: "payouts", href: "#/payouts", label: "Payouts", icon: "payouts" },
     { key: "invoices", href: "#/invoices", label: "Invoices", icon: "invoices", soon: true },
   ]],
   ["Insights", [
@@ -282,7 +282,6 @@ function renderNav(active) {
 
 // Sections that are planned but not built yet: say what they'll do.
 const SOON = {
-  payouts: ["PayPal payouts", "Replaces the PayPal payout sheet.", ["Who to pay this week, per campaign and creator", "PayPal batch file ready to upload", "Paid status written back to the campaign and its creator costs"]],
   "creator-payments": ["Creator payments", "Every creator deal in one place.", ["Agreed price per creator and campaign, in any currency", "What's paid and what's still owed", "Payment details kept private to the team"]],
   invoices: ["Invoices", "Client invoicing per PO number.", ["Draft, sent and paid, matching the Campaign Overview invoicing columns", "Linked to the campaign's price and invoicing entity", "Reminders for anything overdue"]],
 };
@@ -1208,7 +1207,7 @@ function artistPictureDialog(name) {
   });
 }
 
-async function renderCampaign(token, id) {
+async function renderCampaign(token, id, tab = "report") {
   app.innerHTML = `<p class="muted pad">Loading campaign…</p>`;
   const { data: c, error } = await sb.from("campaign_summary").select("*").eq("id", id).maybeSingle();
   if (token !== routeToken) return;
@@ -1266,8 +1265,14 @@ async function renderCampaign(token, id) {
         <div class="stat money"><div class="n">${c.budget != null ? money(c.margin, c.currency) : "–"}</div><div class="l">Margin</div></div>
         <div class="stat money"><div class="n">${cpv(c.cost_per_view, c.currency)}</div><div class="l">Cost per view</div></div>
         <div class="stat"><div class="n small-n">Team only</div><div class="l">Clients never see this row</div></div>
-      </div>`,
+      </div>
+      <div class="camp-tabs tabs" role="tablist" aria-label="Campaign views">
+        <a role="tab" href="#/c/${esc(id)}" aria-selected="${tab === "report"}">Report</a>
+        <a role="tab" href="#/c/${esc(id)}/payouts" aria-selected="${tab === "payouts"}">Payouts <span class="muted">· team only</span></a>
+      </div>
+      <section id="camp-payouts" class="camp-payouts"${tab === "payouts" ? "" : " hidden"}></section>`,
     postsHtml: `
+      <div class="camp-posts">
       <div class="section-head">
         <h2>Posts</h2>
         <div class="posts-tools">
@@ -1282,9 +1287,12 @@ async function renderCampaign(token, id) {
       <div id="folders" class="folders"></div>
       <section id="folder-panel" class="panel share-panel" hidden></section>
       <div id="pick-bar" class="pick-bar" hidden></div>
-      <div id="posts"><p class="muted">Loading posts…</p></div>`,
+      <div id="posts"><p class="muted">Loading posts…</p></div>
+      </div>`,
     onPosts: (root, data) => {
       if (token !== routeToken) return;
+      app.classList.toggle("camp-on-payouts", tab === "payouts");
+      if (tab === "payouts") renderCampaignPayouts(document.getElementById("camp-payouts"), sb, { campaign: c, toast, isCurrent: () => token === routeToken });
       loadPosts(token, id, { ...c, artist_image: data.artist_image });
       document.getElementById("share-btn").onclick = (e) => toggleSharePanel(e.currentTarget, c);
       document.getElementById("del-camp").onclick = () => deleteCampaignFlow(c);
@@ -2027,6 +2035,7 @@ async function route() {
     return;
   }
   document.body.classList.remove("signin");
+  app.classList.remove("camp-on-payouts");
   renderWho(user);
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   trackHistory(); updateBack(); rememberTitle(normHash(location.hash));
@@ -2034,12 +2043,13 @@ async function route() {
   const pageKey = parts[0] === "roster" && parts[parts.length - 2] === "c" ? `#/${parts.slice(0, -2).join("/")}` : normHash(location.hash);
   if (pageKey !== lastPageKey) window.scrollTo(0, 0);
   lastPageKey = pageKey;
-  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover"].includes(parts[0]) ? parts[0] : "campaigns";
+  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover", "payouts"].includes(parts[0]) ? parts[0] : "campaigns";
   renderNav(section);
   if (section === "overview") return renderOverview(token);
   if (section === "analytics") return renderAnalytics(app, sb, { isCurrent: () => token === routeToken, go });
   if (section === "trending") return renderTrending(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (section === "roster") return renderRoster(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
+  if (section === "payouts") return renderPayoutsHome(app, sb, { isCurrent: () => token === routeToken, go });
   if (section === "discover") return renderDiscover(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (SOON[parts[0]]) return renderSoon(parts[0]);
   if (parts[0] === "campaigns") return renderList(token);
@@ -2048,7 +2058,7 @@ async function route() {
   if (parts[0] === "c" && parts[1]) {
     if (parts[2] === "edit") return renderForm(token, parts[1]);
     if (parts[2] === "add") return renderAdd(token, parts[1], parts[3]);
-    return renderCampaign(token, parts[1]);
+    return renderCampaign(token, parts[1], parts[2] === "payouts" ? "payouts" : "report");
   }
   return renderList(token);
 }
