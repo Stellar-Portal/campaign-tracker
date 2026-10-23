@@ -1,18 +1,20 @@
 // Analytics: charts across every campaign in the Campaign Overview sheet, plus tracker performance.
 // Money is shown in USD (ECB rates, refreshed daily in fx_rates). Every chart says how many
 // campaigns it is based on, has a hover read-out and a "Show as table" view.
-import { chart, esc } from "./report.js?v=20261023h";
+import { chart, esc } from "./report.js?v=20261023j";
 
 // Validated categorical slots (dataviz palette); cobalt only for single-series charts.
 const SLOT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
 const ONE = "#0f25bf";
 const GREY = "#a1a1a6";
-const REGIONS = [["Stellar West", "West", SLOT[0]], ["Stellar Central", "Central", SLOT[1]], ["Stellar East", "East", SLOT[2]]];
+const BRAND = "#0f25bf", BRAND_LIGHT = "#8b9cec", GREEN = "#4a9d6e", NOTSET = "#c7c7cc";
+const REGIONS = [["Stellar West", "West", BRAND], ["Stellar Central", "Central", BRAND_LIGHT], ["Stellar East", "East", GREEN]];
 const ALLOC = ["US", "Brazil", "Mexico", "All LATAM", "Canada", "UK", "Germany", "France", "Africa", "Other", "Japan", "Korea", "China", "India", "SEA", "Global"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const nf = new Intl.NumberFormat("en-US");
 const usd = (v) => (v == null || !isFinite(v) ? "–" : `$${nf.format(Math.round(v))}`);
+const usdAxis = (v) => (v >= 1e6 ? `$${+(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${+(v / 1e3).toFixed(0)}k` : `$${v}`);
 const usdShort = (v) => (v == null || !isFinite(v) ? "–" : v >= 1e6 ? `$${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M` : v >= 1e3 ? `$${(v / 1e3).toFixed(v >= 1e5 ? 0 : 1)}K` : `$${Math.round(v)}`);
 const num = (v) => (v == null ? "–" : nf.format(Math.round(v)));
 const compactN = (v) => (v == null ? "–" : new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(v));
@@ -40,8 +42,8 @@ const people = (v) => String(v ?? "").split(/\s*(?:&|\+|,|\band\b|\/)\s*/i).map(
 
 // ---------- tooltip ----------
 function tipEl() {
-  let t = document.getElementById("tip");
-  if (!t) { t = document.createElement("div"); t.id = "tip"; t.className = "tip"; t.setAttribute("role", "tooltip"); t.hidden = true; document.body.appendChild(t); }
+  let t = document.getElementById("an-tip");
+  if (!t) { t = document.createElement("div"); t.id = "an-tip"; t.className = "tip tip-light"; t.setAttribute("role", "tooltip"); t.hidden = true; document.body.appendChild(t); }
   return t;
 }
 function showTip(e, rows, title) {
@@ -54,7 +56,7 @@ function showTip(e, rows, title) {
   t.style.left = `${Math.max(8, x + 16 + tw > innerWidth - 8 ? x - tw - 16 : x + 16)}px`;
   t.style.top = `${Math.min(innerHeight - th - 8, Math.max(8, y - th / 2))}px`;
 }
-const hideTip = () => { const t = document.getElementById("tip"); if (t) t.hidden = true; };
+const hideTip = () => { const t = document.getElementById("an-tip"); if (t) t.hidden = true; };
 function bindTips(root, lookup) {
   root.querySelectorAll("[data-tip]").forEach((el) => {
     const on = (e) => { const x = lookup(el.dataset.tip); if (x) showTip(e, x.rows, x.title); };
@@ -89,37 +91,35 @@ function hbars(items, { fmt = usd, key = "hb", color = ONE } = {}) {
     </div>`).join("")}</div>`;
 }
 
-// Stacked columns by month (SVG), one colour per region; 2px surface gap between segments.
-function monthColumns(months, series, width) {
-  const W = Math.max(320, width), H = 260, L = 52, R = 12, T = 14, B = 30;
-  const totals = months.map((_, i) => series.reduce((s, se) => s + (se.values[i] ?? 0), 0));
-  const maxT = Math.max(...totals, 1);
-  const stepRaw = maxT / 4, mag = 10 ** Math.floor(Math.log10(stepRaw)), step = [1, 2, 2.5, 5, 10].map((f) => f * mag).find((x) => x >= stepRaw);
-  const hi = Math.ceil(maxT / step) * step;
-  const y = (v) => T + (1 - v / hi) * (H - T - B);
-  const band = (W - L - R) / months.length, bw = Math.min(24, band * 0.6);
+// Grouped columns (SVG), the demo's style: bars of one group sit side by side with rounded tops,
+// the whole group lights up on hover and one read-out follows the pointer.
+function groupBars(groups, series, width, { key = "gb", H = 280, fmt = usdShort, compact = false } = {}) {
+  const W = Math.max(320, width), L = 56, R = 8, T = 12, B = 30;
+  const maxV = Math.max(1, ...groups.flatMap((_, gi) => series.map((se) => se.values[gi] ?? 0)));
+  const stepRaw = maxV / 4, mag = 10 ** Math.floor(Math.log10(stepRaw)), step = [1, 2, 2.5, 3, 5, 6, 10].map((f) => f * mag).find((x) => x >= stepRaw);
+  const hi = Math.ceil(maxV / step) * step;
+  const y = (v) => T + (1 - Math.max(0, v) / hi) * (H - T - B);
+  const band = (W - L - R) / groups.length, gap = 6;
+  const n = compact ? Math.max(1, ...groups.map((_, gi) => series.filter((se) => se.values[gi] > 0).length)) : series.length;
+  const bw = Math.min(64, Math.max(6, (band * 0.8 - gap * (n - 1)) / n));
   const ticks = []; for (let v = 0; v <= hi + step / 2; v += step) ticks.push(v);
-  let segs = "";
-  months.forEach((m, i) => {
-    let acc = 0;
-    const cx = L + band * i + band / 2;
-    const parts = series.map((se) => ({ se, v: se.values[i] ?? 0 })).filter((p) => p.v > 0);
-    parts.forEach((p, j) => {
-      const y0 = y(acc), y1 = y(acc + p.v); acc += p.v;
-      const top = j === parts.length - 1;
-      const h = Math.max(1, y0 - y1 - (top ? 0 : 2));
-      const yTop = y1 + (top ? 0 : 2);
-      segs += top
-        ? `<path d="M${cx - bw / 2},${y0} V${yTop + 4} Q${cx - bw / 2},${yTop} ${cx - bw / 2 + 4},${yTop} H${cx + bw / 2 - 4} Q${cx + bw / 2},${yTop} ${cx + bw / 2},${yTop + 4} V${y0} Z" fill="${p.se.color}"/>`
-        : `<rect x="${cx - bw / 2}" y="${yTop}" width="${bw}" height="${h}" fill="${p.se.color}"/>`;
-    });
-    segs += `<rect class="hit" x="${L + band * i}" y="${T}" width="${band}" height="${H - T - B}" fill="transparent" data-tip="mc:${i}" tabindex="0"/>`;
-    if (totals[i] > 0) segs += `<text class="col-total" x="${cx}" y="${y(totals[i]) - 6}" text-anchor="middle">${usdShort(totals[i])}</text>`;
-  });
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="Revenue by start month, by region">
-    <g class="grid">${ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" ${v === 0 ? 'class="zero"' : ""}/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${usdShort(v)}</text>`).join("")}</g>
-    <g class="xaxis">${months.map((m, i) => `<text x="${L + band * i + band / 2}" y="${H - 8}" text-anchor="middle">${esc(m.label)}</text>`).join("")}</g>
-    ${segs}</svg>`;
+  const bar = (x, v, color) => {
+    if (!(v > 0)) return "";
+    const y0 = y(0), y1 = y(v), r = Math.min(6, bw / 2, (y0 - y1) / 2);
+    return `<path d="M${x},${y0} V${y1 + r} Q${x},${y1} ${x + r},${y1} H${x + bw - r} Q${x + bw},${y1} ${x + bw},${y1 + r} V${y0} Z" fill="${color}"/>`;
+  };
+  return `<svg class="gb" viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img">
+    <g class="grid">${ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" ${v === 0 ? 'class="zero"' : ""}/><text x="${L - 10}" y="${y(v) + 4}" text-anchor="end">${fmt(v)}</text>`).join("")}</g>
+    ${groups.map((g, gi) => {
+      const x0 = L + band * gi;
+      // compact: only this group's non-zero bars, centred, so they sit together.
+      const here = compact ? series.filter((se) => se.values[gi] > 0) : series;
+      const w = here.length * bw + gap * Math.max(0, here.length - 1), start = x0 + (band - w) / 2;
+      return `<g class="gb-g"><rect class="gb-hit" x="${x0 + 2}" y="${T}" width="${band - 4}" height="${H - T - B}" rx="8" data-tip="${key}:${gi}" tabindex="0" aria-label="${esc(g)}"/>
+        ${here.map((se, si) => bar(start + si * (bw + gap), se.values[gi], se.color)).join("")}
+        <text class="gb-x" x="${x0 + band / 2}" y="${H - 8}" text-anchor="middle">${esc(g)}</text></g>`;
+    }).join("")}
+  </svg>`;
 }
 
 export async function renderAnalytics(app, sb, { isCurrent, go }) {
@@ -204,7 +204,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
 
     // 2. revenue by month, by region
     const months = (st.period.startsWith("m:") ? [st.period.slice(2)] : [...new Set(list.map((x) => x.month).filter(Boolean))].sort()).map((m) => ({ key: m, label: `${MONTHS[Number(m.slice(5)) - 1]}${monthsAll[0]?.slice(0, 4) !== monthsAll.at(-1)?.slice(0, 4) ? ` ${m.slice(2, 4)}` : ""}` }));
-    const regionSeries = [...REGIONS.map(([k, l, c]) => ({ name: l, color: c, match: (x) => x.region === k })), { name: "Not set", color: GREY, match: (x) => !REGIONS.some(([k]) => k === x.region) }]
+    const regionSeries = [...REGIONS.map(([k, l, c]) => ({ name: l, color: c, match: (x) => x.region === k })), { name: "Not set", color: NOTSET, match: (x) => !REGIONS.some(([k]) => k === x.region) }]
       .map((se) => ({ ...se, values: months.map((m) => priced.filter((x) => x.month === m.key && se.match(x)).reduce((t, x) => t + x.priceUsd, 0)) }))
       .filter((se) => se.values.some((v) => v > 0));
     // 3. finished but not invoiced
@@ -244,7 +244,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
     const costedRev = costed.reduce((t, x) => t + x.priceUsd, 0);
     const marginAll = costedRev ? (costedRev - costTotal) / costedRev : null;
     // By client region (the demo's "by territory").
-    const regions = [...REGIONS, ["", "Not set", GREY]].map(([k, l, c]) => {
+    const regions = [...REGIONS, ["", "Not set", NOTSET]].map(([k, l, c]) => {
       const xs = priced.filter((x) => (k ? x.region === k : !REGIONS.some(([r]) => r === x.region)));
       const cs = xs.filter((x) => costOf(x) != null);
       const rev = xs.reduce((t, x) => t + x.priceUsd, 0), crev = cs.reduce((t, x) => t + x.priceUsd, 0), cost = cs.reduce((t, x) => t + costOf(x), 0);
@@ -283,13 +283,10 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
       </div>
       ${tab === "money" ? `
       <div class="an-grid">
-        ${card({ id: "an-regions", wide: true, title: "By client market", note: "Revenue, and margin where costs are recorded",
-          body: `<div class="an-regions">${regions.map((r, i) => `<div class="an-region" data-tip="rg:${i}" tabindex="0">
-              <div class="an-region-top"><span class="an-dot" style="background:${r.color}"></span><b>${esc(r.label)}</b><span class="muted small">${r.n} campaign${r.n === 1 ? "" : "s"}</span></div>
-              <div class="an-region-n">${usdShort(r.rev)}</div>
-              <span class="an-rbar"><i style="width:${(r.rev / maxRegion) * 100}%;background:${r.color}"></i></span>
-              <div class="an-region-m">${r.margin != null ? `Margin <b class="${r.margin < 0 ? "neg" : ""}">${pct(r.margin)}</b> <span class="muted">· ${r.nc} with a cost</span>` : `<span class="muted">No costs recorded yet</span>`}</div>
-            </div>`).join("")}</div>`,
+        ${card({ id: "an-regions", wide: true, title: "By client market", note: "Costs and margin count only campaigns with a recorded cost",
+          body: `<div class="legend"><span><i style="background:${BRAND}"></i>Revenue</span><span><i style="background:${BRAND_LIGHT}"></i>Costs</span><span><i style="background:${GREEN}"></i>Margin</span></div>
+            <div class="an-svg" id="an-regions-svg"></div>
+            <div class="an-mtiles">${regions.map((r) => `<div class="an-mtile"><span>${esc(r.label)}</span><b class="${r.margin != null && r.margin < 0 ? "neg" : ""}">${pct(r.margin)}</b><i>${r.nc ? `margin · ${r.nc} of ${r.n} with a cost` : "no costs yet"}</i></div>`).join("")}</div>`,
           table: tableHtml(["Client market", "Campaigns", "Revenue (USD)", "Costs (USD)", "Margin"], regions.map((r) => [r.label, String(r.n), usd(r.rev), r.nc ? usd(r.cost) : "–", pct(r.margin)])) })}
         ${card({ id: "an-months", wide: true, title: "Revenue by start month", note: `By client market · ${priced.filter((x) => x.month).length} campaigns with a start date`,
           body: `<div class="legend">${regionSeries.map((se) => `<span><i style="background:${se.color}"></i>${esc(se.name)}</span>`).join("")}</div><div class="an-svg" id="an-months-svg"></div>`,
@@ -342,7 +339,13 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
 
     // Charts drawn at their real width.
     const mEl = document.getElementById("an-months-svg");
-    if (mEl) mEl.innerHTML = months.length ? monthColumns(months, regionSeries, mEl.clientWidth || W) : `<p class="muted small an-empty">No start dates in this selection.</p>`;
+    if (mEl) mEl.innerHTML = months.length ? groupBars(months.map((m) => m.label), regionSeries, mEl.clientWidth || W, { key: "mc", fmt: usdAxis, compact: true }) : `<p class="muted small an-empty">No start dates in this selection.</p>`;
+    const rEl = document.getElementById("an-regions-svg");
+    if (rEl) rEl.innerHTML = groupBars(regions.map((r) => r.label), [
+      { name: "Revenue", color: BRAND, values: regions.map((r) => r.rev) },
+      { name: "Costs", color: BRAND_LIGHT, values: regions.map((r) => (r.nc ? r.cost : 0)) },
+      { name: "Margin", color: GREEN, values: regions.map((r) => (r.nc ? r.crev - r.cost : 0)) },
+    ], rEl.clientWidth || W, { key: "rg", fmt: usdAxis });
     const vEl = document.getElementById("an-views-chart");
     if (vEl) chart(vEl, { dates, panels: [{ label: "Views", series: [{ name: "Views", color: ONE, values: viewsByDate }] }], empty: "Views over time appear once the tracker has collected numbers on two or more days." });
 
@@ -351,7 +354,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
     bindTips(out, (k) => {
       const [kind, iStr] = k.split(":"); const i = Number(iStr);
       if (kind === "mc") return { title: months[i]?.label, rows: [...regionSeries.filter((se) => se.values[i] > 0).map((se) => [se.color, se.name, usd(se.values[i])]), ["", "Total", usd(regionSeries.reduce((t, se) => t + se.values[i], 0))]] };
-      if (kind === "rg") { const r = regions[i]; return { title: r.label, rows: [[r.color, "Revenue", usd(r.rev)], ["", "Campaigns", String(r.n)], ["", "Costs", r.nc ? usd(r.cost) : "–"], ["", "Margin", pct(r.margin)]] }; }
+      if (kind === "rg") { const r = regions[i]; return { title: r.label, rows: [[BRAND, "Revenue", usd(r.rev)], [BRAND_LIGHT, "Costs", r.nc ? usd(r.cost) : "–"], [GREEN, "Margin", r.nc ? `${usd(r.crev - r.cost)} · ${pct(r.margin)}` : "–"], ["", "Campaigns", r.nc ? `${r.n} · ${r.nc} with a cost` : String(r.n)]] }; }
       if (kind === "lbl") { const x = labelSplit.filter((y) => y.v)[i]; return { title: x.l, rows: [[x.color, "Revenue", usd(x.v)], ["", "Share", pct(x.v / labelTotal)], ["", "Campaigns", String(x.n)]] }; }
       if (kind === "cash") { const [l, v] = lists.cash[i]; return { title: l, rows: [["", "Amount", usd(v)], ["", "Share of booked", pct(booked ? v / booked : null)]] }; }
       const it = lists[kind]?.[i]; if (!it) return null;

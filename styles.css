@@ -1567,3 +1567,22 @@ td.an-mcell { display: table-cell; }
 .an-mbar i.neg { background: var(--bad); }
 .an-more { margin-top: 8px; }
 @media (max-width: 760px) { .an-hero { grid-template-columns: 1fr; } .an-hero-card .n { font-size: 32px; } }
+/* Analytics: demo-style grouped columns and light read-out */
+svg.gb { display: block; overflow: visible; }
+svg.gb .grid line { stroke: var(--divider); }
+svg.gb .grid line.zero { stroke: var(--hairline); }
+svg.gb .grid text, svg.gb .gb-x { font-size: 12px; fill: var(--muted); }
+svg.gb .gb-x { fill: var(--ink-80); font-size: 13px; }
+svg.gb path { pointer-events: none; transition: opacity 0.15s; }
+svg.gb .gb-hit { fill: transparent; transition: fill 0.12s; cursor: default; outline: none; }
+svg.gb .gb-g:hover .gb-hit, svg.gb .gb-hit:focus-visible { fill: var(--accent-tint); }
+.tip.tip-light { background: rgba(255,255,255,0.97); color: var(--ink); box-shadow: 0 0 0 1px var(--hairline), 0 8px 24px rgba(0,0,0,0.12); padding: 12px 14px; font-size: 14px; min-width: 190px; transition: left 0.06s linear, top 0.06s linear; }
+.tip.tip-light .tip-date { font-size: 15px; margin-bottom: 8px; }
+.tip.tip-light .tip-row { padding: 3px 0; }
+.tip.tip-light .tip-row span { color: var(--muted); }
+.an-mtiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-top: 18px; }
+.an-mtile { background: var(--accent-tint); border-radius: var(--r-md); padding: 12px 14px; text-align: center; display: flex; flex-direction: column; gap: 2px; }
+.an-mtile span { font-size: 13px; color: var(--muted); }
+.an-mtile b { font-family: var(--font-display); font-size: 26px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.an-mtile b.neg { color: var(--bad); }
+.an-mtile i { font-style: normal; font-size: 11px; color: var(--muted); }
