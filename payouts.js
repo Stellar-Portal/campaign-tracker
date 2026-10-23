@@ -153,10 +153,12 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
         </span>
       </div>
       <datalist id="po-people">${people.map((p) => `<option value="${esc(p)}">`).join("")}</datalist>
-      ${sections.map(sectionHtml).join("")}
-      ${hasLoose ? sectionHtml(null) : ""}
+      ${!rows.length && !sections.length ? emptyGuide(cur) : `${sections.map(sectionHtml).join("")}
+      ${hasLoose ? sectionHtml(null) : ""}`}
       <p class="muted small po-note">Team only: clients never see payouts. "Posted" counts this creator's posts in the tracker; tick the box for posts it doesn't follow. Posted creators move to "Waiting for payment" by themselves.</p>`;
     bind();
+    el.querySelector("#po-start")?.addEventListener("click", () => el.querySelector("#po-newsec").click());
+    el.querySelector("#po-start-paste")?.addEventListener("click", () => el.querySelector("#po-paste").click());
   }
   const refreshSummary = () => { const s = el.querySelector("#po-sum"); if (s) { s.innerHTML = summaryHtml(); bindCap(); } };
   function refreshSection(secId) {
@@ -338,6 +340,34 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
   }
 
   draw();
+}
+
+// What an empty campaign shows: how to start, and an example of a filled-in payout sheet.
+function emptyGuide(cur) {
+  const ex = [
+    ["@likekyuuna_s", "Nana", 1, 400, "Waiting for draft", "waiting_draft", "0/1", ""],
+    ["@rubyra6", "Nana", 1, 200, "Waiting for payment", "waiting_payment", "✓ 1/1", ""],
+    ["@atdpark", "Nana", 1, 70, "Paid", "paid", "✓ 1/1", "PayPal · 18 Oct"],
+    ["@gabisthatyouu", "Dan", 1, 200, "Contacted", "contacted", "0/1", ""],
+  ];
+  return `<section class="panel po-empty-guide">
+    <h2 style="margin:0 0 6px">No payout sheet for this campaign yet</h2>
+    <p class="muted" style="margin:0 0 14px">It replaces this campaign's tab in the PayPal Payout Sheet. Two ways to start:</p>
+    <ol class="po-steps">
+      <li><b>Create a section</b> for each set of deliverables, e.g. "20x Edits" at $50 per edit, then add creators one by one with their @handle or profile link.</li>
+      <li><b>Or paste from the sheet</b>: in the Google sheet, select a section's creator rows (from the handle to the notes column), copy, and paste them here.</li>
+    </ol>
+    <div class="actions" style="margin:12px 0 22px"><button type="button" class="primary" id="po-start">Create a section</button><button type="button" id="po-start-paste">Paste from sheet</button></div>
+    <div class="po-example" aria-label="Example">
+      <div class="po-sec-head"><span class="badge">Example</span><h3>7–10x FOM Challenge</h3><span class="muted small">10 videos at $200 each</span>
+        <div class="po-sec-sum"><span>Budget <b>${money(2000, cur)}</b></span><span>Spent <b>${money(870, cur)}</b> <i class="bad">44%</i></span><span>Margin <b>${money(1130, cur)}</b></span></div></div>
+      <div class="table-wrap"><table class="po-table po-table-ex">
+        <thead><tr><th>Creator</th><th>Sourced &amp; paid by</th><th class="num">Videos</th><th class="num">Total</th><th>Status</th><th>Posted</th><th>Paid</th></tr></thead>
+        <tbody>${ex.map(([h, by, v, t, sl, sk, p, paid]) => `<tr><td><b>${h}</b></td><td>${by}</td><td class="num">${v}</td><td class="num"><b>${money(t, cur)}</b></td>
+          <td><span class="po-status s-${sk} po-pill">${sl}</span></td><td><span class="po-count${p.startsWith("✓") ? " ok" : ""}">${p}</span></td><td class="muted small">${paid || "–"}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </div>
+  </section>`;
 }
 
 // Parse lines copied from Google Sheets (tab-separated): handle, who, per video, total, videos, sent, posted, note.

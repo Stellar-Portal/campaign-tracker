@@ -1481,3 +1481,10 @@ tr.row-link { cursor: pointer; }
 tr.row-link:hover td { background: var(--pearl); }
 @media (max-width: 700px) { .po-sec-sum { margin-left: 0; } .po-tools { flex-direction: column; align-items: stretch; } }
 .po-sec .table-wrap { position: relative; }
+.po-empty-guide .po-steps { margin: 0; padding-left: 20px; max-width: 760px; }
+.po-empty-guide .po-steps li { margin: 0 0 6px; }
+.po-example { opacity: 0.85; }
+.po-example .po-sec-head h3 { margin: 0; }
+.po-table-ex { min-width: 680px; table-layout: auto; }
+.po-table-ex td { padding: 10px 10px; }
+.po-pill { display: inline-block; padding: 4px 10px; width: auto; }

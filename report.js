@@ -585,6 +585,7 @@ export function mountReport(root, api) {
     const from = root.querySelector("#from"), to = root.querySelector("#to");
     if (from) { from.value = state.from ?? ""; to.value = state.to ?? ""; }
     const first = data.dates[0], last = data.dates.at(-1);
+    if (!last) return;   // no numbers yet (a campaign without posts)
     root.querySelectorAll("[data-preset]").forEach((b) => {
       const p = b.dataset.preset;
       const start = p === "all" ? first : [first, addDays(last, 1 - Number(p))].sort().at(-1);
