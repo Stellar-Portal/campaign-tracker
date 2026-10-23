@@ -1,7 +1,7 @@
 // Analytics: charts across every campaign in the Campaign Overview sheet, plus tracker performance.
 // Money is shown in USD (ECB rates, refreshed daily in fx_rates). Every chart says how many
 // campaigns it is based on, has a hover read-out and a "Show as table" view.
-import { chart, esc } from "./report.js?v=20261023k";
+import { chart, esc } from "./report.js?v=20261023m";
 
 // Validated categorical slots (dataviz palette); cobalt only for single-series charts.
 const SLOT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
@@ -46,22 +46,37 @@ function tipEl() {
   if (!t) { t = document.createElement("div"); t.id = "an-tip"; t.className = "tip tip-light"; t.setAttribute("role", "tooltip"); t.hidden = true; document.body.appendChild(t); }
   return t;
 }
-function showTip(e, rows, title) {
-  const t = tipEl();
-  t.innerHTML = `${title ? `<div class="tip-date">${esc(title)}</div>` : ""}${rows.map(([color, label, value]) => `<div class="tip-row">${color ? `<i style="background:${color}"></i>` : "<span></span>"}<span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("")}`;
-  t.hidden = false;
-  const r = e.target.getBoundingClientRect ? null : null;
-  const x = e.clientX ?? (e.target.getBoundingClientRect().left + 20), y = e.clientY ?? e.target.getBoundingClientRect().top;
-  const tw = t.offsetWidth, th = t.offsetHeight;
-  t.style.left = `${Math.max(8, x + 16 + tw > innerWidth - 8 ? x - tw - 16 : x + 16)}px`;
-  t.style.top = `${Math.min(innerHeight - th - 8, Math.max(8, y - th / 2))}px`;
+// Read-out box: content is rebuilt only when the hovered item changes; moving the pointer just moves the
+// box (GPU transform, once per frame), so it tracks the cursor without lag.
+let tipKey = null, tipPos = null, tipRaf = 0;
+function placeTip() {
+  tipRaf = 0;
+  const t = document.getElementById("an-tip");
+  if (!t || t.hidden || !tipPos) return;
+  const { x, y } = tipPos, tw = t.offsetWidth, th = t.offsetHeight;
+  const left = x + 18 + tw > innerWidth - 8 ? x - tw - 18 : x + 18;
+  const top = Math.min(innerHeight - th - 8, Math.max(8, y - th / 2));
+  t.style.transform = `translate3d(${Math.round(Math.max(8, left))}px, ${Math.round(top)}px, 0)`;
 }
-const hideTip = () => { const t = document.getElementById("an-tip"); if (t) t.hidden = true; };
+function showTip(e, rows, title, key) {
+  const t = tipEl();
+  if (key !== tipKey || t.hidden) {
+    t.innerHTML = `${title ? `<div class="tip-date">${esc(title)}</div>` : ""}${rows.map(([color, label, value]) => `<div class="tip-row">${color ? `<i style="background:${color}"></i>` : "<span></span>"}<span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("")}`;
+    tipKey = key; t.hidden = false;
+  }
+  tipPos = { x: e.clientX, y: e.clientY };
+  if (!tipRaf) tipRaf = requestAnimationFrame(placeTip);
+}
+const hideTip = () => { const t = document.getElementById("an-tip"); if (t) t.hidden = true; tipKey = null; };
 function bindTips(root, lookup) {
   root.querySelectorAll("[data-tip]").forEach((el) => {
-    const on = (e) => { const x = lookup(el.dataset.tip); if (x) showTip(e, x.rows, x.title); };
-    el.addEventListener("pointermove", on);
-    el.addEventListener("focus", (e) => { const b = el.getBoundingClientRect(); on({ clientX: b.right, clientY: b.top + b.height / 2, target: el }); });
+    const on = (e) => {
+      const k = el.dataset.tip;
+      if (k === tipKey && !document.getElementById("an-tip")?.hidden) { tipPos = { x: e.clientX, y: e.clientY }; if (!tipRaf) tipRaf = requestAnimationFrame(placeTip); return; }
+      const x = lookup(k); if (x) showTip(e, x.rows, x.title, k);
+    };
+    el.addEventListener("pointermove", on, { passive: true });
+    el.addEventListener("focus", () => { const b = el.getBoundingClientRect(); on({ clientX: b.right, clientY: b.top + b.height / 2 }); });
     el.addEventListener("pointerleave", hideTip);
     el.addEventListener("blur", hideTip);
   });
@@ -298,6 +313,14 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
       colsTodo.push({ id, items, fmt, key });
       return { view, body: `<div class="an-svg" data-cols="${id}"></div>` };
     };
+    const regionPie = regions.map((r) => ({ label: r.label, value: r.rev, color: r.color, sub: `${r.n} campaign${r.n === 1 ? "" : "s"}` }));
+    const monthPie = months.map((m, i) => ({ label: m.label, value: regionSeries.reduce((t, se) => t + se.values[i], 0) })).filter((m) => m.value > 0);
+    const campByRev = [...campRows].sort((a, b) => b.rev - a.rev);
+    const campPie = campByRev.slice(0, 10).map((r) => ({ label: r.name, value: r.rev, sub: r.client }));
+    if (campByRev.length > 10) campPie.push({ label: `Other (${campByRev.length - 10} campaigns)`, value: campByRev.slice(10).reduce((t, r) => t + r.rev, 0), color: NOTSET });
+    const cashPie = [{ label: "Paid", value: paid, color: GREEN }, { label: "Invoiced, not paid", value: Math.max(0, invoiced - paid), color: BRAND }, { label: "Not invoiced yet", value: Math.max(0, booked - invoiced), color: BRAND_LIGHT }];
+    const cashCols = [{ label: "Booked", value: booked, color: BRAND_LIGHT }, { label: "Invoiced", value: invoiced, color: BRAND }, { label: "Paid", value: paid, color: GREEN }];
+    const vw = (id, d = "cols") => st.views[id] ?? d;
     const tab = st.tab;
     const tabs = [["money", "Money"], ["clients", "Clients & markets"], ["team", "Team"], ["performance", "Performance"]];
     const hero = (label, value, sub, main = false) => `<div class="an-hero-card${main ? " main" : ""}"><div class="l">${esc(label)}</div><div class="n">${value}</div>${sub ? `<div class="d">${sub}</div>` : ""}</div>`;
@@ -321,23 +344,26 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
       </div>
       ${tab === "money" ? `
       <div class="an-grid">
-        ${card({ id: "an-regions", wide: true, title: "By client market", note: "Costs and margin count only campaigns with a recorded cost",
-          body: `<div class="legend"><span><i style="background:${BRAND}"></i>Revenue</span><span><i style="background:${BRAND_LIGHT}"></i>Costs</span><span><i style="background:${GREEN}"></i>Margin</span></div>
-            <div class="an-svg" id="an-regions-svg"></div>
+        ${card({ id: "an-regions", wide: true, title: "By client market", note: vw("an-regions") === "pie" ? "Share of revenue" : "Costs and margin count only campaigns with a recorded cost", views: [["cols", "Columns"], ["pie", "Pie"]], view: vw("an-regions"),
+          body: `${vw("an-regions") === "pie" ? donut(regionPie, { key: "rgp", center: "revenue" }) : `<div class="legend"><span><i style="background:${BRAND}"></i>Revenue</span><span><i style="background:${BRAND_LIGHT}"></i>Costs</span><span><i style="background:${GREEN}"></i>Margin</span></div>
+            <div class="an-svg" id="an-regions-svg"></div>`}
             <div class="an-mtiles">${regions.map((r) => `<div class="an-mtile"><span>${esc(r.label)}</span><b class="${r.margin != null && r.margin < 0 ? "neg" : ""}">${pct(r.margin)}</b><i>${r.nc ? `margin · ${r.nc} of ${r.n} with a cost` : "no costs yet"}</i></div>`).join("")}</div>`,
           table: tableHtml(["Client market", "Campaigns", "Revenue (USD)", "Costs (USD)", "Margin"], regions.map((r) => [r.label, String(r.n), usd(r.rev), r.nc ? usd(r.cost) : "–", pct(r.margin)])) })}
-        ${card({ id: "an-months", wide: true, title: "Revenue by start month", note: `By client market · ${priced.filter((x) => x.month).length} campaigns with a start date`,
-          body: `<div class="legend">${regionSeries.map((se) => `<span><i style="background:${se.color}"></i>${esc(se.name)}</span>`).join("")}</div><div class="an-svg" id="an-months-svg"></div>`,
+        ${card({ id: "an-months", wide: true, title: "Revenue by start month", note: `${vw("an-months") === "pie" ? "Share of revenue per month" : "By client market"} · ${priced.filter((x) => x.month).length} campaigns with a start date`, views: [["cols", "Columns"], ["pie", "Pie"]], view: vw("an-months"),
+          body: vw("an-months") === "pie" ? donut(monthPie, { key: "mop", center: "revenue" }) : `<div class="legend">${regionSeries.map((se) => `<span><i style="background:${se.color}"></i>${esc(se.name)}</span>`).join("")}</div><div class="an-svg" id="an-months-svg"></div>`,
           table: tableHtml(["Month", ...regionSeries.map((se) => se.name), "Total"], months.map((m, i) => [m.label, ...regionSeries.map((se) => usd(se.values[i])), usd(regionSeries.reduce((t, se) => t + se.values[i], 0))])) })}
-        ${card({ id: "an-camps", wide: true, title: "By campaign", note: `<span class="seg an-sort" role="group" aria-label="Sort"><button type="button" data-csort="margin" aria-pressed="${st.campSort !== "rev"}">Margin</button><button type="button" data-csort="rev" aria-pressed="${st.campSort === "rev"}">Revenue</button></span>`,
-          body: `<div class="table-wrap an-camps-wrap"><table class="an-camps"><colgroup><col><col class="c-rev"><col class="c-cost"><col class="c-m"></colgroup>
+        ${card({ id: "an-camps", wide: true, title: "By campaign", views: [["table", "Table"], ["pie", "Pie"]], view: vw("an-camps", "table"),
+          note: vw("an-camps", "table") === "pie" ? "Share of revenue, top 10" : `<span class="seg an-sort" role="group" aria-label="Sort"><button type="button" data-csort="margin" aria-pressed="${st.campSort !== "rev"}">Margin</button><button type="button" data-csort="rev" aria-pressed="${st.campSort === "rev"}">Revenue</button></span>`,
+          body: vw("an-camps", "table") === "pie" ? donut(campPie, { key: "cp", center: "revenue" }) : `<div class="table-wrap an-camps-wrap"><table class="an-camps"><colgroup><col><col class="c-rev"><col class="c-cost"><col class="c-m"></colgroup>
             <thead><tr><th>Campaign</th><th class="num">Revenue</th><th class="num">Costs</th><th>Margin</th></tr></thead>
             <tbody>${campShown.map((r) => `<tr${r.camp ? ` class="row-link" data-go="#/c/${esc(r.camp.id)}"` : ""}><td><div class="an-cname">${esc(r.name)}</div><div class="muted small">${esc(r.client)}${r.region ? ` · ${esc(r.region)}` : ""}</div></td>
               <td class="num">${usd(r.rev)}</td><td class="num">${r.cost != null ? usd(r.cost) : "–"}</td><td class="an-mcell">${marginBar(r.margin)}</td></tr>`).join("")}</tbody></table></div>
             ${campsSorted.length > 12 ? `<button type="button" class="link-btn small an-more" data-campall>${st.campAll ? "Show top 12" : `Show all ${campsSorted.length}`}</button>` : ""}
             <p class="muted small" style="margin:8px 0 0">Costs come from the sheet's campaign cost, or the creator payouts recorded in the tracker. Campaigns still running look more profitable until their payouts are in.</p>` })}
-        ${card({ id: "an-cash", wide: true, title: "Booked, invoiced and paid", note: `${priced.length} campaigns`,
-          body: hbars([{ label: "Booked", value: booked }, { label: "Invoiced", value: invoiced, sub: pct(booked ? invoiced / booked : null) }, { label: "Paid", value: paid, sub: pct(booked ? paid / booked : null) }], { key: "cash" })
+        ${card({ id: "an-cash", wide: true, title: "Booked, invoiced and paid", note: `${priced.length} campaigns`, views: VIEWS, view: vw("an-cash"),
+          body: (vw("an-cash") === "pie" ? donut(cashPie, { key: "cashp", center: "booked" }) : vw("an-cash") === "list"
+            ? hbars([{ label: "Booked", value: booked }, { label: "Invoiced", value: invoiced, sub: pct(booked ? invoiced / booked : null) }, { label: "Paid", value: paid, sub: pct(booked ? paid / booked : null) }], { key: "cash" })
+            : `<div class="an-svg" id="an-cash-svg"></div>`)
             + (toInvoice.length ? `<div class="an-list"><h4>Finished, not invoiced yet <span class="muted">${toInvoice.length} · ${usdShort(toInvoice.reduce((t, x) => t + x.priceUsd, 0))}</span></h4>
               <ul>${toInvoice.slice(0, 6).map((x) => `<li><span>${esc(x.artist)}${x.song ? ` – ${esc(x.song)}` : ""} <span class="muted">${esc(x.client)}</span></span><b>${usd(x.priceUsd)}</b></li>`).join("")}</ul>
               ${toInvoice.length > 6 ? `<a href="#/" class="small" data-go-inv>See all ${toInvoice.length} in the Campaign overview</a>` : ""}</div>` : `<p class="muted small">Every finished campaign is invoiced.</p>`),
@@ -407,6 +433,8 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
     // Charts drawn at their real width.
     const mEl = document.getElementById("an-months-svg");
     if (mEl) mEl.innerHTML = months.length ? groupBars(months.map((m) => m.label), regionSeries, mEl.clientWidth || W, { key: "mc", fmt: usdAxis, compact: true }) : `<p class="muted small an-empty">No start dates in this selection.</p>`;
+    const cEl = document.getElementById("an-cash-svg");
+    if (cEl) cEl.innerHTML = groupBars(cashCols.map((c) => c.label), [{ name: "Amount", color: BRAND, colors: cashCols.map((c) => c.color), values: cashCols.map((c) => c.value) }], cEl.clientWidth || W, { key: "cashc", fmt: usdAxis, H: 240 });
     const rEl = document.getElementById("an-regions-svg");
     if (rEl) rEl.innerHTML = groupBars(regions.map((r) => r.label), [
       { name: "Revenue", color: BRAND, values: regions.map((r) => r.rev) },
@@ -417,16 +445,21 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
     if (vEl) chart(vEl, { dates, panels: [{ label: "Views", series: [{ name: "Views", color: ONE, values: viewsByDate }] }], empty: "Views over time appear once the tracker has collected numbers on two or more days." });
 
     // Hover read-outs
-    const lists = { cash: [["Booked", booked], ["Invoiced", invoiced], ["Paid", paid]], cl: topClients, mk: byMarket, tm: team, tv: topViews };
+    const lists = { cash: [["Booked", booked], ["Invoiced", invoiced], ["Paid", paid]], rgp: regionPie, mop: monthPie, cp: campPie, cashp: cashPie, cashc: cashCols, cl: topClients, mk: byMarket, tm: team, tv: topViews };
     bindTips(out, (k) => {
       const [kind, iStr] = k.split(":"); const i = Number(iStr);
       if (kind === "mc") return { title: months[i]?.label, rows: [...regionSeries.filter((se) => se.values[i] > 0).map((se) => [se.color, se.name, usd(se.values[i])]), ["", "Total", usd(regionSeries.reduce((t, se) => t + se.values[i], 0))]] };
       if (kind === "rg") { const r = regions[i]; return { title: r.label, rows: [[BRAND, "Revenue", usd(r.rev)], [BRAND_LIGHT, "Costs", r.nc ? usd(r.cost) : "–"], [GREEN, "Margin", r.nc ? `${usd(r.crev - r.cost)} · ${pct(r.margin)}` : "–"], ["", "Campaigns", r.nc ? `${r.n} · ${r.nc} with a cost` : String(r.n)]] }; }
       if (kind === "lbl") { const x = labelSplit.filter((y) => y.v)[i]; return { title: x.l, rows: [[x.color, "Revenue", usd(x.v)], ["", "Share", pct(x.v / labelTotal)], ["", "Campaigns", String(x.n)]] }; }
+      if (kind === "cashc") { const c = cashCols[i]; return { title: c.label, rows: [[c.color, "Amount", usd(c.value)], ["", "Share of booked", pct(booked ? c.value / booked : null)]] }; }
       if (kind === "cash") { const [l, v] = lists.cash[i]; return { title: l, rows: [["", "Amount", usd(v)], ["", "Share of booked", pct(booked ? v / booked : null)]] }; }
       const it = lists[kind]?.[i]; if (!it) return null;
       const sum = lists[kind].reduce((t, x) => t + (x.value ?? 0), 0);
-      return { title: it.label, rows: [[it.color ?? BRAND, kind === "tv" ? "Views" : kind === "mk" ? "Budget" : "Revenue", kind === "tv" ? num(it.value) : usd(it.value)], ...(it.sub ? [["", kind === "tv" ? "Per 1K views" : "Campaigns", it.sub.replace(/ campaigns?$/, "").replace(/ per 1K$/, "")]] : []), ["", "Share", pct(sum ? it.value / sum : null)]] };
+      const pie = ["rgp", "mop", "cp", "cashp"].includes(kind) || st.views[{ cl: "an-clients", mk: "an-markets", tm: "an-team", tv: "an-top" }[kind]] === "pie";
+      const dot = it.color ?? (pie ? RAMP[i % RAMP.length] : BRAND);
+      const what = kind === "tv" ? "Views" : kind === "mk" ? "Budget" : kind === "cashp" ? "Amount" : "Revenue";
+      const subLabel = kind === "tv" ? "Per 1K views" : kind === "cp" ? "Client" : "Campaigns";
+      return { title: it.label, rows: [[dot, what, kind === "tv" ? num(it.value) : usd(it.value)], ...(it.sub ? [["", subLabel, it.sub.replace(/ campaigns?$/, "").replace(/ per 1K$/, "")]] : []), ["", kind === "cashp" ? "Share of booked" : "Share", pct(sum ? it.value / sum : null)]] };
     });
     out.querySelectorAll("[data-tbl]").forEach((b) => (b.onclick = () => {
       const t = out.querySelector(`[data-tblbody="${b.dataset.tbl}"]`); t.hidden = !t.hidden; b.textContent = t.hidden ? "Show as table" : "Hide table";

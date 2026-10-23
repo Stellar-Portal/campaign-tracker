@@ -1576,7 +1576,7 @@ svg.gb .gb-x { fill: var(--ink-80); font-size: 13px; }
 svg.gb path { pointer-events: none; transition: opacity 0.15s; }
 svg.gb .gb-hit { fill: transparent; transition: fill 0.12s; cursor: default; outline: none; }
 svg.gb .gb-g:hover .gb-hit, svg.gb .gb-hit:focus-visible { fill: var(--accent-tint); }
-.tip.tip-light { background: rgba(255,255,255,0.97); color: var(--ink); box-shadow: 0 0 0 1px var(--hairline), 0 8px 24px rgba(0,0,0,0.12); padding: 12px 14px; font-size: 14px; min-width: 190px; transition: left 0.06s linear, top 0.06s linear; }
+.tip.tip-light { background: rgba(255,255,255,0.97); color: var(--ink); box-shadow: 0 0 0 1px var(--hairline), 0 8px 24px rgba(0,0,0,0.12); padding: 12px 14px; font-size: 14px; min-width: 190px; left: 0; top: 0; transition: none; will-change: transform; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .tip.tip-light .tip-date { font-size: 15px; margin-bottom: 8px; }
 .tip.tip-light .tip-row { padding: 3px 0; }
 .tip.tip-light .tip-row span { color: var(--muted); }
