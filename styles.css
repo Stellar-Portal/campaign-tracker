@@ -1586,3 +1586,25 @@ svg.gb .gb-g:hover .gb-hit, svg.gb .gb-hit:focus-visible { fill: var(--accent-ti
 .an-mtile b { font-family: var(--font-display); font-size: 26px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .an-mtile b.neg { color: var(--bad); }
 .an-mtile i { font-style: normal; font-size: 11px; color: var(--muted); }
+/* Analytics: pies, view switch, smaller hero */
+.an-head-r { display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.an-view button { padding: 4px 12px; font-size: 12px; }
+.an-hero-sm { margin-top: 18px; }
+.an-hero-sm .an-hero-card .n { font-size: 32px; }
+.an-n-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-labelsplit { margin: 0 0 14px; max-width: 520px; }
+.an-donut { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
+.an-donut svg { flex: none; overflow: visible; }
+.an-donut path { cursor: default; transition: opacity 0.15s, transform 0.15s; transform-origin: 110px 110px; outline: none; }
+.an-donut.dim path:not(.on), .an-donut.dim li:not(.on) { opacity: 0.35; }
+.an-donut path.on { transform: scale(1.03); }
+.dn-total { font-family: var(--font-display); font-size: 22px; font-weight: 600; fill: var(--ink); }
+.dn-sub { font-size: 12px; fill: var(--muted); }
+.dn-legend { list-style: none; margin: 0; padding: 0; flex: 1 1 280px; max-width: 520px; min-width: 0; display: grid; gap: 2px; }
+.dn-legend li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto 44px; align-items: center; gap: 10px; padding: 5px 8px; border-radius: var(--r-sm); font-size: 13px; transition: opacity 0.15s, background 0.15s; outline: none; }
+.dn-legend li.on { background: var(--accent-tint); }
+.dn-legend i { width: 10px; height: 10px; border-radius: 3px; }
+.dn-legend span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dn-legend b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.dn-legend em { font-style: normal; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 600px) { .an-donut { justify-content: center; } .dn-legend { flex-basis: 100%; } }

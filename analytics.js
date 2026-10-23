@@ -1,7 +1,7 @@
 // Analytics: charts across every campaign in the Campaign Overview sheet, plus tracker performance.
 // Money is shown in USD (ECB rates, refreshed daily in fx_rates). Every chart says how many
 // campaigns it is based on, has a hover read-out and a "Show as table" view.
-import { chart, esc } from "./report.js?v=20261023j";
+import { chart, esc } from "./report.js?v=20261023k";
 
 // Validated categorical slots (dataviz palette); cobalt only for single-series charts.
 const SLOT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
@@ -68,9 +68,9 @@ function bindTips(root, lookup) {
 }
 
 // ---------- card shell with a table twin ----------
-function card({ id, title, note, wide = false, body, table }) {
+function card({ id, title, note, wide = false, body, table, views = null, view = "" }) {
   return `<section class="an-card${wide ? " wide" : ""}" id="${id}">
-    <div class="an-head"><h3>${esc(title)}</h3>${note ? `<span class="muted small">${note}</span>` : ""}</div>
+    <div class="an-head"><h3>${esc(title)}</h3><span class="an-head-r">${note ? `<span class="muted small">${note}</span>` : ""}${views ? `<span class="seg an-view" role="group" aria-label="Chart type">${views.map(([k, l]) => `<button type="button" data-view="${id}:${k}" aria-pressed="${view === k}">${l}</button>`).join("")}</span>` : ""}</span></div>
     <div class="an-body">${body}</div>
     ${table ? `<div class="chart-foot"><button type="button" class="link-btn small" data-tbl="${id}">Show as table</button></div>
       <div class="chart-table" hidden data-tblbody="${id}">${table}</div>` : ""}
@@ -89,6 +89,33 @@ function hbars(items, { fmt = usd, key = "hb", color = ONE } = {}) {
       <span class="hb-track"><i style="width:${Math.max(0.6, (it.value / max) * 100)}%;background:${it.color ?? color}"></i></span>
       <span class="hb-val">${esc(fmt(it.value))}${it.sub ? ` <span class="muted">${esc(it.sub)}</span>` : ""}</span>
     </div>`).join("")}</div>`;
+}
+
+const clip = (t, n) => (String(t).length > n ? `${String(t).slice(0, Math.max(1, n - 1)).trim()}…` : String(t));
+// Brand ramp for pies: cobalt shades, then greens, then greys.
+const RAMP = ["#0f25bf", "#3a4fd0", "#6577dd", "#8b9cec", "#b4c0f4", "#2f7d52", "#4a9d6e", "#7cbd96", "#a9d5bb", "#c7c7cc", "#dedee3"];
+
+// Donut with a legend beside it; hovering a slice or its legend row highlights it.
+function donut(items, { key = "pie", fmt = usd, center = "" } = {}) {
+  const total = items.reduce((t, it) => t + Math.max(0, it.value), 0);
+  if (!total) return `<p class="muted small an-empty">No data in this selection.</p>`;
+  const R = 92, r = 58, C = 110;
+  let a0 = -Math.PI / 2;
+  const arcs = items.map((it, i) => {
+    const frac = Math.max(0, it.value) / total, a1 = a0 + frac * Math.PI * 2;
+    const big = a1 - a0 > Math.PI ? 1 : 0, gapA = items.length > 1 ? 0.012 : 0;
+    const s0 = a0 + gapA, s1 = Math.max(s0, a1 - gapA);
+    const p = (rad, a) => `${(C + rad * Math.cos(a)).toFixed(2)},${(C + rad * Math.sin(a)).toFixed(2)}`;
+    const d = frac >= 0.999 ? `M${C},${C - R} A${R},${R} 0 1 1 ${C - 0.01},${C - R} L${C - 0.01},${C - r} A${r},${r} 0 1 0 ${C},${C - r} Z`
+      : `M${p(R, s0)} A${R},${R} 0 ${big} 1 ${p(R, s1)} L${p(r, s1)} A${r},${r} 0 ${big} 0 ${p(r, s0)} Z`;
+    a0 = a1;
+    return `<path d="${d}" fill="${it.color ?? RAMP[i % RAMP.length]}" data-tip="${key}:${i}" data-slice="${i}" tabindex="0"/>`;
+  });
+  return `<div class="an-donut" data-donut>
+    <svg viewBox="0 0 220 220" width="220" height="220" role="img">${arcs.join("")}
+      <text x="110" y="106" text-anchor="middle" class="dn-total">${esc(fmt(total))}</text><text x="110" y="126" text-anchor="middle" class="dn-sub">${esc(center)}</text></svg>
+    <ul class="dn-legend">${items.map((it, i) => `<li data-tip="${key}:${i}" data-slice="${i}" tabindex="0"><i style="background:${it.color ?? RAMP[i % RAMP.length]}"></i><span>${esc(it.label)}</span><b>${esc(fmt(it.value))}</b><em>${pct(Math.max(0, it.value) / total)}</em></li>`).join("")}</ul>
+  </div>`;
 }
 
 // Grouped columns (SVG), the demo's style: bars of one group sit side by side with rounded tops,
@@ -116,8 +143,8 @@ function groupBars(groups, series, width, { key = "gb", H = 280, fmt = usdShort,
       const here = compact ? series.filter((se) => se.values[gi] > 0) : series;
       const w = here.length * bw + gap * Math.max(0, here.length - 1), start = x0 + (band - w) / 2;
       return `<g class="gb-g"><rect class="gb-hit" x="${x0 + 2}" y="${T}" width="${band - 4}" height="${H - T - B}" rx="8" data-tip="${key}:${gi}" tabindex="0" aria-label="${esc(g)}"/>
-        ${here.map((se, si) => bar(start + si * (bw + gap), se.values[gi], se.color)).join("")}
-        <text class="gb-x" x="${x0 + band / 2}" y="${H - 8}" text-anchor="middle">${esc(g)}</text></g>`;
+        ${here.map((se, si) => bar(start + si * (bw + gap), se.values[gi], se.colors?.[gi] ?? se.color)).join("")}
+        <text class="gb-x" x="${x0 + band / 2}" y="${H - 8}" text-anchor="middle">${esc(clip(g, Math.max(3, Math.floor(band / 7.5))))}</text></g>`;
     }).join("")}
   </svg>`;
 }
@@ -172,7 +199,8 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
   })();
   const inQuarter = (m, key) => { if (!m) return false; const [y, mo] = m.split("-").map(Number); const fyStart = mo >= 4 ? y : y - 1; const qn = Math.floor(((mo - 4 + 12) % 12) / 3) + 1; return key === `${fyStart}-Q${qn}`; };
   const allDris = [...new Set(all.flatMap((x) => x.dris))].sort();
-  const st = { period: "", region: "", dri: "", campSort: "margin", campAll: false, tab: (() => { try { return localStorage.getItem("an-tab") || "money"; } catch { return "money"; } })() };
+  const VIEWS = [["cols", "Columns"], ["pie", "Pie"], ["list", "List"]];
+  const st = { views: (() => { try { return JSON.parse(localStorage.getItem("an-views") ?? "{}"); } catch { return {}; } })(), period: "", region: "", dri: "", campSort: "margin", campAll: false, tab: (() => { try { return localStorage.getItem("an-tab") || "money"; } catch { return "money"; } })() };
 
   app.innerHTML = `
     <div class="page-head">
@@ -215,8 +243,8 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
     const clients = [...byClient.values()].sort((a, b) => b.value - a.value);
     const topClients = clients.slice(0, 10).map((c) => ({ label: c.label, value: c.value, sub: `${c.n} campaign${c.n === 1 ? "" : "s"}`, tag: [...c.labels].filter((l) => l !== "Unknown").join("/") }));
     const restClients = clients.slice(10);
-    if (restClients.length) topClients.push({ label: `Other (${restClients.length} clients)`, value: restClients.reduce((t, c) => t + c.value, 0), sub: `${restClients.reduce((t, c) => t + c.n, 0)} campaigns`, color: GREY });
-    const labelSplit = ["Major", "Indie", "Other"].map((l, i) => ({ l, color: SLOT[i], v: priced.filter((x) => x.label === l).reduce((t, x) => t + x.priceUsd, 0), n: priced.filter((x) => x.label === l).length }));
+    if (restClients.length) topClients.push({ label: `Other (${restClients.length} clients)`, value: restClients.reduce((t, c) => t + c.value, 0), sub: `${restClients.reduce((t, c) => t + c.n, 0)} campaigns`, color: NOTSET });
+    const labelSplit = ["Major", "Indie", "Other"].map((l, i) => ({ l, color: [BRAND, BRAND_LIGHT, GREEN][i], v: priced.filter((x) => x.label === l).reduce((t, x) => t + x.priceUsd, 0), n: priced.filter((x) => x.label === l).length }));
     const labelTotal = labelSplit.reduce((t, x) => t + x.v, 0);
     // 5. budget by market
     const byMarket = ALLOC.map((m) => ({ label: m, value: list.reduce((t, x) => t + (x.allocs[m] ?? 0), 0), n: list.filter((x) => x.allocs[m]).length })).filter((m) => m.value > 0).sort((a, b) => b.value - a.value);
@@ -260,6 +288,16 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
     const campsSorted = sortCamps(campRows);
     const campShown = st.campAll ? campsSorted : campsSorted.slice(0, 12);
 
+    // A chart that can be shown as columns, a pie or a ranked list.
+    const colsTodo = [];
+    const vis = (id, items, { fmt = usd, key, center = "" } = {}) => {
+      const view = st.views[id] ?? "cols";
+      if (!items.length) return { view, body: `<p class="muted small an-empty">No data in this selection.</p>` };
+      if (view === "list") return { view, body: hbars(items, { fmt, key }) };
+      if (view === "pie") return { view, body: donut(items.map((it, i) => ({ ...it, color: it.color ?? RAMP[i % RAMP.length] })), { key, fmt, center }) };
+      colsTodo.push({ id, items, fmt, key });
+      return { view, body: `<div class="an-svg" data-cols="${id}"></div>` };
+    };
     const tab = st.tab;
     const tabs = [["money", "Money"], ["clients", "Clients & markets"], ["team", "Team"], ["performance", "Performance"]];
     const hero = (label, value, sub, main = false) => `<div class="an-hero-card${main ? " main" : ""}"><div class="l">${esc(label)}</div><div class="n">${value}</div>${sub ? `<div class="d">${sub}</div>` : ""}</div>`;
@@ -305,33 +343,62 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
               ${toInvoice.length > 6 ? `<a href="#/" class="small" data-go-inv>See all ${toInvoice.length} in the Campaign overview</a>` : ""}</div>` : `<p class="muted small">Every finished campaign is invoiced.</p>`),
           table: tableHtml(["Campaign", "Client", "Price (USD)"], toInvoice.map((x) => [`${x.artist}${x.song ? ` – ${x.song}` : ""}`, x.client, usd(x.priceUsd)])) })}
       </div>` : ""}
-      ${tab === "clients" ? `
+      ${tab === "clients" ? (() => {
+        const cl = vis("an-clients", topClients, { key: "cl", center: "revenue" });
+        const mk = vis("an-markets", byMarket.map((m) => ({ ...m, sub: `${m.n} campaign${m.n === 1 ? "" : "s"}` })), { key: "mk", center: "budget" });
+        return `
       <div class="an-grid">
-        ${card({ id: "an-clients", title: "Top clients", note: `${clients.length} clients`,
-          body: (labelTotal ? `<div class="an-split" aria-label="Major, indie and other share of revenue">${labelSplit.filter((x) => x.v).map((x, i) => `<i style="flex:${x.v};background:${x.color}" data-tip="lbl:${i}" tabindex="0"></i>`).join("")}</div>
-            <div class="legend">${labelSplit.filter((x) => x.v).map((x) => `<span><i style="background:${x.color}"></i>${x.l} ${pct(x.v / labelTotal)}</span>`).join("")}</div>` : "") + hbars(topClients, { key: "cl" }),
+        ${card({ id: "an-clients", wide: true, title: "Top clients", note: `${clients.length} clients`, views: VIEWS, view: cl.view,
+          body: (labelTotal ? `<div class="an-labelsplit"><div class="an-split" aria-label="Major, indie and other share of revenue">${labelSplit.filter((x) => x.v).map((x, i) => `<i style="flex:${x.v};background:${x.color}" data-tip="lbl:${i}" tabindex="0"></i>`).join("")}</div>
+            <div class="legend">${labelSplit.filter((x) => x.v).map((x) => `<span><i style="background:${x.color}"></i>${x.l} ${pct(x.v / labelTotal)}</span>`).join("")}</div></div>` : "") + cl.body,
           table: tableHtml(["Client", "Campaigns", "Revenue (USD)"], clients.map((c) => [c.label, String(c.n), usd(c.value)])) })}
-        ${card({ id: "an-markets", title: "Where budgets go", note: `Budget allocations · ${allocN} of ${list.length} campaigns have a split`,
-          body: hbars(byMarket.map((m) => ({ ...m, sub: `${m.n} campaign${m.n === 1 ? "" : "s"}` })), { key: "mk" }),
+        ${card({ id: "an-markets", wide: true, title: "Where budgets go", note: `Budget allocations · ${allocN} of ${list.length} campaigns have a split`, views: VIEWS, view: mk.view, body: mk.body,
           table: tableHtml(["Market", "Campaigns", "Budget (USD)"], byMarket.map((m) => [m.label, String(m.n), usd(m.value)])) })}
-      </div>` : ""}
-      ${tab === "team" ? `
+      </div>`;
+      })() : ""}
+      ${tab === "team" ? (() => {
+        const tm = vis("an-team", team, { key: "tm", center: "revenue" });
+        return `
+      <div class="an-hero an-hero-sm">
+        <div class="an-hero-card main"><div class="l">People</div><div class="n">${team.length}</div><div class="d">DRIs with priced campaigns</div></div>
+        <div class="an-hero-card"><div class="l">Top DRI</div><div class="n an-n-text">${esc(team[0]?.label ?? "–")}</div><div class="d">${team[0] ? `${usdShort(team[0].value)} · ${team[0].sub}` : ""}</div></div>
+        <div class="an-hero-card"><div class="l">Average per DRI</div><div class="n">${usdShort(team.length ? team.reduce((t, x) => t + x.value, 0) / team.length : null)}</div><div class="d">shared campaigns split equally</div></div>
+      </div>
       <div class="an-grid">
-        ${card({ id: "an-team", wide: true, title: "Revenue per DRI", note: "Shared campaigns split equally",
-          body: hbars(team, { key: "tm" }),
+        ${card({ id: "an-team", wide: true, title: "Revenue per DRI", note: "Shared campaigns split equally", views: VIEWS, view: tm.view, body: tm.body,
           table: tableHtml(["DRI", "Campaigns", "Revenue (USD)"], team.map((t) => [t.label, String(t.n), usd(t.value)])) })}
-      </div>` : ""}
-      ${tab === "performance" ? (!tracked.length ? `<div class="panel" style="margin-top:18px"><p class="muted" style="margin:0">None of these campaigns are in the tracker yet. Use <b>Create</b> on the Campaign overview to start tracking them; views and cost per view appear here.</p></div>` : `
-      <div class="an-mini" style="margin-top:18px">
-        <span><b>${compactN(totalViews)}</b> views across ${tracked.length} tracked campaign${tracked.length === 1 ? "" : "s"}</span>
-        <span><b>${cpm != null ? `$${cpm.toFixed(2)}` : "–"}</b> price per 1,000 views</span>
-        <span><b>${num(tracked.reduce((t, x) => t + Number(x.camp.live_posts ?? 0), 0))}</b> live posts</span>
+      </div>`;
+      })() : ""}
+      ${tab === "performance" ? (!tracked.length ? `<div class="panel" style="margin-top:18px"><p class="muted" style="margin:0">None of these campaigns are in the tracker yet. Use <b>Create</b> on the Campaign overview to start tracking them; views and cost per view appear here.</p></div>` : (() => {
+        const tv = vis("an-top", topViews, { key: "tv", fmt: compactN, center: "views" });
+        return `
+      <div class="an-hero an-hero-sm">
+        <div class="an-hero-card main"><div class="l">Views</div><div class="n">${compactN(totalViews)}</div><div class="d">across ${tracked.length} tracked campaign${tracked.length === 1 ? "" : "s"}</div></div>
+        <div class="an-hero-card"><div class="l">Price per 1,000 views</div><div class="n">${cpm != null ? `$${cpm.toFixed(2)}` : "–"}</div><div class="d">${cpmRows.length} campaigns with a price and views</div></div>
+        <div class="an-hero-card"><div class="l">Live posts</div><div class="n">${num(tracked.reduce((t, x) => t + Number(x.camp.live_posts ?? 0), 0))}</div><div class="d">in tracked campaigns</div></div>
       </div>
       <div class="an-grid">
         ${card({ id: "an-views", wide: true, title: "Views over time", note: "All tracked campaigns together", body: `<div id="an-views-chart"></div>` })}
-        ${card({ id: "an-top", wide: true, title: "Top campaigns by views", note: "With price per 1,000 views", body: hbars(topViews, { fmt: compactN, key: "tv" }),
+        ${card({ id: "an-top", wide: true, title: "Top campaigns by views", note: "With price per 1,000 views", views: VIEWS, view: tv.view, body: tv.body,
           table: tableHtml(["Campaign", "Views", "Price per 1K views"], topViews.map((t) => [t.label, num(t.value), t.sub])) })}
-      </div>`) : ""}`;
+      </div>`;
+      })()) : ""}`;
+    for (const c of colsTodo) {
+      const el = out.querySelector(`[data-cols="${c.id}"]`);
+      if (el) el.innerHTML = groupBars(c.items.map((it) => it.label), [{ name: "Value", color: BRAND, colors: c.items.map((it) => it.color ?? BRAND), values: c.items.map((it) => it.value) }], el.clientWidth || W,
+        { key: c.key, fmt: c.fmt === compactN ? compactN : usdAxis });
+    }
+    out.querySelectorAll("[data-view]").forEach((b) => (b.onclick = () => {
+      const [id, v] = b.dataset.view.split(":"); st.views[id] = v;
+      try { localStorage.setItem("an-views", JSON.stringify(st.views)); } catch { /* ignore */ }
+      const y = scrollY; draw(); scrollTo(0, y);
+    }));
+    out.querySelectorAll("[data-donut]").forEach((d) => d.querySelectorAll("[data-slice]").forEach((el) => {
+      const on = () => { d.classList.add("dim"); d.querySelectorAll(`[data-slice="${el.dataset.slice}"]`).forEach((x) => x.classList.add("on")); };
+      const off = () => { d.classList.remove("dim"); d.querySelectorAll(".on").forEach((x) => x.classList.remove("on")); };
+      el.addEventListener("pointerenter", on); el.addEventListener("pointerleave", off);
+      el.addEventListener("focus", on); el.addEventListener("blur", off);
+    }));
     out.querySelectorAll("[data-antab]").forEach((b) => (b.onclick = () => { st.tab = b.dataset.antab; try { localStorage.setItem("an-tab", st.tab); } catch { /* ignore */ } draw(); }));
     out.querySelectorAll("[data-csort]").forEach((b) => (b.onclick = () => { st.campSort = b.dataset.csort; draw(); }));
     out.querySelector("[data-campall]")?.addEventListener("click", () => { st.campAll = !st.campAll; draw(); });
@@ -358,7 +425,8 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
       if (kind === "lbl") { const x = labelSplit.filter((y) => y.v)[i]; return { title: x.l, rows: [[x.color, "Revenue", usd(x.v)], ["", "Share", pct(x.v / labelTotal)], ["", "Campaigns", String(x.n)]] }; }
       if (kind === "cash") { const [l, v] = lists.cash[i]; return { title: l, rows: [["", "Amount", usd(v)], ["", "Share of booked", pct(booked ? v / booked : null)]] }; }
       const it = lists[kind]?.[i]; if (!it) return null;
-      return { title: it.label, rows: [["", kind === "tv" ? "Views" : "Revenue", kind === "tv" ? num(it.value) : usd(it.value)], ...(it.sub ? [["", "", it.sub]] : [])] };
+      const sum = lists[kind].reduce((t, x) => t + (x.value ?? 0), 0);
+      return { title: it.label, rows: [[it.color ?? BRAND, kind === "tv" ? "Views" : kind === "mk" ? "Budget" : "Revenue", kind === "tv" ? num(it.value) : usd(it.value)], ...(it.sub ? [["", kind === "tv" ? "Per 1K views" : "Campaigns", it.sub.replace(/ campaigns?$/, "").replace(/ per 1K$/, "")]] : []), ["", "Share", pct(sum ? it.value / sum : null)]] };
     });
     out.querySelectorAll("[data-tbl]").forEach((b) => (b.onclick = () => {
       const t = out.querySelector(`[data-tblbody="${b.dataset.tbl}"]`); t.hidden = !t.hidden; b.textContent = t.hidden ? "Show as table" : "Hide table";
