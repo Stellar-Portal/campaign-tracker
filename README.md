@@ -30,6 +30,7 @@ The look follows `DESIGN.md`: Apple's design language from [awesome-design-md](h
 | `app.js` | All screens: sign in, campaign list, campaign form, campaign dashboard, add links |
 | `styles.css` | Styles, following `DESIGN.md` |
 | `assets/` | Stellar logo in white and blue |
+| `payouts.js` | Payouts: the payout sheet on each campaign and the Payouts page |
 | `trending.js` | The Trending section: tracks, artists and an artist's audience |
 | `roster.js` | The creator roster and creator pages |
 | `discover.js` | Discover: find creators through Influencers.club |
