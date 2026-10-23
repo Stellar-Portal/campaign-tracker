@@ -1,18 +1,31 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023m";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023m";
-import { renderRoster } from "./roster.js?v=20261023m";
-import { renderDiscover } from "./discover.js?v=20261023m";
-import { renderAnalytics } from "./analytics.js?v=20261023m";
-import { renderTrending } from "./trending.js?v=20261023m";
-import { confirmDialog } from "./dialog.js?v=20261023m";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023m";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023m";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023n";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023n";
+import { renderRoster } from "./roster.js?v=20261023n";
+import { renderDiscover } from "./discover.js?v=20261023n";
+import { renderAnalytics } from "./analytics.js?v=20261023n";
+import { renderTrending } from "./trending.js?v=20261023n";
+import { confirmDialog } from "./dialog.js?v=20261023n";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023n";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023n";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+// Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
+{
+  const from = sb.from.bind(sb);
+  sb.from = (t) => {
+    const q = from(t);
+    for (const m of ["insert", "update", "upsert", "delete"]) { const f = q[m].bind(q); q[m] = (...a) => { pageCache.clear(); return f(...a); }; }
+    return q;
+  };
+  const invoke = sb.functions.invoke.bind(sb.functions);
+  sb.functions.invoke = (...a) => { if (a[0] !== "share" || a[1]?.body?.action) pageCache.clear(); return invoke(...a); };
+}
 const app = document.getElementById("app");
 const who = document.getElementById("who");
-let routeToken = 0; // bumps on every navigation so stale timers and fetches stop
+let routeToken = 0; // the token of the page on screen; stale timers and fetches stop when it changes
+let tokenSeq = 0;   // tokens are never reused, so a page restored from the cache gets its own token back
+const newToken = () => (routeToken = ++tokenSeq);
 
 // ---------- helpers ----------
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -520,7 +533,7 @@ async function renderOverview(token) {
     if (token !== routeToken) return;
     if (error || data?.error) { b.disabled = false; b.textContent = "Refresh from sheet"; toast(`Couldn't read the sheet: ${data?.error ?? error.message}`); return; }
     toast(`Read ${data.rows} campaigns from the sheet`);
-    renderOverview(++routeToken);
+    renderOverview(newToken());
   };
   if (!rows.length) return;
 
@@ -680,7 +693,7 @@ async function renderOverview(token) {
         if (error || data?.error) { toast(`Couldn't delete the sheet row: ${data?.error ?? error.message}`); return; }
         toast("Sheet row deleted");
       }
-      renderOverview(++routeToken);
+      renderOverview(newToken());
     }));
     listEl.querySelectorAll("[data-create]").forEach((b) => (b.onclick = () => {
       const r = rows.find((x) => x.row === Number(b.dataset.create));
@@ -780,7 +793,7 @@ async function renderList(token) {
             </tr>`).join("")}</tbody></table></div>`;
     document.querySelectorAll("[data-del]").forEach((b) => (b.onclick = (e) => {
       e.stopPropagation();
-      deleteCampaignFlow(rows.find((r) => r.id === b.dataset.del), () => renderList(++routeToken));
+      deleteCampaignFlow(rows.find((r) => r.id === b.dataset.del), () => renderList(newToken()));
     }));
     document.querySelectorAll("tbody tr").forEach((tr) => {
       tr.onclick = (e) => { if (e.target.closest("[data-stop],[data-del]")) return; go(`#/c/${tr.dataset.id}`); };
@@ -2041,12 +2054,44 @@ async function renderJob(token, c, jobId, title) {
 }
 
 // ---------- router ----------
+// ---------- instant page switching ----------
+// The main pages are kept for a few minutes after you leave them (their live DOM, scroll position and token),
+// so going back to one shows it instantly. Any write anywhere drops them, so nothing shown is out of date.
+const KEEP_MS = 3 * 60 * 1000;
+const KEEPABLE = new Set(["#/", "#/campaigns", "#/roster", "#/discover", "#/analytics", "#/trending", "#/trending/artists", "#/payouts"]);
+const pageCache = new Map();   // hash → { frag, token, at, scroll, cls }
+let shown = { hash: null, token: 0 };
+function keepShownPage(nextHash) {
+  const h = shown.hash;
+  if (!h || !KEEPABLE.has(h) || h === nextHash || shown.token !== routeToken) return;
+  if (h === "#/roster" && nextHash.startsWith("#/roster")) return;   // the roster manages its own lists and side panel
+  if (document.querySelector(".dlg-back, dialog[open]")) return;
+  const frag = document.createDocumentFragment();
+  while (app.firstChild) frag.appendChild(app.firstChild);
+  pageCache.set(h, { frag, token: shown.token, at: Date.now(), scroll: window.scrollY, cls: app.className });
+  app.innerHTML = `<p class="muted pad">Loading…</p>`;
+}
+function restorePage(h) {
+  const k = pageCache.get(h);
+  pageCache.delete(h);
+  if (!k || Date.now() - k.at > KEEP_MS) return false;
+  app.innerHTML = ""; app.className = k.cls; app.appendChild(k.frag);
+  routeToken = k.token; shown = { hash: h, token: k.token };
+  requestAnimationFrame(() => window.scrollTo(0, k.scroll));
+  return true;
+}
+let teamOk = null;   // whether this user is on the team list, checked once per sign-in
+
 async function route() {
-  const token = ++routeToken;
+  const target = normHash(location.hash);
+  keepShownPage(target);
+  const token = newToken();
   const user = await signedInUser();
   if (token !== routeToken) return;
-  if (!user) return renderLogin();
-  if (!(await isTeamMember())) {
+  if (!user) { teamOk = null; return renderLogin(); }
+  if (teamOk?.uid !== user.id) teamOk = { uid: user.id, ok: await isTeamMember() };
+  if (token !== routeToken) return;
+  if (!teamOk.ok) {
     document.body.classList.add("signin");
     app.innerHTML = `<section class="login no-access on-blue">
       <img class="logo" src="assets/stellar-blue.png" alt="Stellar" width="160" height="44">
@@ -2063,10 +2108,13 @@ async function route() {
   trackHistory(); updateBack(); rememberTitle(normHash(location.hash));
   // Opening or closing a creator's side panel on the roster keeps the page where it is.
   const pageKey = parts[0] === "roster" && parts[parts.length - 2] === "c" ? `#/${parts.slice(0, -2).join("/")}` : normHash(location.hash);
-  if (pageKey !== lastPageKey) window.scrollTo(0, 0);
+  const restoring = KEEPABLE.has(target) && pageCache.has(target);
+  if (pageKey !== lastPageKey && !restoring) window.scrollTo(0, 0);
   lastPageKey = pageKey;
   const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover", "payouts"].includes(parts[0]) ? parts[0] : "campaigns";
   renderNav(section);
+  if (KEEPABLE.has(target) && restorePage(target)) { lastPageKey = pageKey; return; }
+  shown = { hash: target, token };
   if (section === "overview") return renderOverview(token);
   if (section === "analytics") return renderAnalytics(app, sb, { isCurrent: () => token === routeToken, go });
   if (section === "trending") return renderTrending(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
@@ -2092,7 +2140,7 @@ window.addEventListener("hashchange", route);
 let lastUserId;
 sb.auth.onAuthStateChange((_event, session) => {
   const uid = session?.user?.id ?? null;
-  if (lastUserId !== undefined && uid !== lastUserId) setTimeout(route, 0);
+  if (lastUserId !== undefined && uid !== lastUserId) { pageCache.clear(); teamOk = null; setTimeout(route, 0); }
   lastUserId = uid;
 });
 route();
