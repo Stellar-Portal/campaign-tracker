@@ -1,10 +1,10 @@
 ---
 version: alpha
 name: Stellar-campaign-tracker (Apple design language)
-description: Apple design language adapted for Stellar. Stellar cobalt (#0626C7) replaces Action Blue as the one interactive colour. Original Apple analysis — A photography-first interface that turns marketing into a museum gallery. Edge-to-edge product tiles alternate light and dark canvases, framed by SF Pro Display headlines with negative letter-spacing and a single Action Blue (#0066cc) interactive color. UI chrome recedes so the product can speak — no decorative gradients, no shadows on chrome, only the one signature drop-shadow under product imagery resting on a surface.
+description: Apple design language adapted for Stellar. Stellar cobalt (#0F25BF) replaces Action Blue as the one interactive colour. Original Apple analysis — A photography-first interface that turns marketing into a museum gallery. Edge-to-edge product tiles alternate light and dark canvases, framed by SF Pro Display headlines with negative letter-spacing and a single Action Blue (#0066cc) interactive color. UI chrome recedes so the product can speak — no decorative gradients, no shadows on chrome, only the one signature drop-shadow under product imagery resting on a surface.
 
 colors:
-  primary: "#0626c7"        # Stellar cobalt (Apple: #0066cc)
+  primary: "#0f25bf"        # Stellar cobalt (Apple: #0066cc)
   primary-focus: "#2b49e0"  # (Apple: #0071e3)
   primary-on-dark: "#8aa0ff" # (Apple: #2997ff)
   ink: "#1d1d1f"
@@ -280,7 +280,7 @@ This project follows **Apple's design language** (from [VoltAgent/awesome-design
 ## Stellar adaptation
 
 ### The one accent colour is Stellar cobalt
-- `{colors.primary}` is **Stellar cobalt #0626C7**, not Apple's #0066CC. It is the only interactive colour: primary pill buttons, text links, selected states, focus rings and the single-series chart line.
+- `{colors.primary}` is **Stellar cobalt #0F25BF**, not Apple's #0066CC. It is the only interactive colour: primary pill buttons, text links, selected states, focus rings and the single-series chart line.
 - Use it **sparingly**. No full-bleed blue bands, no blue backgrounds behind content, no blue headings. Blue means "you can click this" or "this is the number you're looking at".
 - `{colors.primary-on-dark}` (#8AA0FF) is for links on the black nav or dark tiles only.
 - Multi-series charts use the validated data-viz palette in `report.js` (`SERIES`), not cobalt, so every line stays distinguishable.

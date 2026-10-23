@@ -1,13 +1,13 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023f";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023f";
-import { renderRoster } from "./roster.js?v=20261023f";
-import { renderDiscover } from "./discover.js?v=20261023f";
-import { renderAnalytics } from "./analytics.js?v=20261023f";
-import { renderTrending } from "./trending.js?v=20261023f";
-import { confirmDialog } from "./dialog.js?v=20261023f";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023f";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023f";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023g";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023g";
+import { renderRoster } from "./roster.js?v=20261023g";
+import { renderDiscover } from "./discover.js?v=20261023g";
+import { renderAnalytics } from "./analytics.js?v=20261023g";
+import { renderTrending } from "./trending.js?v=20261023g";
+import { confirmDialog } from "./dialog.js?v=20261023g";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023g";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023g";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -585,8 +585,8 @@ async function renderOverview(token) {
           ${line("Stellar DRI", esc(v(r, "Stellar DRI")))}
           ${allocs.length ? `<div class="ovd-alloc">
             <div class="ovd-alloc-head">Budget split</div>
-            <div class="ovd-bar">${allocs.map((a, i) => `<i style="flex:${a.x};background:${["#0626c7", "#2a78d6", "#7aa7e6", "#b9cff2", "#1d1d1f"][i % 5]}" title="${esc(a.m)}"></i>`).join("")}</div>
-            ${allocs.map((a, i) => `<div class="ovd-line"><span><i class="dot" style="background:${["#0626c7", "#2a78d6", "#7aa7e6", "#b9cff2", "#1d1d1f"][i % 5]}"></i>${esc(a.m)}</span><b>${amt(a.x)}${allocTotal ? ` <span class="muted small">${Math.round((a.x / allocTotal) * 100)}%</span>` : ""}</b></div>`).join("")}
+            <div class="ovd-bar">${allocs.map((a, i) => `<i style="flex:${a.x};background:${["#0f25bf", "#2a78d6", "#7aa7e6", "#b9cff2", "#1d1d1f"][i % 5]}" title="${esc(a.m)}"></i>`).join("")}</div>
+            ${allocs.map((a, i) => `<div class="ovd-line"><span><i class="dot" style="background:${["#0f25bf", "#2a78d6", "#7aa7e6", "#b9cff2", "#1d1d1f"][i % 5]}"></i>${esc(a.m)}</span><b>${amt(a.x)}${allocTotal ? ` <span class="muted small">${Math.round((a.x / allocTotal) * 100)}%</span>` : ""}</b></div>`).join("")}
           </div>` : `<p class="muted small">No budget split yet.</p>`}
         </section>
         <section class="ovd-card"><h4>Client</h4>
@@ -1448,9 +1448,9 @@ function drawChart(el, rows) {
   const last = rows.at(-1);
   el.innerHTML = `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Total plays per day, from ${esc(date(rows[0].stat_date))} to ${esc(date(last.stat_date))}">
     <line x1="${P}" x2="${W - P}" y1="${H - P}" y2="${H - P}" stroke="#e3e5eb"/>
-    <polygon points="${x(0).toFixed(1)},${H - P} ${pts} ${x(rows.length - 1).toFixed(1)},${H - P}" fill="#0626c7" fill-opacity="0.08"/>
-    <polyline points="${pts}" fill="none" stroke="#0626c7" stroke-width="2.5" stroke-linejoin="round"/>
-    ${rows.map((r, i) => `<circle cx="${x(i)}" cy="${y(r.plays)}" r="3.5" fill="#0626c7"><title>${esc(date(r.stat_date))}: ${n(r.plays)} plays</title></circle>`).join("")}
+    <polygon points="${x(0).toFixed(1)},${H - P} ${pts} ${x(rows.length - 1).toFixed(1)},${H - P}" fill="#0f25bf" fill-opacity="0.08"/>
+    <polyline points="${pts}" fill="none" stroke="#0f25bf" stroke-width="2.5" stroke-linejoin="round"/>
+    ${rows.map((r, i) => `<circle cx="${x(i)}" cy="${y(r.plays)}" r="3.5" fill="#0f25bf"><title>${esc(date(r.stat_date))}: ${n(r.plays)} plays</title></circle>`).join("")}
     <text x="${P}" y="${H - 8}" font-size="12" fill="#6b6f7a">${esc(date(rows[0].stat_date))}</text>
     <text x="${W - P}" y="${H - 8}" font-size="12" fill="#6b6f7a" text-anchor="end">${esc(date(last.stat_date))}</text>
     <text x="${W - P}" y="${y(last.plays) - 10}" font-size="13" font-weight="700" fill="#282828" text-anchor="end">${compact(last.plays)}</text>

@@ -1,11 +1,11 @@
 /* Stellar Campaign Tracker
    Design: Apple design language (see DESIGN.md), adapted for Stellar.
-   - Stellar cobalt (#0626C7) is the ONLY interactive colour, used sparingly.
+   - Stellar cobalt (#0f25bf) is the ONLY interactive colour, used sparingly.
    - Parchment canvas, white cards with hairlines, no shadows on chrome.
    - System font first (SF Pro on Apple devices), Inter elsewhere. Weights 300/400/600/700. */
 :root {
-  --accent: #0626c7;          /* {colors.primary}: Stellar cobalt */
-  --accent-press: #041b93;
+  --accent: #0f25bf;          /* {colors.primary}: Stellar cobalt */
+  --accent-press: #0b1b8f;
   --accent-focus: #2b49e0;    /* {colors.primary-focus} */
   --accent-tint: #eef1fd;
   --accent-on-dark: #8aa0ff;  /* {colors.primary-on-dark} */
@@ -1059,7 +1059,7 @@ a.ic-look-add.on:hover { text-decoration: none; }
 .dc-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 4px 4px 11px; border-radius: var(--pill); background: var(--accent-tint); color: var(--accent); font-size: 13px; max-width: 100%; }
 .dc-chip b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dc-chip button { all: unset; cursor: pointer; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 15px; line-height: 1; }
-.dc-chip button:hover { background: rgba(6,38,199,0.12); }
+.dc-chip button:hover { background: rgba(15,37,191,0.12); }
 .dc-sort { height: 38px; margin-left: auto; }
 .dc-sort[hidden] { display: none; }
 .dc-cost { margin: 4px 0 16px; }

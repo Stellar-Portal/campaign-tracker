@@ -1,11 +1,11 @@
 // Analytics: charts across every campaign in the Campaign Overview sheet, plus tracker performance.
 // Money is shown in USD (ECB rates, refreshed daily in fx_rates). Every chart says how many
 // campaigns it is based on, has a hover read-out and a "Show as table" view.
-import { chart, esc } from "./report.js?v=20261023f";
+import { chart, esc } from "./report.js?v=20261023g";
 
 // Validated categorical slots (dataviz palette); cobalt only for single-series charts.
 const SLOT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
-const ONE = "#0626c7";
+const ONE = "#0f25bf";
 const GREY = "#a1a1a6";
 const REGIONS = [["Stellar West", "West", SLOT[0]], ["Stellar Central", "Central", SLOT[1]], ["Stellar East", "East", SLOT[2]]];
 const ALLOC = ["US", "Brazil", "Mexico", "All LATAM", "Canada", "UK", "Germany", "France", "Africa", "Other", "Japan", "Korea", "China", "India", "SEA", "Global"];
