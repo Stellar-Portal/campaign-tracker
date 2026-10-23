@@ -1488,3 +1488,12 @@ tr.row-link:hover td { background: var(--pearl); }
 .po-table-ex { min-width: 680px; table-layout: auto; }
 .po-table-ex td { padding: 10px 10px; }
 .po-pill { display: inline-block; padding: 4px 10px; width: auto; }
+/* Sidebar in Stellar cobalt */
+.sidebar { background: var(--accent); }
+.sidebar .nav-label { color: rgba(255,255,255,0.6); }
+.sidebar .nav-item { color: rgba(255,255,255,0.86); }
+.sidebar .nav-item:hover { background: rgba(255,255,255,0.12); }
+.sidebar .nav-item.on { background: rgba(255,255,255,0.2); box-shadow: inset 3px 0 0 #fff; }
+.sidebar .nav-item .soon { color: rgba(255,255,255,0.7); border-color: rgba(255,255,255,0.35); }
+.sidebar .nav-toggle { color: rgba(255,255,255,0.7); }
+.sidebar .nav-item:focus-visible { outline-color: #fff; }
