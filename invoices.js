@@ -1,7 +1,7 @@
 // Invoicing: campaign managers request an invoice from the campaign page; finance works through the
 // requests here, sends the invoice from e-conomic and records it; payment is recorded when the label pays.
 // Statuses: requested → invoiced → paid (or returned to the requester / cancelled).
-import { confirmDialog } from "./dialog.js?v=20261023p";
+import { confirmDialog } from "./dialog.js?v=20261023q";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const money = (v, cur) => {
@@ -50,7 +50,6 @@ export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
       <label>Invoicing entity <input name="entity" value="${esc(c.invoicing_entity ?? "")}" placeholder="Company name on the invoice"></label>
       <label>PO number <input name="po" value="${esc(c.po_number ?? "")}" placeholder="If the client gave one"></label>
       <label>Amount <span class="inv-amt"><input name="amount" inputmode="decimal" value="${left ?? ""}" required><select name="cur">${["USD", "EUR", "GBP", "DKK", "SEK", "JPY", "AUD", "SGD", "BRL", "MXN"].map((x) => `<option${x === (c.currency || "USD") ? " selected" : ""}>${x}</option>`).join("")}</select></span></label>
-      <label>Payment terms <select name="terms">${[14, 30, 45, 60, 90].map((n) => `<option value="${n}"${n === 30 ? " selected" : ""}>Net ${n} days</option>`).join("")}</select></label>
       <label class="inv-check"><input type="checkbox" name="portal"> The client uses its own supplier portal</label>
       <label class="inv-portal" hidden>Portal <input name="portalname" placeholder="e.g. Uniport (Universal), Coupa, Ariba"></label>
     </div>
@@ -72,7 +71,7 @@ export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
     if (ls.length > 1 && Math.abs(ls.reduce((t, l) => t + l.amount, 0) - amount) > 0.5) { err.hidden = false; err.textContent = `The market lines add up to ${money(ls.reduce((t, l) => t + l.amount, 0), f.cur.value)}, not ${money(amount, f.cur.value)}.`; return; }
     const btn = f.querySelector("[value=ok]"); btn.disabled = true;
     const { error } = await sb.from("invoice_requests").insert({
-      campaign_id: c.id, amount, currency: f.cur.value, payment_terms: Number(f.terms.value), po_number: f.po.value.trim() || null,
+      campaign_id: c.id, amount, currency: f.cur.value, po_number: f.po.value.trim() || null,
       client: f.client.value.trim() || null, invoicing_entity: f.entity.value.trim() || null, lines: ls.length > 1 ? ls : [],
       uses_portal: f.portal.checked, portal_name: f.portal.checked ? f.portalname.value.trim() || null : null, notes: f.notes.value.trim() || null,
     });
@@ -138,7 +137,7 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
     const field = (k, v) => (v ? `<div><dt>${k}</dt><dd>${v}</dd></div>` : "");
     return `<div class="inv-card">
       <div class="inv-d-head"><div><span class="muted small">${refOf(r)}</span><h2>${esc(r.client || "No client")}</h2><a href="#/c/${esc(r.campaign_id)}" class="small">${esc(name(r))}</a></div>${statusPill(r)}</div>
-      <div class="inv-amount">${money(r.amount, r.currency)}<span class="muted"> · Net ${r.payment_terms} days</span></div>
+      <div class="inv-amount">${money(r.amount, r.currency)}</div>
       <dl class="inv-dl">
         ${field("Invoicing entity", esc(r.invoicing_entity))}
         ${field("PO number", esc(r.po_number))}
@@ -158,7 +157,7 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
             <b>Sent from e-conomic?</b> <span class="muted small">Record it here once the invoice has gone out.</span>
             <div class="inv-do-row"><label>Invoice number <input name="no" required placeholder="e.g. 1184"></label>
               <label>Invoice date <input type="date" name="date" value="${today()}" required></label>
-              <span class="muted small inv-due">Due <b>${esc(day(addDays(today(), r.payment_terms)))}</b></span></div>
+              <label>Due date <input type="date" name="due" value="${addDays(today(), 30)}" required></label></div>
             <div class="inv-do-row"><button type="submit" class="primary">Mark as invoiced</button><button type="button" id="inv-return">Send back…</button></div>
           </form>` : ""}
         ${canFin && r.status === "invoiced" ? `
@@ -185,8 +184,11 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
   function bindDetail(r) {
     const mark = app.querySelector("#inv-mark");
     if (mark) {
-      mark.date.onchange = () => { mark.querySelector(".inv-due b").textContent = day(addDays(mark.date.value || today(), r.payment_terms)); };
-      mark.onsubmit = (e) => { e.preventDefault(); save(r, { status: "invoiced", invoice_number: mark.no.value.trim(), invoice_date: mark.date.value, due_date: addDays(mark.date.value, r.payment_terms), invoiced_by: who.email, invoiced_at: new Date().toISOString() }, "Marked as invoiced"); };
+      // The due date comes from the invoice in e-conomic; it starts at 30 days after the invoice date.
+      let dueTouched = false;
+      mark.due.onchange = () => { dueTouched = true; };
+      mark.date.onchange = () => { if (!dueTouched && mark.date.value) mark.due.value = addDays(mark.date.value, 30); };
+      mark.onsubmit = (e) => { e.preventDefault(); save(r, { status: "invoiced", invoice_number: mark.no.value.trim(), invoice_date: mark.date.value, due_date: mark.due.value, invoiced_by: who.email, invoiced_at: new Date().toISOString() }, "Marked as invoiced"); };
     }
     app.querySelector("#inv-return")?.addEventListener("click", async () => {
       const note = await noteDialog("Send back to the requester", "Say what needs changing. They'll see it on the request and can resubmit.");

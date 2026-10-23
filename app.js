@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023p";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023p";
-import { renderRoster } from "./roster.js?v=20261023p";
-import { renderDiscover } from "./discover.js?v=20261023p";
-import { renderAnalytics } from "./analytics.js?v=20261023p";
-import { renderTrending } from "./trending.js?v=20261023p";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261023p";
-import { confirmDialog } from "./dialog.js?v=20261023p";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023p";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023p";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023q";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023q";
+import { renderRoster } from "./roster.js?v=20261023q";
+import { renderDiscover } from "./discover.js?v=20261023q";
+import { renderAnalytics } from "./analytics.js?v=20261023q";
+import { renderTrending } from "./trending.js?v=20261023q";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261023q";
+import { confirmDialog } from "./dialog.js?v=20261023q";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023q";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023q";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
