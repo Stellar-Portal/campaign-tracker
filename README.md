@@ -1,6 +1,6 @@
 # Stellar OS
 
-Stellar's internal platform. A sidebar links its sections: **Campaign overview** (the backlog, from the Campaign Overview sheet), **Tracker** (TikTok campaigns: paste creator links, track plays, likes, comments, shares, spend and cost per view), **Analytics** (`analytics.js`), **Payouts** (`payouts.js`), and the planned **Invoices** (placeholder; see `NAV` and `SOON` in `app.js`).
+Stellar's internal platform. A sidebar links its sections: **Campaign overview** (the backlog, from the Campaign Overview sheet), **Tracker** (TikTok campaigns: paste creator links, track plays, likes, comments, shares, spend and cost per view), **Analytics** (`analytics.js`), **Payouts** (`payouts.js`) and **Invoices** (`invoices.js`).
 
 - **Front end:** these static files, served by GitHub Pages. No build step.
 - **Back end:** Supabase project `StellarCRM`: database, team logins, cover storage, and the `process-links` Edge Function that looks links up through ScrapeCreators.
@@ -53,6 +53,10 @@ The campaign form's artist search (`artist-search` function) uses Chartmetric: o
 
 ## If the sheet tab is recreated
 The sheet script finds the campaign tab by its name (`SHEET_NAME`), so a tab that is deleted and recreated keeps working as long as it has exactly the same name and the same layout (headers in row 2, data from row 4). The hidden row tags travel with a duplicated tab; on a tab rebuilt by pasting, rows are matched by Artist + Song + PO and re-tagged the next time the platform writes them. If the tab can't be found, the Campaign overview page shows "last refresh failed" with the reason.
+
+## Invoices
+
+Campaign managers click **Request invoice** on a campaign page: client, invoicing entity, PO, amount and currency (the budget not yet requested), payment terms, one line per market from the budget split, whether the client uses its own supplier portal (e.g. Uniport), and notes for finance. Requests land in **Invoices** (`invoices.js`, table `invoice_requests`) under **To review**. Finance sends the invoice from e-conomic, then records it with **Mark as invoiced** (invoice number and date; the due date follows from the terms), or **Sends it back** with a note for the requester to fix and resubmit. Invoiced requests show what's outstanding and overdue; finance ticks off portal uploads and records payment with **Mark as paid**. The campaign's `invoiced` flag follows its requests (trigger `sync_campaign_invoiced`), and the campaign page lists its requests. Roles live in `team_members.role`: **admin** (also manages the team via **Team & roles** on the Invoices page, RPC `set_team_member`), **finance** (handles requests) and **member** (campaign managers; can request, cancel and resubmit their own). Row level security enforces this. Next: creating the e-conomic draft from a request and picking up sent invoices automatically (needs the e-conomic tokens).
 
 ## Payouts
 

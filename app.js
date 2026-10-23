@@ -1,13 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023n";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023n";
-import { renderRoster } from "./roster.js?v=20261023n";
-import { renderDiscover } from "./discover.js?v=20261023n";
-import { renderAnalytics } from "./analytics.js?v=20261023n";
-import { renderTrending } from "./trending.js?v=20261023n";
-import { confirmDialog } from "./dialog.js?v=20261023n";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023n";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023n";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023p";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023p";
+import { renderRoster } from "./roster.js?v=20261023p";
+import { renderDiscover } from "./discover.js?v=20261023p";
+import { renderAnalytics } from "./analytics.js?v=20261023p";
+import { renderTrending } from "./trending.js?v=20261023p";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261023p";
+import { confirmDialog } from "./dialog.js?v=20261023p";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023p";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023p";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -261,7 +262,7 @@ const NAV = [
   ]],
   ["Money", [
     { key: "payouts", href: "#/payouts", label: "Payouts", icon: "payouts" },
-    { key: "invoices", href: "#/invoices", label: "Invoices", icon: "invoices", soon: true },
+    { key: "invoices", href: "#/invoices", label: "Invoices", icon: "invoices" },
   ]],
   ["Insights", [
     { key: "analytics", href: "#/analytics", label: "Analytics", icon: "analytics" },
@@ -297,7 +298,6 @@ function renderNav(active) {
 // Sections that are planned but not built yet: say what they'll do.
 const SOON = {
   "creator-payments": ["Creator payments", "Every creator deal in one place.", ["Agreed price per creator and campaign, in any currency", "What's paid and what's still owed", "Payment details kept private to the team"]],
-  invoices: ["Invoices", "Client invoicing per PO number.", ["Draft, sent and paid, matching the Campaign Overview invoicing columns", "Linked to the campaign's price and invoicing entity", "Reminders for anything overdue"]],
 };
 function renderSoon(key) {
   const [title, lead, points] = SOON[key];
@@ -1209,10 +1209,11 @@ async function renderCampaign(token, id, tab = "report") {
   if (token !== routeToken) return;
   if (error || !c) { app.innerHTML = fail(error ?? "This campaign doesn't exist or was deleted."); return; }
 
-  const [markets, latest, sync] = await Promise.all([
+  const [markets, latest, sync, invReqs] = await Promise.all([
     sb.from("campaign_markets").select("market,share_percent,amount").eq("campaign_id", id),
     sb.from("posts").select("last_checked_at").eq("campaign_id", id).not("last_checked_at", "is", null).order("last_checked_at", { ascending: false }).limit(1),
     sb.from("campaign_sheet_sync").select("*").eq("campaign_id", id).maybeSingle(),
+    sb.from("invoice_requests").select("id,ref,status,amount,currency,invoice_number,due_date,requested_at").eq("campaign_id", id).neq("status", "cancelled").order("requested_at", { ascending: false }),
   ]);
   if (token !== routeToken) return;
   const all = await marketList();
@@ -1240,6 +1241,7 @@ async function renderCampaign(token, id, tab = "report") {
       <a class="btn primary" href="#/c/${esc(id)}/add">Add links</a>
       <button type="button" id="refresh">Refresh numbers</button>
       <button type="button" id="share-btn" aria-expanded="false" aria-controls="share-panel">Share with client</button>
+      <button type="button" id="req-inv">Request invoice</button>
       <a class="btn" href="#/c/${esc(id)}/edit">Edit</a>
       <button type="button" id="del-camp" class="danger-lite">Delete</button>
       <span class="updated" id="updated" title="${lastChecked ? `Numbers checked ${esc(timeAgo(lastChecked))}` : ""}"></span>`,
@@ -1252,6 +1254,7 @@ async function renderCampaign(token, id, tab = "report") {
           ${detail("Dates", c.start_date ? `${date(c.start_date)}${c.end_date ? ` – ${date(c.end_date)}` : ""}` : null)}
           ${detail("Markets", mk)}
           ${detail("Numbers", lastChecked ? `checked ${timeAgo(lastChecked)}` : null)}
+          ${(invReqs.data ?? []).length ? `<div><dt>Invoicing</dt><dd><a href="#/invoices">${invReqs.data.map((r) => `${invoicePill(r)} ${money(r.amount, r.currency)}${r.invoice_number ? ` #${esc(r.invoice_number)}` : ""}`).join("<br>")}</a></dd></div>` : ""}
         </dl>
         ${sheetLine(sync.data, c)}
       </section>
@@ -1300,6 +1303,7 @@ async function renderCampaign(token, id, tab = "report") {
       if (tab === "payouts") renderCampaignPayouts(document.getElementById("camp-payouts"), sb, { campaign: c, toast, isCurrent: () => token === routeToken });
       loadPosts(token, id, { ...c, artist_image: data.artist_image });
       document.getElementById("share-btn").onclick = (e) => toggleSharePanel(e.currentTarget, c);
+      document.getElementById("req-inv").onclick = () => requestInvoiceDialog(sb, c, { toast, onDone: () => renderCampaign(newToken(), id, tab) });
       document.getElementById("del-camp").onclick = () => deleteCampaignFlow(c);
       document.getElementById("art-edit").onclick = async () => {
         const pick = await artistPictureDialog(c.artist);
@@ -2058,7 +2062,7 @@ async function renderJob(token, c, jobId, title) {
 // The main pages are kept for a few minutes after you leave them (their live DOM, scroll position and token),
 // so going back to one shows it instantly. Any write anywhere drops them, so nothing shown is out of date.
 const KEEP_MS = 3 * 60 * 1000;
-const KEEPABLE = new Set(["#/", "#/campaigns", "#/roster", "#/discover", "#/analytics", "#/trending", "#/trending/artists", "#/payouts"]);
+const KEEPABLE = new Set(["#/", "#/campaigns", "#/roster", "#/discover", "#/analytics", "#/trending", "#/trending/artists", "#/payouts", "#/invoices"]);
 const pageCache = new Map();   // hash → { frag, token, at, scroll, cls }
 let shown = { hash: null, token: 0 };
 function keepShownPage(nextHash) {
@@ -2111,7 +2115,7 @@ async function route() {
   const restoring = KEEPABLE.has(target) && pageCache.has(target);
   if (pageKey !== lastPageKey && !restoring) window.scrollTo(0, 0);
   lastPageKey = pageKey;
-  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover", "payouts"].includes(parts[0]) ? parts[0] : "campaigns";
+  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover", "payouts", "invoices"].includes(parts[0]) ? parts[0] : "campaigns";
   renderNav(section);
   if (KEEPABLE.has(target) && restorePage(target)) { lastPageKey = pageKey; return; }
   shown = { hash: target, token };
@@ -2119,6 +2123,7 @@ async function route() {
   if (section === "analytics") return renderAnalytics(app, sb, { isCurrent: () => token === routeToken, go });
   if (section === "trending") return renderTrending(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (section === "roster") return renderRoster(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
+  if (section === "invoices") return renderInvoices(app, sb, { isCurrent: () => token === routeToken, go, toast });
   if (section === "payouts") return renderPayoutsHome(app, sb, { isCurrent: () => token === routeToken, go });
   if (section === "discover") return renderDiscover(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (SOON[parts[0]]) return renderSoon(parts[0]);
