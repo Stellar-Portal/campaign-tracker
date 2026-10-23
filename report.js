@@ -1,3 +1,4 @@
+import { confirmDialog } from "./dialog.js?v=20261023f";
 // The report: one module used in two places.
 // - share.html (a client with a link): what the link's settings allow.
 // - the team dashboard (#/report/<artist>): the same view with everything on, plus "remove".
@@ -274,7 +275,7 @@ export function renderWall(el, list, ctx, { shown = 48, view = "grid", onMore } 
 }
 
 async function removePost(p, ctx) {
-  if (!confirm(`Remove @${p.creator?.username ?? "this creator"}'s video from the campaign? Its numbers will no longer count. You can add the link again later.`)) return false;
+  if (!(await confirmDialog({ title: `Remove @${p.creator?.username ?? "this creator"}'s video?`, body: "It leaves the campaign and its numbers no longer count. You can add the link again later.", confirm: "Remove" }))) return false;
   const ok = await ctx.remove(p);
   if (ok) { toast("Video removed"); ctx.onRemoved?.(p); }
   return ok;

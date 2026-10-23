@@ -1,12 +1,13 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023e";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023e";
-import { renderRoster } from "./roster.js?v=20261023e";
-import { renderDiscover } from "./discover.js?v=20261023e";
-import { renderAnalytics } from "./analytics.js?v=20261023e";
-import { renderTrending } from "./trending.js?v=20261023e";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023e";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023e";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023f";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023f";
+import { renderRoster } from "./roster.js?v=20261023f";
+import { renderDiscover } from "./discover.js?v=20261023f";
+import { renderAnalytics } from "./analytics.js?v=20261023f";
+import { renderTrending } from "./trending.js?v=20261023f";
+import { confirmDialog } from "./dialog.js?v=20261023f";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023f";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023f";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -1109,24 +1110,6 @@ function sheetStatus(sync) {
 // ---------- campaign dashboard ----------
 // ---------- small dialogs ----------
 // confirmDialog: a clean yes/no box with optional tick boxes. Resolves to { ...ticks } or null.
-function confirmDialog({ title, body = "", checks = [], confirm = "Delete", danger = true }) {
-  return new Promise((resolve) => {
-    const back = document.createElement("div");
-    back.className = "dlg-back";
-    back.innerHTML = `<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-t">
-      <h3 id="dlg-t">${esc(title)}</h3>${body ? `<p>${body}</p>` : ""}
-      ${checks.map((c) => `<label class="check"><input type="checkbox" data-k="${esc(c.id)}" ${c.checked ? "checked" : ""}><span>${c.label}</span></label>`).join("")}
-      <div class="actions"><button type="button" data-no>Cancel</button><button type="button" class="${danger ? "danger-solid" : "primary"}" data-yes>${esc(confirm)}</button></div></div>`;
-    document.body.appendChild(back);
-    const done = (v) => { back.remove(); document.removeEventListener("keydown", key); resolve(v); };
-    const key = (e) => { if (e.key === "Escape") done(null); };
-    document.addEventListener("keydown", key);
-    back.onclick = (e) => { if (e.target === back) done(null); };
-    back.querySelector("[data-no]").onclick = () => done(null);
-    back.querySelector("[data-yes]").onclick = () => done(Object.fromEntries([...back.querySelectorAll("[data-k]")].map((i) => [i.dataset.k, i.checked])));
-    back.querySelector("[data-yes]").focus();
-  });
-}
 
 // Delete a tracker campaign in one step, optionally with its row in the Campaign Overview sheet.
 async function deleteCampaignFlow(c, after = () => go("#/campaigns")) {
@@ -1284,6 +1267,15 @@ async function renderCampaign(token, id, tab = "report") {
           </label>
         </div>
       </div>
+      <form id="new-folder-form" class="nf-panel" hidden>
+        <div class="nf-row">
+          <label for="nf-name">New folder</label>
+          <input id="nf-name" placeholder="For example a creative, a phase or a market" autocomplete="off" maxlength="80">
+          <button type="submit" class="primary">Create folder</button>
+          <button type="button" class="link-btn" id="nf-cancel">Cancel</button>
+        </div>
+        <p class="muted small">Folders group posts inside this campaign. Move posts in with <b>Select posts</b>, or add links straight into a folder with its <b>+ Add links</b> button.</p>
+      </form>
       <div id="folders" class="folders"></div>
       <section id="folder-panel" class="panel share-panel" hidden></section>
       <div id="pick-bar" class="pick-bar" hidden></div>
@@ -1376,7 +1368,7 @@ async function drawSharePanel(panel, c) {
     catch { input.select(); toast("Press Cmd+C to copy"); }
   };
   document.getElementById("share-off").onclick = async () => {
-    if (!confirm(`Turn off the client link for ${c.artist}? Anyone with it will see "This link isn't active". You can create a new one afterwards.`)) return;
+    if (!(await confirmDialog({ title: `Turn off the client link for ${c.artist}?`, body: "Anyone with it will see \"This link isn't active\". You can create a new one afterwards.", confirm: "Turn off" }))) return;
     const { error: err } = await sb.from("share_links").update({ revoked: true }).eq("id", link.id);
     if (err) { toast(err.message); return; }
     toast("Link turned off");
@@ -1666,7 +1658,7 @@ async function loadPosts(token, id, camp) {
         try { await navigator.clipboard.writeText(url); toast("Link copied"); } catch { input.select(); toast("Press Cmd+C to copy"); }
       };
       panel.querySelector("#fp-off").onclick = async () => {
-        if (!confirm(`Turn off the client link for ${f.name}? Anyone with it will see "This link isn't active".`)) return;
+        if (!(await confirmDialog({ title: `Turn off the client link for ${f.name}?`, body: "Anyone with it will see \"This link isn't active\".", confirm: "Turn off" }))) return;
         const { error } = await sb.from("share_links").update({ revoked: true }).eq("id", link.id);
         if (error) { toast(error.message); return; }
         delete folderLinks[f.id];
@@ -1674,7 +1666,7 @@ async function loadPosts(token, id, camp) {
       };
     }
     panel.querySelector("#fp-delete").onclick = async () => {
-      if (!confirm(`Delete the folder "${f.name}"?${count ? ` Its ${count} post${count === 1 ? "" : "s"} stay in the campaign.` : ""}${link ? " Its client link stops working." : ""}`)) return;
+      if (!(await confirmDialog({ title: `Delete the folder "${f.name}"?`, body: esc(`${count ? `Its ${count} post${count === 1 ? "" : "s"} stay in the campaign. ` : ""}${link ? "Its client link stops working." : ""}`.trim()) }))) return;
       const { error } = await sb.from("campaign_folders").delete().eq("id", f.id);
       if (error) { toast(error.message); return; }
       toast("Folder deleted");
@@ -1706,14 +1698,27 @@ async function loadPosts(token, id, camp) {
     pickBtn.textContent = ctx.selected ? "Done selecting" : "Select posts";
     drawPickBar(); draw();
   };
-  document.getElementById("new-folder").onclick = async () => {
-    const name = prompt("Folder name, for example a creative or a market:")?.trim();
-    if (!name) return;
+  const nfForm = document.getElementById("new-folder-form"), nfBtn = document.getElementById("new-folder"), nfName = document.getElementById("nf-name");
+  const closeNewFolder = () => { nfForm.hidden = true; nfName.value = ""; nfBtn.setAttribute("aria-expanded", "false"); };
+  nfBtn.setAttribute("aria-expanded", "false");
+  nfBtn.onclick = () => {
+    if (!nfForm.hidden) return closeNewFolder();
+    nfForm.hidden = false; nfBtn.setAttribute("aria-expanded", "true"); nfName.focus();
+  };
+  document.getElementById("nf-cancel").onclick = closeNewFolder;
+  nfName.onkeydown = (e) => { if (e.key === "Escape") closeNewFolder(); };
+  nfForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const name = nfName.value.trim();
+    if (!name) { nfName.focus(); return; }
+    const btn = nfForm.querySelector("[type=submit]"); btn.disabled = true;
     const { data: f, error } = await sb.from("campaign_folders").insert({ campaign_id: id, name, position: folders.length ? Math.max(...folders.map((x) => x.position)) + 1 : 0 }).select("id,name,market,position,hidden,created_at").single();
-    if (error) { toast(error.code === "23505" ? "There's already a folder with that name." : error.message); return; }
+    btn.disabled = false;
+    if (error) { toast(error.code === "23505" ? "There's already a folder with that name." : error.message); nfName.focus(); return; }
     folders.push(f);
     ctx.folderOf = (p) => folderName(p.folder_id);
     toast(`Folder "${name}" created`);
+    closeNewFolder();
     drawFolders(); drawPickBar(); draw();
   };
 
@@ -1899,7 +1904,7 @@ async function loadPosts(token, id, camp) {
       }));
       sec.querySelectorAll("[data-ract=remove]").forEach((b) => (b.onclick = async () => {
         const p = list.find((x) => x.id === b.dataset.id);
-        if (!confirm(`Remove @${p.creator?.username ?? "this creator"}'s video from the campaign? Its numbers will no longer count.`)) return;
+        if (!(await confirmDialog({ title: `Remove @${p.creator?.username ?? "this creator"}'s video?`, body: "It leaves the campaign and its numbers no longer count.", confirm: "Remove" }))) return;
         if (await ctx.remove(p)) { toast("Video removed"); renderCampaign(++routeToken, id); }
       }));
       sec.querySelectorAll("[data-rpick]").forEach((b) => (b.onchange = () => {

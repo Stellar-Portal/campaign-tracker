@@ -1522,3 +1522,9 @@ tr.row-link:hover td { background: var(--pearl); }
 .fp-more summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var(--accent); }
 .fp-more .settings { border-top: none; margin-top: 4px; padding-top: 0; }
 .fp-more .settings > h2:first-child, .fp-more .settings > h3:first-child { margin-top: 8px; }
+/* New folder panel */
+.nf-panel { background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--r-lg); padding: 14px 16px; margin: 0 0 16px; }
+.nf-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.nf-row label { font-weight: 600; font-size: 14px; margin: 0; }
+.nf-row input { flex: 1 1 260px; padding: 8px 14px; }
+.nf-panel p { margin: 8px 0 0; }
