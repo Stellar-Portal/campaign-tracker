@@ -1,7 +1,7 @@
 // Analytics: charts across every campaign in the Campaign Overview sheet, plus tracker performance.
 // Money is shown in USD (ECB rates, refreshed daily in fx_rates). Every chart says how many
 // campaigns it is based on, has a hover read-out and a "Show as table" view.
-import { chart, esc } from "./report.js?v=20261023g";
+import { chart, esc } from "./report.js?v=20261023h";
 
 // Validated categorical slots (dataviz palette); cobalt only for single-series charts.
 const SLOT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
@@ -122,27 +122,6 @@ function monthColumns(months, series, width) {
     ${segs}</svg>`;
 }
 
-// Scatter: price (x) vs margin (y), one colour, 24px hit circles.
-function scatter(points, width) {
-  const W = Math.max(320, width), H = 260, L = 52, R = 16, T = 14, B = 30;
-  const maxX = Math.max(...points.map((p) => p.x), 1);
-  const xStep = (() => { const raw = maxX / 4, mag = 10 ** Math.floor(Math.log10(raw)); return [1, 2, 2.5, 5, 10].map((f) => f * mag).find((v) => v >= raw); })();
-  const hiX = Math.ceil(maxX / xStep) * xStep;
-  const loY = Math.min(0, ...points.map((p) => p.y)), hiY = 1;
-  const x = (v) => L + (v / hiX) * (W - L - R), y = (v) => T + (1 - (v - loY) / (hiY - loY)) * (H - T - B);
-  const xt = []; for (let v = 0; v <= hiX + xStep / 2; v += xStep) xt.push(v);
-  const yt = [loY < 0 ? loY : null, 0, 0.25, 0.5, 0.75, 1].filter((v) => v != null);
-  const avg = points.reduce((s, p) => s + p.y, 0) / points.length;
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="Margin against price for each campaign">
-    <g class="grid">${yt.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" ${v === 0 ? 'class="zero"' : ""}/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${Math.round(v * 100)}%</text>`).join("")}</g>
-    <g class="xaxis">${xt.map((v, i) => `<text x="${x(v)}" y="${H - 8}" text-anchor="${i === 0 ? "start" : i === xt.length - 1 ? "end" : "middle"}">${usdShort(v)}</text>`).join("")}</g>
-    <line x1="${L}" x2="${W - R}" y1="${y(avg)}" y2="${y(avg)}" stroke="${ONE}" stroke-width="1" opacity="0.5"/>
-    <text class="avg-label" x="${W - R}" y="${y(avg) - 6}" text-anchor="end">Average ${pct(avg)}</text>
-    ${points.map((p, i) => `<circle cx="${x(p.x)}" cy="${y(p.y)}" r="5" fill="${ONE}" stroke="#fff" stroke-width="2"/>
-      <circle class="hit" cx="${x(p.x)}" cy="${y(p.y)}" r="12" fill="transparent" data-tip="sc:${i}" tabindex="0"/>`).join("")}
-  </svg>`;
-}
-
 export async function renderAnalytics(app, sb, { isCurrent, go }) {
   app.innerHTML = `<p class="muted pad">Loading analytics…</p>`;
   const [snap, fx, camps, daily, folders, markets] = await Promise.all([
@@ -193,7 +172,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
   })();
   const inQuarter = (m, key) => { if (!m) return false; const [y, mo] = m.split("-").map(Number); const fyStart = mo >= 4 ? y : y - 1; const qn = Math.floor(((mo - 4 + 12) % 12) / 3) + 1; return key === `${fyStart}-Q${qn}`; };
   const allDris = [...new Set(all.flatMap((x) => x.dris))].sort();
-  const st = { period: "", region: "", dri: "" };
+  const st = { period: "", region: "", dri: "", campSort: "margin", campAll: false, tab: (() => { try { return localStorage.getItem("an-tab") || "money"; } catch { return "money"; } })() };
 
   app.innerHTML = `
     <div class="page-head">
@@ -246,8 +225,6 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
     const byPerson = new Map();
     for (const x of priced) for (const p of x.dris) { const e = byPerson.get(p) ?? { label: p, value: 0, n: 0 }; e.value += x.priceUsd / x.dris.length; e.n++; byPerson.set(p, e); }
     const team = [...byPerson.values()].sort((a, b) => b.value - a.value).map((e) => ({ ...e, sub: `${e.n} campaign${e.n === 1 ? "" : "s"}` }));
-    // 7. margin
-    const marginPts = withCost.map((x) => ({ x: x.priceUsd, y: (x.priceUsd - x.costUsd) / x.priceUsd, name: `${x.artist}${x.song ? ` – ${x.song}` : ""}`, cost: x.costUsd }));
     // 8. performance (tracker)
     const tracked = list.filter((x) => x.camp);
     const trackedIds = new Set(tracked.map((x) => x.camp.id));
@@ -260,26 +237,79 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
     const totalViews = tracked.reduce((t, x) => t + Number(x.camp.total_plays ?? 0), 0);
     const cpm = cpmRows.length ? (cpmRows.reduce((t, x) => t + x.priceUsd, 0) / cpmRows.reduce((t, x) => t + Number(x.camp.total_plays), 0)) * 1000 : null;
 
-    const kpi = (label, value, sub) => `<div class="stat"><div class="n">${value}</div><div class="l">${esc(label)}</div>${sub ? `<div class="d muted">${sub}</div>` : ""}</div>`;
+    // Margin per campaign: the sheet's campaign cost, else creator spend recorded in the tracker.
+    const costOf = (x) => x.costUsd ?? (x.camp && Number(x.camp.spend) > 0 ? toUsd(Number(x.camp.spend), x.camp.currency) : null);
+    const costed = priced.filter((x) => costOf(x) != null && x.priceUsd > 0);
+    const costTotal = costed.reduce((t, x) => t + costOf(x), 0);
+    const costedRev = costed.reduce((t, x) => t + x.priceUsd, 0);
+    const marginAll = costedRev ? (costedRev - costTotal) / costedRev : null;
+    // By client region (the demo's "by territory").
+    const regions = [...REGIONS, ["", "Not set", GREY]].map(([k, l, c]) => {
+      const xs = priced.filter((x) => (k ? x.region === k : !REGIONS.some(([r]) => r === x.region)));
+      const cs = xs.filter((x) => costOf(x) != null);
+      const rev = xs.reduce((t, x) => t + x.priceUsd, 0), crev = cs.reduce((t, x) => t + x.priceUsd, 0), cost = cs.reduce((t, x) => t + costOf(x), 0);
+      return { label: l, color: c, rev, n: xs.length, cost, crev, margin: crev ? (crev - cost) / crev : null, nc: cs.length };
+    }).filter((r) => r.n);
+    const maxRegion = Math.max(...regions.map((r) => r.rev), 1);
+    // By campaign, ranked.
+    const campRows = priced.map((x) => {
+      const c = costOf(x);
+      return { name: `${x.artist}${x.song ? ` – ${x.song}` : ""}`, client: x.client, region: (REGIONS.find(([k]) => k === x.region) ?? [, ""])[1], rev: x.priceUsd, cost: c, margin: c != null ? (x.priceUsd - c) / x.priceUsd : null, camp: x.camp };
+    });
+    const sortCamps = (rs) => [...rs].sort(st.campSort === "rev" ? (a, b) => b.rev - a.rev : (a, b) => (b.margin ?? -9) - (a.margin ?? -9) || b.rev - a.rev);
+    const campsSorted = sortCamps(campRows);
+    const campShown = st.campAll ? campsSorted : campsSorted.slice(0, 12);
+
+    const tab = st.tab;
+    const tabs = [["money", "Money"], ["clients", "Clients & markets"], ["team", "Team"], ["performance", "Performance"]];
+    const hero = (label, value, sub, main = false) => `<div class="an-hero-card${main ? " main" : ""}"><div class="l">${esc(label)}</div><div class="n">${value}</div>${sub ? `<div class="d">${sub}</div>` : ""}</div>`;
+    const marginBar = (m) => m == null ? `<span class="muted small">no cost yet</span>`
+      : `<span class="an-mbar"><i class="${m < 0 ? "neg" : m < 0.3 ? "low" : ""}" style="width:${Math.max(2, Math.min(100, Math.abs(m) * 100))}%"></i></span><b class="${m < 0 ? "neg" : ""}">${pct(m)}</b>`;
+
     out.innerHTML = `
-      <div class="stats an-kpis">
-        ${kpi("Revenue booked", usdShort(booked), `${priced.length} priced campaign${priced.length === 1 ? "" : "s"}`)}
-        ${kpi("Campaigns", num(list.length), `${list.filter((x) => x.status === "Active").length} active now`)}
-        ${kpi("Average deal", usdShort(priced.length ? booked / priced.length : null), "price per campaign")}
-        ${kpi("Invoiced", pct(booked ? invoiced / booked : null), `${usdShort(booked - invoiced)} still to invoice`)}
-        ${kpi("Paid", usdShort(paid), `${priced.filter((x) => x.paid).length} campaigns marked paid`)}
-        ${kpi("Average margin", pct(avgMargin), `${withCost.length} of ${priced.length} have a cost`)}
+      <div class="an-hero">
+        ${hero("Revenue booked", usdShort(booked), `${priced.length} priced campaign${priced.length === 1 ? "" : "s"} · ${pct(booked ? invoiced / booked : null)} invoiced`, true)}
+        ${hero("Campaign costs", usdShort(costed.length ? costTotal : null), `${costed.length} of ${priced.length} campaigns have a cost`)}
+        ${hero("Margin", pct(marginAll), costedRev ? `${usdShort(costedRev - costTotal)} on campaigns with a cost` : "Fills in as costs are recorded")}
       </div>
+      <div class="an-mini">
+        <span><b>${num(list.length)}</b> campaigns · ${list.filter((x) => x.status === "Active").length} active</span>
+        <span><b>${usdShort(priced.length ? booked / priced.length : null)}</b> average deal</span>
+        <span><b>${usdShort(booked - invoiced)}</b> still to invoice</span>
+        <span><b>${usdShort(paid)}</b> paid</span>
+      </div>
+      <div class="tabs an-tabs" role="tablist" aria-label="Analytics views">
+        ${tabs.map(([k, l]) => `<button type="button" role="tab" data-antab="${k}" aria-selected="${tab === k}">${l}</button>`).join("")}
+      </div>
+      ${tab === "money" ? `
       <div class="an-grid">
+        ${card({ id: "an-regions", wide: true, title: "By client market", note: "Revenue, and margin where costs are recorded",
+          body: `<div class="an-regions">${regions.map((r, i) => `<div class="an-region" data-tip="rg:${i}" tabindex="0">
+              <div class="an-region-top"><span class="an-dot" style="background:${r.color}"></span><b>${esc(r.label)}</b><span class="muted small">${r.n} campaign${r.n === 1 ? "" : "s"}</span></div>
+              <div class="an-region-n">${usdShort(r.rev)}</div>
+              <span class="an-rbar"><i style="width:${(r.rev / maxRegion) * 100}%;background:${r.color}"></i></span>
+              <div class="an-region-m">${r.margin != null ? `Margin <b class="${r.margin < 0 ? "neg" : ""}">${pct(r.margin)}</b> <span class="muted">· ${r.nc} with a cost</span>` : `<span class="muted">No costs recorded yet</span>`}</div>
+            </div>`).join("")}</div>`,
+          table: tableHtml(["Client market", "Campaigns", "Revenue (USD)", "Costs (USD)", "Margin"], regions.map((r) => [r.label, String(r.n), usd(r.rev), r.nc ? usd(r.cost) : "–", pct(r.margin)])) })}
         ${card({ id: "an-months", wide: true, title: "Revenue by start month", note: `By client market · ${priced.filter((x) => x.month).length} campaigns with a start date`,
           body: `<div class="legend">${regionSeries.map((se) => `<span><i style="background:${se.color}"></i>${esc(se.name)}</span>`).join("")}</div><div class="an-svg" id="an-months-svg"></div>`,
           table: tableHtml(["Month", ...regionSeries.map((se) => se.name), "Total"], months.map((m, i) => [m.label, ...regionSeries.map((se) => usd(se.values[i])), usd(regionSeries.reduce((t, se) => t + se.values[i], 0))])) })}
-        ${card({ id: "an-cash", title: "Booked, invoiced and paid", note: `${priced.length} campaigns`,
+        ${card({ id: "an-camps", wide: true, title: "By campaign", note: `<span class="seg an-sort" role="group" aria-label="Sort"><button type="button" data-csort="margin" aria-pressed="${st.campSort !== "rev"}">Margin</button><button type="button" data-csort="rev" aria-pressed="${st.campSort === "rev"}">Revenue</button></span>`,
+          body: `<div class="table-wrap an-camps-wrap"><table class="an-camps"><colgroup><col><col class="c-rev"><col class="c-cost"><col class="c-m"></colgroup>
+            <thead><tr><th>Campaign</th><th class="num">Revenue</th><th class="num">Costs</th><th>Margin</th></tr></thead>
+            <tbody>${campShown.map((r) => `<tr${r.camp ? ` class="row-link" data-go="#/c/${esc(r.camp.id)}"` : ""}><td><div class="an-cname">${esc(r.name)}</div><div class="muted small">${esc(r.client)}${r.region ? ` · ${esc(r.region)}` : ""}</div></td>
+              <td class="num">${usd(r.rev)}</td><td class="num">${r.cost != null ? usd(r.cost) : "–"}</td><td class="an-mcell">${marginBar(r.margin)}</td></tr>`).join("")}</tbody></table></div>
+            ${campsSorted.length > 12 ? `<button type="button" class="link-btn small an-more" data-campall>${st.campAll ? "Show top 12" : `Show all ${campsSorted.length}`}</button>` : ""}
+            <p class="muted small" style="margin:8px 0 0">Costs come from the sheet's campaign cost, or the creator payouts recorded in the tracker. Campaigns still running look more profitable until their payouts are in.</p>` })}
+        ${card({ id: "an-cash", wide: true, title: "Booked, invoiced and paid", note: `${priced.length} campaigns`,
           body: hbars([{ label: "Booked", value: booked }, { label: "Invoiced", value: invoiced, sub: pct(booked ? invoiced / booked : null) }, { label: "Paid", value: paid, sub: pct(booked ? paid / booked : null) }], { key: "cash" })
             + (toInvoice.length ? `<div class="an-list"><h4>Finished, not invoiced yet <span class="muted">${toInvoice.length} · ${usdShort(toInvoice.reduce((t, x) => t + x.priceUsd, 0))}</span></h4>
               <ul>${toInvoice.slice(0, 6).map((x) => `<li><span>${esc(x.artist)}${x.song ? ` – ${esc(x.song)}` : ""} <span class="muted">${esc(x.client)}</span></span><b>${usd(x.priceUsd)}</b></li>`).join("")}</ul>
               ${toInvoice.length > 6 ? `<a href="#/" class="small" data-go-inv>See all ${toInvoice.length} in the Campaign overview</a>` : ""}</div>` : `<p class="muted small">Every finished campaign is invoiced.</p>`),
           table: tableHtml(["Campaign", "Client", "Price (USD)"], toInvoice.map((x) => [`${x.artist}${x.song ? ` – ${x.song}` : ""}`, x.client, usd(x.priceUsd)])) })}
+      </div>` : ""}
+      ${tab === "clients" ? `
+      <div class="an-grid">
         ${card({ id: "an-clients", title: "Top clients", note: `${clients.length} clients`,
           body: (labelTotal ? `<div class="an-split" aria-label="Major, indie and other share of revenue">${labelSplit.filter((x) => x.v).map((x, i) => `<i style="flex:${x.v};background:${x.color}" data-tip="lbl:${i}" tabindex="0"></i>`).join("")}</div>
             <div class="legend">${labelSplit.filter((x) => x.v).map((x) => `<span><i style="background:${x.color}"></i>${x.l} ${pct(x.v / labelTotal)}</span>`).join("")}</div>` : "") + hbars(topClients, { key: "cl" }),
@@ -287,32 +317,32 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
         ${card({ id: "an-markets", title: "Where budgets go", note: `Budget allocations · ${allocN} of ${list.length} campaigns have a split`,
           body: hbars(byMarket.map((m) => ({ ...m, sub: `${m.n} campaign${m.n === 1 ? "" : "s"}` })), { key: "mk" }),
           table: tableHtml(["Market", "Campaigns", "Budget (USD)"], byMarket.map((m) => [m.label, String(m.n), usd(m.value)])) })}
-        ${card({ id: "an-team", title: "Team", note: "Revenue per DRI · shared campaigns split equally",
+      </div>` : ""}
+      ${tab === "team" ? `
+      <div class="an-grid">
+        ${card({ id: "an-team", wide: true, title: "Revenue per DRI", note: "Shared campaigns split equally",
           body: hbars(team, { key: "tm" }),
           table: tableHtml(["DRI", "Campaigns", "Revenue (USD)"], team.map((t) => [t.label, String(t.n), usd(t.value)])) })}
-        ${card({ id: "an-margin", wide: true, title: "Margin by deal size", note: `${withCost.length} of ${priced.length} campaigns have a cost`,
-          body: withCost.length >= 3 ? `<div class="an-svg" id="an-margin-svg"></div><p class="muted small">Each dot is a campaign: price across, margin up. Add campaign costs in the sheet (or record creator costs in the tracker) to fill this in.</p>`
-            : `<p class="muted small an-empty">Only ${withCost.length} campaign${withCost.length === 1 ? " has" : "s have"} a cost so far. Margins appear here once a few more do.</p>`,
-          table: tableHtml(["Campaign", "Price (USD)", "Cost (USD)", "Margin"], marginPts.sort((a, b) => b.y - a.y).map((p) => [p.name, usd(p.x), usd(p.cost), pct(p.y)])) })}
-      </div>
-      <div class="section-head"><h2>Performance</h2><span class="muted small">From the tracker · ${tracked.length} of ${list.length} campaigns are tracked</span></div>
-      ${!tracked.length ? `<div class="panel"><p class="muted">None of these campaigns are in the tracker yet. Use <b>Create</b> on the Campaign overview to start tracking them; views and cost per view appear here.</p></div>` : `
-      <div class="stats an-kpis">
-        ${kpi("Views", compactN(totalViews), `across ${tracked.length} tracked campaign${tracked.length === 1 ? "" : "s"}`)}
-        ${kpi("Price per 1,000 views", cpm != null ? `$${cpm.toFixed(2)}` : "–", `${cpmRows.length} campaigns with a price and views`)}
-        ${kpi("Live posts", num(tracked.reduce((t, x) => t + Number(x.camp.live_posts ?? 0), 0)), "in tracked campaigns")}
+      </div>` : ""}
+      ${tab === "performance" ? (!tracked.length ? `<div class="panel" style="margin-top:18px"><p class="muted" style="margin:0">None of these campaigns are in the tracker yet. Use <b>Create</b> on the Campaign overview to start tracking them; views and cost per view appear here.</p></div>` : `
+      <div class="an-mini" style="margin-top:18px">
+        <span><b>${compactN(totalViews)}</b> views across ${tracked.length} tracked campaign${tracked.length === 1 ? "" : "s"}</span>
+        <span><b>${cpm != null ? `$${cpm.toFixed(2)}` : "–"}</b> price per 1,000 views</span>
+        <span><b>${num(tracked.reduce((t, x) => t + Number(x.camp.live_posts ?? 0), 0))}</b> live posts</span>
       </div>
       <div class="an-grid">
         ${card({ id: "an-views", wide: true, title: "Views over time", note: "All tracked campaigns together", body: `<div id="an-views-chart"></div>` })}
         ${card({ id: "an-top", wide: true, title: "Top campaigns by views", note: "With price per 1,000 views", body: hbars(topViews, { fmt: compactN, key: "tv" }),
           table: tableHtml(["Campaign", "Views", "Price per 1K views"], topViews.map((t) => [t.label, num(t.value), t.sub])) })}
-      </div>`}`;
+      </div>`) : ""}`;
+    out.querySelectorAll("[data-antab]").forEach((b) => (b.onclick = () => { st.tab = b.dataset.antab; try { localStorage.setItem("an-tab", st.tab); } catch { /* ignore */ } draw(); }));
+    out.querySelectorAll("[data-csort]").forEach((b) => (b.onclick = () => { st.campSort = b.dataset.csort; draw(); }));
+    out.querySelector("[data-campall]")?.addEventListener("click", () => { st.campAll = !st.campAll; draw(); });
+    out.querySelectorAll("tr[data-go]").forEach((tr) => (tr.onclick = () => go(tr.dataset.go)));
 
     // Charts drawn at their real width.
     const mEl = document.getElementById("an-months-svg");
     if (mEl) mEl.innerHTML = months.length ? monthColumns(months, regionSeries, mEl.clientWidth || W) : `<p class="muted small an-empty">No start dates in this selection.</p>`;
-    const sEl = document.getElementById("an-margin-svg");
-    if (sEl) sEl.innerHTML = scatter(marginPts, sEl.clientWidth || half);
     const vEl = document.getElementById("an-views-chart");
     if (vEl) chart(vEl, { dates, panels: [{ label: "Views", series: [{ name: "Views", color: ONE, values: viewsByDate }] }], empty: "Views over time appear once the tracker has collected numbers on two or more days." });
 
@@ -321,7 +351,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
     bindTips(out, (k) => {
       const [kind, iStr] = k.split(":"); const i = Number(iStr);
       if (kind === "mc") return { title: months[i]?.label, rows: [...regionSeries.filter((se) => se.values[i] > 0).map((se) => [se.color, se.name, usd(se.values[i])]), ["", "Total", usd(regionSeries.reduce((t, se) => t + se.values[i], 0))]] };
-      if (kind === "sc") { const p = marginPts[i]; return { title: p.name, rows: [["", "Price", usd(p.x)], ["", "Cost", usd(p.cost)], ["", "Margin", pct(p.y)]] }; }
+      if (kind === "rg") { const r = regions[i]; return { title: r.label, rows: [[r.color, "Revenue", usd(r.rev)], ["", "Campaigns", String(r.n)], ["", "Costs", r.nc ? usd(r.cost) : "–"], ["", "Margin", pct(r.margin)]] }; }
       if (kind === "lbl") { const x = labelSplit.filter((y) => y.v)[i]; return { title: x.l, rows: [[x.color, "Revenue", usd(x.v)], ["", "Share", pct(x.v / labelTotal)], ["", "Campaigns", String(x.n)]] }; }
       if (kind === "cash") { const [l, v] = lists.cash[i]; return { title: l, rows: [["", "Amount", usd(v)], ["", "Share of booked", pct(booked ? v / booked : null)]] }; }
       const it = lists[kind]?.[i]; if (!it) return null;
