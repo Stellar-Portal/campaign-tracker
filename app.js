@@ -1,12 +1,12 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023c";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023c";
-import { renderRoster } from "./roster.js?v=20261023c";
-import { renderDiscover } from "./discover.js?v=20261023c";
-import { renderAnalytics } from "./analytics.js?v=20261023c";
-import { renderTrending } from "./trending.js?v=20261023c";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023c";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023c";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023d";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023d";
+import { renderRoster } from "./roster.js?v=20261023d";
+import { renderDiscover } from "./discover.js?v=20261023d";
+import { renderAnalytics } from "./analytics.js?v=20261023d";
+import { renderTrending } from "./trending.js?v=20261023d";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023d";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023d";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const app = document.getElementById("app");
@@ -1594,45 +1594,62 @@ async function loadPosts(token, id, camp) {
     const { data: link } = await sb.from("share_links").select("id,token,created_at,created_by,settings,folder_id").eq("folder_id", f.id).eq("revoked", false).order("created_at", { ascending: false }).limit(1).maybeSingle();
     const count = list.filter((p) => p.folder_id === f.id).length;
     const url = link ? shareUrl(link.token) : null;
+    const what = f.market ? "market" : "folder";
     panel.innerHTML = `
-      <div class="folder-panel-head">
-        <h2>${esc(f.name)}</h2>
-        <button type="button" class="link-btn" id="fp-close">Close</button>
-      </div>
-      <div class="form-grid">
-        <div><label for="fp-name">Folder name</label><div class="share-row"><input id="fp-name" value="${esc(f.name)}"><button type="button" id="fp-rename">Rename</button></div></div>
-        <div><label class="row"><span>Show this folder on client links<br><span class="muted small">When off, its posts still count in the campaign's totals but aren't named as a separate ${f.market ? "market" : "folder"}.</span></span>
-          <span class="switch"><input type="checkbox" id="fp-visible" ${f.hidden ? "" : "checked"}><span></span></span></label></div>
-      </div>
-      <h3>Client link for this folder</h3>
-      <p class="small">The client sees only this folder's posts and numbers${camp.status === "draft" ? ", once the campaign is active" : ""}. <b>Budgets, spend and margins are never shown.</b></p>
-      ${link ? `<div class="share-row"><input id="fp-url" readonly value="${esc(url)}" aria-label="Folder client link">
-          <button type="button" class="primary" id="fp-copy">Copy link</button>
-          <a class="btn" href="${esc(url)}" target="_blank" rel="noopener">Open</a></div>
-        <p class="muted small">Created ${esc(date(link.created_at))}${link.created_by ? ` by ${esc(link.created_by)}` : ""}.
-          <button type="button" class="link-btn danger small" id="fp-off">Turn off this link</button></p>
-        <div class="settings" id="fp-settings"></div>`
-      : `<div class="actions"><button type="button" class="primary" id="fp-create">Create client link</button></div>`}
-      <div class="actions" style="border-top:1px solid var(--hairline);padding-top:16px;margin-top:16px">
-        <button type="button" class="danger" id="fp-delete">Delete folder</button>
-        <span class="muted small">${count ? (count === 1 ? "Its post stays in the campaign, just not in a folder." : `Its ${n(count)} posts stay in the campaign, just not in a folder.`) : "The folder is empty."}</span>
+      <div class="fp">
+        <div class="fp-head">
+          <div class="fp-name"><label for="fp-name" class="sr">Folder name</label><input id="fp-name" value="${esc(f.name)}" autocomplete="off"><span class="muted small" id="fp-saved"></span></div>
+          <button type="button" class="link-btn" id="fp-close">Close</button>
+        </div>
+        <div class="fp-card">
+          <div class="fp-line">
+            <div><b>Show on client links</b>
+              <p class="muted small">When off, its posts still count in the campaign's totals but aren't named as a separate ${what}.</p></div>
+            <label class="switch" title="Show on client links"><input type="checkbox" id="fp-visible" ${f.hidden ? "" : "checked"} aria-label="Show this ${what} on client links"><span></span></label>
+          </div>
+        </div>
+        <div class="fp-card">
+          <b>Client link for this ${what}</b>
+          <p class="muted small">The client sees only this ${what}'s posts and numbers${camp.status === "draft" ? ", once the campaign is active" : ""}. Budgets, spend and margins are never shown.</p>
+          ${link ? `<div class="share-row"><input id="fp-url" readonly value="${esc(url)}" aria-label="Folder client link">
+              <button type="button" class="primary" id="fp-copy">Copy link</button>
+              <a class="btn" href="${esc(url)}" target="_blank" rel="noopener">Open</a></div>
+            <p class="muted small fp-meta">Created ${esc(date(link.created_at))}${link.created_by ? ` by ${esc(link.created_by)}` : ""} · <button type="button" class="link-btn danger" id="fp-off">Turn off this link</button></p>
+            <details class="fp-more"><summary>What the client sees on this link</summary><div class="settings" id="fp-settings"></div></details>`
+          : `<div class="actions" style="margin:10px 0 0"><button type="button" class="primary" id="fp-create">Create client link</button></div>`}
+        </div>
+        <div class="fp-foot">
+          <span class="muted small">${count ? (count === 1 ? "Deleting keeps its post in the campaign, just not in a folder." : `Deleting keeps its ${n(count)} posts in the campaign, just not in a folder.`) : "This folder is empty."}</span>
+          <button type="button" class="danger-lite" id="fp-delete">Delete ${what}</button>
+        </div>
       </div>`;
     panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
     // Re-open after a change; in the folder view the section was redrawn, so find its new panel.
     const again = () => { const host = el.querySelector(`.fsec[data-key="${f.id}"] .fs-panel`) ?? (document.body.contains(panel) ? panel : gridPanel); host.dataset.folder = ""; openFolderPanel(f, host); };
     panel.querySelector("#fp-close").onclick = () => { panel.hidden = true; };
-    panel.querySelector("#fp-rename").onclick = async () => {
-      const name = panel.querySelector("#fp-name").value.trim();
-      if (!name || name === f.name) return;
+    // Update the folder's card and section heading in place, so the panel doesn't reload or flicker.
+    const refreshHead = () => {
+      drawFolders();
+      const h3 = el.querySelector(`.fsec[data-key="${f.id}"] .fsec-title h3`);
+      if (h3) h3.innerHTML = `${h3.querySelector("img")?.outerHTML ?? ""}${esc(f.name)}${f.hidden ? ' <span class="badge">Hidden from clients</span>' : ""}${folderLinks[f.id] ? ' <span class="badge on">Client link on</span>' : ""}`;
+    };
+    const nameInput = panel.querySelector("#fp-name");
+    nameInput.onkeydown = (e) => { if (e.key === "Enter") nameInput.blur(); if (e.key === "Escape") { nameInput.value = f.name; nameInput.blur(); } };
+    nameInput.onchange = async () => {
+      const name = nameInput.value.trim();
+      if (!name || name === f.name) { nameInput.value = f.name; return; }
       const { error } = await sb.from("campaign_folders").update({ name }).eq("id", f.id);
-      if (error) { toast(error.code === "23505" ? "There's already a folder with that name." : error.message); return; }
-      f.name = name; toast("Folder renamed"); drawFolders(); draw(); again();
+      if (error) { toast(error.code === "23505" ? "There's already a folder with that name." : error.message); nameInput.value = f.name; return; }
+      f.name = name; refreshHead();
+      const s2 = panel.querySelector("#fp-saved"); s2.textContent = "Saved"; setTimeout(() => (s2.textContent = ""), 1500);
     };
     panel.querySelector("#fp-visible").onchange = async (e) => {
       const hidden = !e.target.checked;
+      e.target.disabled = true;
       const { error } = await sb.from("campaign_folders").update({ hidden }).eq("id", f.id);
+      e.target.disabled = false;
       if (error) { toast(error.message); e.target.checked = !e.target.checked; return; }
-      f.hidden = hidden; toast(hidden ? "Hidden from client links" : "Shown on client links"); drawFolders(); draw(); again();
+      f.hidden = hidden; refreshHead(); toast(hidden ? "Hidden from client links" : "Shown on client links");
     };
     panel.querySelector("#fp-create")?.addEventListener("click", async (e) => {
       e.currentTarget.disabled = true;
