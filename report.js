@@ -1,4 +1,4 @@
-import { confirmDialog } from "./dialog.js?v=20261027b";
+import { confirmDialog } from "./dialog.js?v=20261027c";
 // The report: one module used in two places.
 // - share.html (a client with a link): what the link's settings allow.
 // - the team dashboard (#/report/<artist>): the same view with everything on, plus "remove".
@@ -340,7 +340,7 @@ export function openPostModal(list, index, ctx) {
     if (!d || !d["x-tiktok-player"] || !player || e.source !== player.frame.contentWindow) return;
     if (d.type === "onPlayerReady") { player.ready = true; wrap.querySelector(".pm-media")?.classList.add("ready"); }
     if (d.type === "onStateChange" && player.wantSound && d.value === 2) { player.wantSound = false; send("play"); }
-    if (d.type === "onStateChange") { player.playing = d.value === 1; if (d.value === 1) player.started = true; drawBar(); }
+    if (d.type === "onStateChange") { player.playing = d.value === 1; if (d.value === 2) player.tick = 0; if (d.value === 1) player.started = true; drawBar(); }
     if (d.type === "onMute") { player.muted = !!d.value; drawBar(); }
     if (d.type === "onCurrentTime") { player.t = d.value?.currentTime ?? 0; player.dur = d.value?.duration ?? player.dur; player.tick = Date.now(); player.ready = true; drawBar(); }
   };
