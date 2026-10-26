@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261027d";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261027d";
-import { renderRoster } from "./roster.js?v=20261027d";
-import { renderDiscover } from "./discover.js?v=20261027d";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261027d";
-import { renderTrending } from "./trending.js?v=20261027d";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261027d";
-import { confirmDialog } from "./dialog.js?v=20261027d";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261027d";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261027d";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261027e";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261027e";
+import { renderRoster } from "./roster.js?v=20261027e";
+import { renderDiscover } from "./discover.js?v=20261027e";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261027e";
+import { renderTrending } from "./trending.js?v=20261027e";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261027e";
+import { confirmDialog } from "./dialog.js?v=20261027e";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261027e";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261027e";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.

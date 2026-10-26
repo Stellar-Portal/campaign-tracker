@@ -1,4 +1,4 @@
-import { confirmDialog } from "./dialog.js?v=20261027d";
+import { confirmDialog } from "./dialog.js?v=20261027e";
 // The report: one module used in two places.
 // - share.html (a client with a link): what the link's settings allow.
 // - the team dashboard (#/report/<artist>): the same view with everything on, plus "remove".
@@ -338,7 +338,9 @@ export function openPostModal(list, index, ctx) {
   const onMsg = (e) => {
     const d = typeof e.data === "string" ? (() => { try { return JSON.parse(e.data); } catch { return null; } })() : e.data;
     if (!d || !d["x-tiktok-player"] || !player || e.source !== player.frame.contentWindow) return;
-    if (d.type === "onPlayerReady" || d.type === "onCurrentTime") { player.ready = true; wrap.querySelector(".pm-media")?.classList.add("ready", "api"); }
+    if (d.type === "onPlayerReady") { player.ready = true; wrap.querySelector(".pm-media")?.classList.add("ready"); }
+    // Our own controls take over once the video has actually played (before that, clicks go to TikTok's player).
+    if (d.type === "onCurrentTime") wrap.querySelector(".pm-media")?.classList.add("ready", "api");
     if (d.type === "onStateChange" && player.wantSound && d.value === 2) { player.wantSound = false; send("play"); }
     if (d.type === "onStateChange") { player.playing = d.value === 1; if (d.value === 2) player.tick = 0; if (d.value === 1) player.started = true; drawBar(); }
     if (d.type === "onMute") { player.muted = !!d.value; drawBar(); }
