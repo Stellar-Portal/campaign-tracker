@@ -1,4 +1,4 @@
-import { confirmDialog } from "./dialog.js?v=20261026l";
+import { confirmDialog } from "./dialog.js?v=20261027a";
 // The report: one module used in two places.
 // - share.html (a client with a link): what the link's settings allow.
 // - the team dashboard (#/report/<artist>): the same view with everything on, plus "remove".
@@ -317,7 +317,9 @@ async function fetchCovers(page, ctx) {
 // ---------- post preview window ----------
 // TikTok's own player shows like/share buttons that only send people to TikTok, and a busy control
 // bar. We hide all of it and drive the player ourselves (TikTok's embed API) with one clean bar.
-const ttSrc = (p) => `https://www.tiktok.com/player/v1/${encodeURIComponent(p.video_id)}?controls=0&progress_bar=0&play_button=0&volume_control=0&fullscreen_button=0&timestamp=0&music_info=0&description=0&rel=0&native_context_menu=0&closed_caption=0&loop=1`;
+// play_button=1: browsers only allow sound after a click inside the player itself, so the first
+// play has to be TikTok's own button. After that our bar can play, pause, seek and unmute.
+const ttSrc = (p) => `https://www.tiktok.com/player/v1/${encodeURIComponent(p.video_id)}?controls=0&progress_bar=0&play_button=1&volume_control=0&fullscreen_button=0&timestamp=0&music_info=0&description=0&rel=0&native_context_menu=0&closed_caption=0&loop=1&autoplay=1`;
 const clock = (t) => { t = Math.max(0, Math.floor(t || 0)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; };
 
 export function openPostModal(list, index, ctx) {
@@ -337,7 +339,8 @@ export function openPostModal(list, index, ctx) {
     const d = typeof e.data === "string" ? (() => { try { return JSON.parse(e.data); } catch { return null; } })() : e.data;
     if (!d || !d["x-tiktok-player"] || !player || e.source !== player.frame.contentWindow) return;
     if (d.type === "onPlayerReady") { player.ready = true; wrap.querySelector(".pm-media")?.classList.add("ready"); }
-    if (d.type === "onStateChange") { player.playing = d.value === 1; drawBar(); }
+    if (d.type === "onStateChange" && player.wantSound && d.value === 2) { player.wantSound = false; send("play"); }
+    if (d.type === "onStateChange") { player.playing = d.value === 1; if (d.value === 1) player.started = true; drawBar(); }
     if (d.type === "onMute") { player.muted = !!d.value; drawBar(); }
     if (d.type === "onCurrentTime") { player.t = d.value?.currentTime ?? 0; player.dur = d.value?.duration ?? player.dur; drawBar(); }
   };
@@ -354,7 +357,6 @@ export function openPostModal(list, index, ctx) {
     if (!pr.matches(":active")) { pr.max = String(player.dur || 0); pr.value = String(player.t || 0); }
     pr.style.setProperty("--p", `${player.dur ? (player.t / player.dur) * 100 : 0}%`);
     bar.querySelector("[data-time]").textContent = `${clock(player.t)} / ${clock(player.dur)}`;
-    wrap.querySelector(".pm-tap")?.classList.toggle("paused", !player.playing);
   }
 
   // The video side: only rebuilt when the video changes, never when switching tabs.
@@ -367,23 +369,35 @@ export function openPostModal(list, index, ctx) {
       ${ctx.covers[p.video_id] ? `<img class="pm-poster" src="${esc(ctx.covers[p.video_id])}" alt="">` : ""}
       <iframe src="${esc(yt ? embedSrc(p) : ttSrc(p))}" title="${platformName(p)} video by ${esc(p.creator?.name || p.creator?.username || "")}"
         allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
-      ${yt ? "" : `<button type="button" class="pm-tap paused" aria-label="Play or pause"><span>${ICON.play}</span></button>
+      ${yt ? "" : `<div class="pm-shield" aria-hidden="true"></div>
       <div class="pm-bar">
         <button type="button" data-pp aria-label="Play">${ICON.play}</button>
         <input type="range" min="0" max="0" step="0.1" value="0" aria-label="Position in the video">
         <span data-time>0:00 / 0:00</span>
-        <button type="button" data-mute aria-label="Mute">${ICON.sound}</button>
+        <button type="button" data-mute aria-label="Turn sound on">${ICON.muted}</button>
       </div>`}
       ${list.length > 1 ? `<button type="button" class="pm-nav prev" aria-label="Previous video" ${i === 0 ? "disabled" : ""}>${ICON.prev}</button>
       <button type="button" class="pm-nav next" aria-label="Next video" ${i === list.length - 1 ? "disabled" : ""}>${ICON.next}</button>` : ""}`;
-    player = yt ? null : { frame: media.querySelector("iframe"), playing: false, muted: false, t: 0, dur: 0 };
+    // TikTok's player starts muted when it autoplays; the sound button turns it on.
+    player = yt ? null : { frame: media.querySelector("iframe"), playing: false, muted: true, t: 0, dur: 0 };
+    if (player) {
+      const me = player;
+      // If the player never reports in (blocked, old browser), hand it back its own controls.
+      setTimeout(() => { if (player === me && !me.ready) { media.querySelector(".pm-tap")?.remove(); media.querySelector(".pm-bar")?.remove(); media.classList.add("ready"); } }, 5000);
+    }
     media.querySelector(".prev")?.addEventListener("click", () => go(-1));
     media.querySelector(".next")?.addEventListener("click", () => go(1));
     if (player) {
-      const toggle = () => send(player.playing ? "pause" : "play");
-      media.querySelector(".pm-tap").onclick = toggle;
+      // Show the player once it's ready (or after a moment, whatever TikTok reports).
+      setTimeout(() => media.classList.add("ready"), 2500);
+      // Before anyone has clicked inside the player, browsers only allow it to play muted.
+      const toggle = () => { if (player.playing) return send("pause"); if (!player.started) { send("mute"); player.muted = true; } send("play"); };
       media.querySelector("[data-pp]").onclick = toggle;
-      media.querySelector("[data-mute]").onclick = () => { send(player.muted ? "unMute" : "mute"); player.muted = !player.muted; drawBar(); };
+      media.querySelector("[data-mute]").onclick = () => {
+        if (player.muted) { player.wantSound = true; send("unMute"); setTimeout(() => { if (player) player.wantSound = false; }, 1500); }
+        else send("mute");
+        player.muted = !player.muted; drawBar();
+      };
       const pr = media.querySelector("input[type=range]");
       pr.oninput = () => { player.t = Number(pr.value); drawBar(); };
       pr.onchange = () => send("seekTo", Number(pr.value));
