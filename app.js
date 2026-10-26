@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026b";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026b";
-import { renderRoster } from "./roster.js?v=20261026b";
-import { renderDiscover } from "./discover.js?v=20261026b";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026b";
-import { renderTrending } from "./trending.js?v=20261026b";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026b";
-import { confirmDialog } from "./dialog.js?v=20261026b";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026b";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026b";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026c";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026c";
+import { renderRoster } from "./roster.js?v=20261026c";
+import { renderDiscover } from "./discover.js?v=20261026c";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026c";
+import { renderTrending } from "./trending.js?v=20261026c";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026c";
+import { confirmDialog } from "./dialog.js?v=20261026c";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026c";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026c";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -502,24 +502,27 @@ async function renderOverview(token) {
   };
   const ago = s.synced_at ? timeAgo(s.synced_at) : null;
 
+  const STATUS_TABS = [["Active", "Live"], ["Upcoming", "Upcoming"], ["On Hold", "On hold"], ["Completed", "Completed"], ["", "All"]];
+  if (!saved.status && saved.status !== "") st.status = rows.some((r) => v(r, "Status") === "Active") ? "Active" : "";
+  if (!saved.sort) { st.sort = "start"; st.dir = "desc"; }
+  const syncLine = `${s.sheet ? `In sync with <a href="${SHEET_URL}" target="_blank" rel="noopener">${esc(s.sheet)}</a>` : "From the Campaign Overview sheet"}${ago ? ` · updated ${esc(ago)}` : ""}`;
+  const failed = s.last_error && (!s.synced_at || s.last_attempt_at > s.synced_at);
   app.innerHTML = `
-    <div class="page-head">
+    <div class="page-head ov2-head">
       <div><h1>Campaign overview</h1>
-        <p class="muted small" style="margin:6px 0 0" id="ov-sync">${s.sheet ? `From <a href="${SHEET_URL}" target="_blank" rel="noopener">${esc(s.sheet)}</a>` : "From the Campaign Overview sheet"}${ago ? ` · updated ${esc(ago)}` : ""}${s.last_error && (!s.synced_at || s.last_attempt_at > s.synced_at) ? ` · <span class="warn-note">last refresh failed: ${esc(s.last_error)}</span>` : ""}</p></div>
-      <div class="actions" style="margin:0">
-        <button type="button" id="ov-refresh">Refresh from sheet</button>
-        <a class="btn primary" href="#/new">New campaign</a>
-      </div>
+        <p class="ov2-sync" id="ov-sync"><i class="${failed ? "bad" : ""}"></i>${syncLine}${failed ? ` · <span class="warn-note">last refresh failed: ${esc(s.last_error)}</span>` : ""}
+          · <button type="button" class="link-btn" id="ov-refresh">Refresh now</button></p></div>
+      <div class="actions" style="margin:0"><a class="btn primary" href="#/new">New campaign</a></div>
     </div>
-    ${!rows.length ? `<div class="panel"><p>${s.synced_at ? "The sheet has no campaigns yet." : "The overview hasn't been read from the sheet yet. Click <b>Refresh from sheet</b>; if that fails, the sheet script needs its latest version deployed."}</p></div>` : `
-    <div class="stats ov-stats" id="ov-stats"></div>
-    <div class="ov-bar">
-      <label class="ov-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input id="ov-q" type="search" placeholder="Search artist, song, client, PO or contact" aria-label="Search the overview"></label>
-      <select id="ov-status" class="ov-pill" aria-label="Status"><option value="">All statuses</option>${uniq("Status").map((x) => `<option>${esc(x)}</option>`).join("")}</select>
-      <label class="ov-pill ov-sort"><span>Sort</span><select id="ov-sort" aria-label="Sort by">${Object.keys(SORTS).map((k) => [SORTS[k].first, other(SORTS[k].first)].map((d) => `<option value="${k}:${d}">${esc(sortLabel(k, d))}</option>`).join("")).join("")}</select></label>
+    ${!rows.length ? `<div class="panel"><p>${s.synced_at ? "The sheet has no campaigns yet." : "The overview hasn't been read from the sheet yet. Click <b>Refresh now</b>; if that fails, the sheet script needs its latest version deployed."}</p></div>` : `
+    <div class="ov2-sum" id="ov-stats"></div>
+    <div class="ov2-bar">
+      <div class="ov2-tabs" role="tablist" aria-label="Status">${STATUS_TABS.map(([k, l]) => `<button type="button" role="tab" data-ovtab="${esc(k)}">${l}<b data-ovcount="${esc(k)}"></b></button>`).join("")}</div>
+      <label class="ov2-search" id="ov-searchwrap"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input id="ov-q" type="search" placeholder="Search artist, song, client, PO…" aria-label="Search the overview"></label>
       <div class="ov-filt">
-        <button type="button" class="ov-pill" id="ov-fbtn" aria-expanded="false" aria-controls="ov-fpanel"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M6 10h8M9 15h2"/></svg>Filters<span class="ov-count" id="ov-fcount" hidden></span></button>
-        <div class="ov-fpanel" id="ov-fpanel" role="dialog" aria-label="Filters" hidden>
+        <button type="button" class="ov2-icon" id="ov-fbtn" aria-expanded="false" aria-controls="ov-fpanel" title="Filter and sort"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M6 10h8M9 15h2"/></svg><span class="ov-count" id="ov-fcount" hidden></span></button>
+        <div class="ov-fpanel" id="ov-fpanel" role="dialog" aria-label="Filter and sort" hidden>
+          <label class="ov2-sortlbl"><span>Sort by</span><select id="ov-sort">${Object.keys(SORTS).map((k) => [SORTS[k].first, other(SORTS[k].first)].map((d) => `<option value="${k}:${d}">${esc(sortLabel(k, d))}</option>`).join("")).join("")}</select></label>
           ${FILTERS.map((f) => `<label><span>${esc(f.label)}</span><select id="ov-${f.key}"><option value="">${esc(f.all)}</option>${optionsFor(f).map(([x, l]) => `<option value="${esc(x)}">${esc(l)}</option>`).join("")}</select></label>`).join("")}
           <div class="ov-fpanel-foot"><button type="button" class="link-btn" id="ov-fclear">Clear filters</button><span class="muted small">Saved for you only</span></div>
         </div>
@@ -534,18 +537,48 @@ async function renderOverview(token) {
     const b = e.currentTarget; b.disabled = true; b.textContent = "Reading the sheet…";
     const { data, error } = await sb.functions.invoke("sheet-sync", { body: { action: "pull_overview" } });
     if (token !== routeToken) return;
-    if (error || data?.error) { b.disabled = false; b.textContent = "Refresh from sheet"; toast(`Couldn't read the sheet: ${data?.error ?? error.message}`); return; }
+    if (error || data?.error) { b.disabled = false; b.textContent = "Refresh now"; toast(`Couldn't read the sheet: ${data?.error ?? error.message}`); return; }
     toast(`Read ${data.rows} campaigns from the sheet`);
     renderOverview(newToken());
   };
   if (!rows.length) return;
 
+  // Artist pictures: the same ones the campaign pages use (table artists). Missing ones are looked up once.
+  const artKey = (x) => String(x ?? "").trim().toLowerCase();
+  const pics = new Map();
+  try {
+    const { data: arts } = await sb.from("artists").select("name_key,image_url").not("image_url", "is", null);
+    for (const a of arts ?? []) pics.set(a.name_key, a.image_url);
+  } catch { /* pictures are optional */ }
+  if (token !== routeToken) return;
+  const initials = (x) => String(x || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  const avatar = (r, big = false) => {
+    const name = v(r, "Artist Name"), img = pics.get(artKey(name));
+    return `<span class="ov2-av${big ? " big" : ""}" data-art="${esc(artKey(name))}">${img ? `<img src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : esc(initials(name))}</span>`;
+  };
+  (async () => {
+    const tried = (() => { try { return JSON.parse(sessionStorage.getItem("art-tried") ?? "[]"); } catch { return []; } })();
+    const want = [...new Set(rows.map((r) => v(r, "Artist Name")).filter(Boolean))].filter((nm) => !pics.has(artKey(nm)) && !tried.includes(artKey(nm))).slice(0, 25);
+    for (const nm of want) {
+      if (token !== routeToken && !document.getElementById("ov-list")) return;
+      tried.push(artKey(nm)); try { sessionStorage.setItem("art-tried", JSON.stringify(tried)); } catch { /* ignore */ }
+      try {
+        const hits = await searchArtists(nm);
+        const hit = hits.find((h) => artKey(h.name) === artKey(nm) && h.image);
+        if (!hit) continue;
+        const { error } = await sb.from("artists").upsert({ name: nm.trim(), deezer_id: hit.deezer_id ?? null, cm_artist: hit.cm_artist ?? null, image_url: hit.image, updated_at: new Date().toISOString() }, { onConflict: "name_key", ignoreDuplicates: true });
+        if (error) continue;
+        pics.set(artKey(nm), hit.image);
+        document.querySelectorAll(`.ov2-av[data-art="${CSS.escape(artKey(nm))}"]`).forEach((el) => { el.innerHTML = `<img src="${esc(hit.image)}" alt="" referrerpolicy="no-referrer">`; });
+      } catch { /* try again another day */ }
+    }
+  })();
+
   const listEl = document.getElementById("ov-list");
-  const open = new Set();
-  const filtered = () => {
+  const filtered = (ignoreStatus = false) => {
     const q = st.q.trim().toLowerCase();
     let list = rows.filter((r) =>
-      (!st.status || v(r, "Status") === st.status) && (!st.dri || v(r, "Stellar DRI") === st.dri) &&
+      (ignoreStatus || !st.status || v(r, "Status") === st.status) && (!st.dri || v(r, "Stellar DRI") === st.dri) &&
       (!st.market || v(r, "Client Market") === st.market) && (!st.invoice || v(r, "Invoice Status") === st.invoice) &&
       (!st.tracker || (st.tracker === "yes") === !!r.camp) &&
       (!q || ["Artist Name", "Song Name (s) or Project Name", "Client", "Stellar PO no.", "Client Contact Name", "Client Contact eMail", "Invoicing Entity"].some((h) => v(r, h).toLowerCase().includes(q))));
@@ -561,8 +594,13 @@ async function renderOverview(token) {
     });
     return keyed.map(([, r]) => r);
   };
-  const statusChip = (x) => x ? `<span class="status ${esc((OV_STATUS[x] ?? "").replace("draft", "upcoming"))}">${esc(x)}</span>` : `<span class="muted small">–</span>`;
-  // One campaign, laid out for reading: key numbers first, then Campaign / Client / Invoicing.
+  const STATUS_PILL = { Active: ["live", "Live"], Upcoming: ["soon", "Upcoming"], "On Hold": ["hold", "On hold"], Completed: ["done", "Completed"] };
+  const statusPill = (x) => { const [c, l] = STATUS_PILL[x] ?? ["done", x || "No status"]; return `<span class="ov2-pill ${c}">${esc(l)}</span>`; };
+  const poPill = (r) => v(r, "Stellar PO no.") ? `<span class="ov2-po">${esc(v(r, "Stellar PO no."))}${copyBtn(v(r, "Stellar PO no."))}</span>` : `<span class="ov2-po none">No PO yet</span>`;
+  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const shortDate = (x) => { const d = sheetDate(x); return d ? `${Number(d.slice(8))} ${MON[Number(d.slice(5, 7)) - 1]}` : ""; };
+  const invoiceDue = (r) => v(r, "Status") === "Completed" && v(r, "Invoice Status") !== "Invoiced" && !!v(r, "Price");
+  // One campaign, laid out for reading (shown under "All details" in the side panel).
   const COUNTRY_FIX = { UK: "GB", SP: "ES", AUS: "AU" };
   const place = (x) => {
     if (!x) return "";
@@ -574,99 +612,112 @@ async function renderOverview(token) {
     return d ? new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : esc(x);
   };
   const line = (label, value) => (value ? `<div class="ovd-line"><span>${esc(label)}</span><b>${value}</b></div>` : "");
-  const detail = (r) => {
+  const details = (r) => {
     const cur = v(r, "Currency");
-    const price = sheetNumber(v(r, "Price")), cost = sheetNumber(v(r, "Campaign Cost"));
+    const cost = sheetNumber(v(r, "Campaign Cost"));
     const amt = (x) => (x == null ? "" : `${Math.round(x).toLocaleString("en-GB")} <span class="muted">${esc(cur)}</span>`);
-    const allocs = ALLOC_COLUMNS.map((m, i) => ({ m, x: sheetNumber(v(r, m)), region: i < 5 ? "West" : i < 10 ? "Central" : i < 15 ? "East" : "Global" })).filter((a) => a.x);
+    const allocs = ALLOC_COLUMNS.map((m, i) => ({ m, x: sheetNumber(v(r, m)) })).filter((a) => a.x);
     const allocTotal = allocs.reduce((t, a) => t + a.x, 0);
-    const invoiced = v(r, "Invoice Status") === "Invoiced", paid = v(r, "Paid") === "Paid";
-    const email = v(r, "Client Contact eMail");
-    const contact = [v(r, "Client Contact Name") && esc(v(r, "Client Contact Name")), email && `<a href="mailto:${esc(email)}">${esc(email)}</a>`].filter(Boolean).join("<br>");
-    const entity = v(r, "Invoicing Entity") && v(r, "Invoicing Entity") !== v(r, "Client") ? esc(v(r, "Invoicing Entity")) : "";
-    const sheetLink = `${SHEET_URL}&range=A${r.row}`;
-    return `<div class="ovd">
-      <div class="ovd-kpis">
-        <div><span>Price</span><b>${price != null ? amt(price) : "–"}</b></div>
-        <div><span>Campaign cost</span><b>${cost != null ? amt(cost) : "–"}</b></div>
-        <div><span>Margin</span><b>${v(r, "Margin") ? esc(v(r, "Margin")) : "–"}</b></div>
-        <div><span>Invoice</span><b>${invoiced ? `<span class="status finished">Invoiced</span>` : `<span class="status upcoming">${esc(v(r, "Invoice Status") || "Not invoiced")}</span>`}${v(r, "Invoice #") ? ` <span class="muted small">#${esc(v(r, "Invoice #"))}</span>` : ""}</b></div>
-        <div><span>Payment</span><b>${paid ? `<span class="status active">Paid</span>${v(r, "Date Paid") ? ` <span class="muted small">${esc(longDate(v(r, "Date Paid")))}</span>` : ""}` : `<span class="muted">Not paid</span>`}</b></div>
-      </div>
-      <div class="ovd-cards">
-        <section class="ovd-card"><h4>Campaign</h4>
-          ${line("Starts", v(r, "Start Date") ? `${longDate(v(r, "Start Date"))}${v(r, "Duration") ? ` <span class="muted">· ${esc(v(r, "Duration"))}</span>` : ""}` : "")}
-          ${line("Type", [v(r, "Type (NR or Cat)"), v(r, "Campaign Type")].filter(Boolean).map(esc).join(" · "))}
-          ${line("Regions", esc(v(r, "Campaign Market")))}
-          ${line("Stellar DRI", esc(v(r, "Stellar DRI")))}
-          ${allocs.length ? `<div class="ovd-alloc">
-            <div class="ovd-alloc-head">Budget split</div>
-            <div class="ovd-bar">${allocs.map((a, i) => `<i style="flex:${a.x};background:${["#0f25bf", "#2a78d6", "#7aa7e6", "#b9cff2", "#1d1d1f"][i % 5]}" title="${esc(a.m)}"></i>`).join("")}</div>
-            ${allocs.map((a, i) => `<div class="ovd-line"><span><i class="dot" style="background:${["#0f25bf", "#2a78d6", "#7aa7e6", "#b9cff2", "#1d1d1f"][i % 5]}"></i>${esc(a.m)}</span><b>${amt(a.x)}${allocTotal ? ` <span class="muted small">${Math.round((a.x / allocTotal) * 100)}%</span>` : ""}</b></div>`).join("")}
-          </div>` : `<p class="muted small">No budget split yet.</p>`}
-        </section>
-        <section class="ovd-card"><h4>Client</h4>
-          ${line("Client", esc(v(r, "Client")))}
-          ${line("Invoiced to", entity)}
-          ${line("Based in", place(v(r, "Client Location (Country)")))}
-          ${line("Client market", esc(v(r, "Client Market")))}
-          ${line("Label", esc(v(r, "Major / Indie / Other")))}
-          ${line("Under NDA", esc(v(r, "Under NDA?")))}
-          ${line("Contact", contact)}
-        </section>
-        ${v(r, "Comments") ? `<section class="ovd-card"><h4>Comments</h4><p>${esc(v(r, "Comments"))}</p></section>` : ""}
-      </div>
-      <div class="ovd-foot">
-        ${r.camp ? `<a class="btn small-btn primary" href="#/c/${esc(r.camp.id)}">Open in tracker</a>` : `<button type="button" class="small-btn primary" data-create="${r.row}">Create in tracker</button>`}
-        <a class="btn small-btn" href="${sheetLink}" target="_blank" rel="noopener">Row ${r.row} in the sheet</a>
-        <span class="muted small">${r.camp ? "Campaign details and budget split are kept in sync by the tracker; invoicing is filled in on the sheet." : "Not in the tracker yet. Create it to track posts and keep this row in sync."}</span>
-      </div>
+    const COL = ["#0f25bf", "#3a4fd0", "#6577dd", "#8b9cec", "#b4c0f4", "#4a9d6e"];
+    return `<div class="ov2-all">
+      <section><h4>Campaign</h4>
+        ${line("Starts", v(r, "Start Date") ? `${longDate(v(r, "Start Date"))}${v(r, "Duration") ? ` <span class="muted">· ${esc(v(r, "Duration"))}</span>` : ""}` : "")}
+        ${line("Type", [v(r, "Type (NR or Cat)"), v(r, "Campaign Type")].filter(Boolean).map(esc).join(" · "))}
+        ${line("Regions", esc(v(r, "Campaign Market")))}
+        ${line("Campaign cost", cost != null ? amt(cost) : "")}
+        ${allocs.length ? `<div class="ovd-alloc"><div class="ovd-alloc-head">Budget split</div>
+          <div class="ovd-bar">${allocs.map((a, i) => `<i style="flex:${a.x};background:${COL[i % COL.length]}" title="${esc(a.m)}"></i>`).join("")}</div>
+          ${allocs.map((a, i) => `<div class="ovd-line"><span><i class="dot" style="background:${COL[i % COL.length]}"></i>${esc(a.m)}</span><b>${amt(a.x)}${allocTotal ? ` <span class="muted small">${Math.round((a.x / allocTotal) * 100)}%</span>` : ""}</b></div>`).join("")}</div>` : `<p class="muted small">No budget split yet.</p>`}
+      </section>
+      <section><h4>Client</h4>
+        ${line("Based in", place(v(r, "Client Location (Country)")))}
+        ${line("Client market", esc(v(r, "Client Market")))}
+        ${line("Label", esc(v(r, "Major / Indie / Other")))}
+        ${line("Under NDA", esc(v(r, "Under NDA?")))}
+        ${line("Email", v(r, "Client Contact eMail") ? `<a href="mailto:${esc(v(r, "Client Contact eMail"))}">${esc(v(r, "Client Contact eMail"))}</a>` : "")}
+      </section>
+      <section><h4>Invoicing</h4>
+        ${line("Invoice", `${esc(v(r, "Invoice Status") || "Not invoiced")}${v(r, "Invoice #") ? ` · #${esc(v(r, "Invoice #"))}` : ""}`)}
+        ${line("Payment", v(r, "Paid") === "Paid" ? `Paid${v(r, "Date Paid") ? ` · ${esc(longDate(v(r, "Date Paid")))}` : ""}` : "Not paid")}
+      </section>
+      ${v(r, "Comments") ? `<section><h4>Comments</h4><p>${esc(v(r, "Comments"))}</p></section>` : ""}
     </div>`;
   };
-  function drawStats(list) {
-    const active = list.filter((r) => v(r, "Status") === "Active");
-    const notInv = list.filter((r) => v(r, "Invoice Status") && v(r, "Invoice Status") !== "Invoiced");
-    document.getElementById("ov-stats").innerHTML = `
-      <div class="stat"><div class="n">${n(list.length)}</div><div class="l">Campaigns${list.length !== rows.length ? ` of ${n(rows.length)}` : ""}</div></div>
-      <div class="stat"><div class="n">${n(active.length)}</div><div class="l">Active</div></div>
-      ${moneyTile(list, "Total price")}
-      ${moneyTile(notInv, `Not invoiced (${n(notInv.length)})`)}
-      <div class="stat"><div class="n">${n(list.filter((r) => r.camp).length)}</div><div class="l">In the tracker</div></div>`;
+
+  // ---------- side panel ----------
+  let current = [], openRow = null;
+  const drawer = document.createElement("div");
+  drawer.className = "ov2-drawer"; drawer.hidden = true;
+  drawer.innerHTML = `<div class="ov2-back"></div><aside class="ov2-panel" role="dialog" aria-modal="true" aria-label="Campaign"></aside>`;
+  app.appendChild(drawer);
+  const panel = drawer.querySelector(".ov2-panel");
+  const closePanel = () => { drawer.classList.remove("in"); openRow = null; listEl.querySelectorAll(".ov2-row.sel").forEach((x) => x.classList.remove("sel")); setTimeout(() => { if (!openRow) { drawer.hidden = true; panel.innerHTML = ""; } }, 220); };
+  drawer.querySelector(".ov2-back").onclick = closePanel;
+  const onKey = (e) => {
+    if (!document.body.contains(drawer)) { document.removeEventListener("keydown", onKey); return; }
+    if (drawer.hidden || document.querySelector(".dlg-back, dialog[open]")) return;
+    if (e.key === "Escape") closePanel();
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") step(e.key === "ArrowRight" ? 1 : -1);
+  };
+  document.addEventListener("keydown", onKey);
+  function step(d) { const i = current.findIndex((r) => r.row === openRow); const nx = current[i + d]; if (nx) openPanel(nx); }
+  function nextStep(r) {
+    const status = v(r, "Status"), inv = v(r, "Invoice Status") === "Invoiced", paid = v(r, "Paid") === "Paid";
+    if (!r.camp) return { text: "Not in the tracker yet. Create it to track posts and keep this row in sync.", btn: `<button type="button" data-create="${r.row}">Create in tracker</button>` };
+    if (paid) return { text: "Paid. Nothing left to do." };
+    if (inv) return { text: `Invoiced${v(r, "Invoice #") ? ` (#${esc(v(r, "Invoice #"))})` : ""}. Waiting for the client to pay.`, btn: `<a class="btn" href="#/invoices">Invoices</a>` };
+    if (status === "Completed") return { text: "Finished and not invoiced yet.", btn: `<button type="button" data-reqinv="${r.row}">Request invoice</button>`, warn: true };
+    if (status === "Active") return { text: `Live${r.camp.live_posts ? ` · ${compact(r.camp.total_plays)} plays from ${n(r.camp.live_posts)} post${r.camp.live_posts === 1 ? "" : "s"}` : " · no posts tracked yet"}.`, btn: `<a class="btn" href="#/c/${esc(r.camp.id)}/add">Add links</a>` };
+    return { text: status === "On Hold" ? "On hold." : "Not started yet." };
   }
-  function draw() {
-    const list = filtered();
-    drawStats(list);
-    if (!list.length) { listEl.innerHTML = `<div class="panel"><p>No campaigns match these filters.</p></div>`; return; }
-    listEl.innerHTML = `<div class="table-wrap ov-table"><table>
-      <thead><tr>${[["status", "Status"], ["artist", "Artist and song"], ["client", "Client"], ["dri", "DRI"], [null, "Market"], ["start", "Start"], ["price", "Price", "num"], [null, "Invoice"], [null, "Tracker"]].map(([k, label, cls]) => !k
-        ? `<th${cls ? ` class="${cls}"` : ""}>${label}</th>`
-        : `<th class="${cls ?? ""}" aria-sort="${st.sort === k ? (st.dir === "asc" ? "ascending" : "descending") : "none"}"><button type="button" class="th-sort${st.sort === k ? " on" : ""}" data-sort="${k}" title="Sort by ${label.toLowerCase()}">${label}<i aria-hidden="true">${st.sort === k ? (st.dir === "asc" ? "↑" : "↓") : "↕"}</i></button></th>`).join("")}</tr></thead>
-      <tbody>${list.map((r) => `
-        <tr class="ov-row${open.has(r.row) ? " open" : ""}" data-row="${r.row}" tabindex="0" aria-expanded="${open.has(r.row)}">
-          <td>${statusChip(v(r, "Status"))}</td>
-          <td><div class="artist">${esc(v(r, "Artist Name") || "–")}</div><div class="song small">${esc(v(r, "Song Name (s) or Project Name"))}</div>${v(r, "Stellar PO no.") ? `<div class="muted small ov-po">${esc(v(r, "Stellar PO no."))}${copyBtn(v(r, "Stellar PO no."))}</div>` : ""}</td>
-          <td><div>${esc(v(r, "Client"))}</div><div class="muted small">${esc(v(r, "Client Market"))}</div></td>
-          <td>${esc(v(r, "Stellar DRI"))}</td>
-          <td class="small">${esc(v(r, "Campaign Market"))}</td>
-          <td class="small">${esc(v(r, "Start Date"))}${v(r, "Duration") ? `<div class="muted">${esc(v(r, "Duration"))}</div>` : ""}</td>
-          <td class="num">${v(r, "Price") ? `${esc(v(r, "Price"))} <span class="muted small">${esc(v(r, "Currency"))}</span>` : "–"}</td>
-          <td class="small">${v(r, "Invoice Status") === "Invoiced" ? `<span class="status finished">Invoiced</span>` : esc(v(r, "Invoice Status"))}${v(r, "Paid") === "Paid" ? ` <span class="status active">Paid</span>` : ""}</td>
-          <td><div class="ov-tr">${r.camp
-            ? `<a class="btn small-btn" href="#/c/${esc(r.camp.id)}" data-stop>Open</a>`
-            : `<button type="button" class="small-btn" data-create="${r.row}">Create</button>`}
-            <div class="row-tools">
-              ${r.camp ? `<a href="#/c/${esc(r.camp.id)}/edit" title="Edit" aria-label="Edit" data-stop>${TOOL_ICON.edit}</a>` : `<a href="${SHEET_URL}&range=A${r.row}" target="_blank" rel="noopener" title="Edit in the sheet" aria-label="Edit in the sheet" data-stop>${TOOL_ICON.sheet}</a>`}
-              <button type="button" class="del" data-ovdel="${r.row}" title="Delete" aria-label="Delete">${TOOL_ICON.del}</button>
-            </div></div>
-            ${r.camp ? `<div class="muted small">${r.camp.live_posts ? `${compact(r.camp.total_plays)} plays` : "no posts yet"}</div>` : ""}</td>
-        </tr>
-        ${open.has(r.row) ? `<tr class="ov-detail-row"><td colspan="9">${detail(r)}</td></tr>` : ""}`).join("")}</tbody></table></div>`;
-    listEl.querySelectorAll(".ov-row").forEach((tr) => {
-      const toggle = () => { const k = Number(tr.dataset.row); if (open.has(k)) open.delete(k); else open.add(k); draw(); };
-      tr.onclick = (e) => { if (e.target.closest("[data-stop],[data-create],[data-ovdel]")) return; toggle(); };
-      tr.onkeydown = (e) => { if (e.key === "Enter" && e.target === tr) toggle(); };
-    });
-    listEl.querySelectorAll("[data-ovdel]").forEach((b) => (b.onclick = async () => {
+  function openPanel(r) {
+    openRow = r.row;
+    listEl.querySelectorAll(".ov2-row").forEach((x) => x.classList.toggle("sel", Number(x.dataset.row) === r.row));
+    const i = current.findIndex((x) => x.row === r.row);
+    const status = v(r, "Status"), inv = v(r, "Invoice Status") === "Invoiced", paid = v(r, "Paid") === "Paid";
+    const at = paid ? 3 : inv ? 2 : status === "Active" || status === "Completed" ? 1 : 0;
+    const steps = ["Booked", "Live", "Invoiced", "Paid"];
+    const price = sheetNumber(v(r, "Price")), cost = sheetNumber(v(r, "Campaign Cost"));
+    const margin = v(r, "Margin") || (price && cost != null ? `${Math.round(((price - cost) / price) * 100)}%` : "–");
+    const ns = nextStep(r);
+    const contact = v(r, "Client Contact Name") || v(r, "Client Contact eMail");
+    panel.innerHTML = `
+      <div class="ov2-ptop"><span class="ov2-nav"><button type="button" data-step="-1" aria-label="Previous campaign"${i <= 0 ? " disabled" : ""}>‹</button><button type="button" data-step="1" aria-label="Next campaign"${i >= current.length - 1 ? " disabled" : ""}>›</button><span>${i + 1} of ${current.length}</span></span>
+        <button type="button" class="ov2-x" aria-label="Close">×</button></div>
+      <div class="ov2-ph">${avatar(r, true)}<div><h2>${esc(v(r, "Artist Name") || "–")}</h2><div class="muted">${esc(v(r, "Song Name (s) or Project Name"))}</div><div class="ov2-phkeys">${poPill(r)}${statusPill(status)}</div></div></div>
+      <div class="ov2-track" aria-label="Progress">${steps.map((_, k) => `${k ? `<b class="${k <= at ? "on" : ""}"></b>` : ""}<i class="${k <= at ? "on" : ""}"></i>`).join("")}</div>
+      <div class="ov2-trackl">${steps.map((l, k) => `<span class="${k === at ? "on" : ""}">${l}</span>`).join("")}</div>
+      <div class="ov2-big">
+        <div><b>${price != null ? Math.round(price).toLocaleString("en-GB") : "–"} <small>${esc(v(r, "Currency"))}</small></b><span>Price</span></div>
+        <div><b>${esc(margin)}</b><span>Margin</span></div>
+        <div><b>${r.camp?.total_plays ? compact(r.camp.total_plays) : "–"}</b><span>Plays</span></div>
+      </div>
+      <dl class="ov2-facts">
+        <div><dt>Client</dt><dd>${esc(v(r, "Client") || "–")}</dd></div>
+        <div><dt>Invoicing entity</dt><dd>${esc(v(r, "Invoicing Entity") || "–")}</dd></div>
+        <div><dt>Starts</dt><dd>${v(r, "Start Date") ? esc(longDate(v(r, "Start Date"))) : "–"}${v(r, "Duration") ? ` · ${esc(v(r, "Duration"))}` : ""}</dd></div>
+        <div><dt>Stellar DRI</dt><dd>${esc(v(r, "Stellar DRI") || "–")}</dd></div>
+        <div><dt>Client market</dt><dd>${esc((v(r, "Client Market") || "–").replace(/^Stellar /, ""))}</dd></div>
+        <div><dt>Contact</dt><dd>${esc(contact || "–")}</dd></div>
+      </dl>
+      <details class="ov2-more"><summary>All details</summary>${details(r)}</details>
+      <div class="ov2-next${ns.warn ? " warn" : ""}"><small>Next step</small><div><span>${ns.text}</span>${ns.btn ?? ""}</div></div>
+      <div class="ov2-pfoot">
+        ${r.camp ? `<a class="btn primary" href="#/c/${esc(r.camp.id)}">Open campaign</a>` : `<button type="button" class="primary" data-create="${r.row}">Create in tracker</button>`}
+        <details class="ov2-menu"><summary aria-label="More actions">⋯</summary><div>
+          ${r.camp ? `<a href="#/c/${esc(r.camp.id)}/edit">Edit campaign</a>` : ""}
+          <a href="${SHEET_URL}&range=A${r.row}" target="_blank" rel="noopener">Row ${r.row} in the sheet ↗</a>
+          <button type="button" class="danger" data-ovdel="${r.row}">Delete…</button></div></details>
+      </div>`;
+    panel.querySelector(".ov2-x").onclick = closePanel;
+    panel.querySelectorAll("[data-step]").forEach((b) => (b.onclick = () => step(Number(b.dataset.step))));
+    bindActions(panel);
+    if (drawer.hidden) { drawer.hidden = false; requestAnimationFrame(() => drawer.classList.add("in")); }
+    panel.scrollTop = 0;
+  }
+
+  function bindActions(root) {
+    root.querySelectorAll("[data-ovdel]").forEach((b) => (b.onclick = async () => {
       const r = rows.find((x) => x.row === Number(b.dataset.ovdel));
       const name = `${v(r, "Artist Name") || "this campaign"}${v(r, "Song Name (s) or Project Name") ? ` – ${v(r, "Song Name (s) or Project Name")}` : ""}`;
       if (r.camp) {
@@ -698,11 +749,68 @@ async function renderOverview(token) {
       }
       renderOverview(newToken());
     }));
-    listEl.querySelectorAll("[data-create]").forEach((b) => (b.onclick = () => {
+    root.querySelectorAll("[data-create]").forEach((b) => (b.onclick = () => {
       const r = rows.find((x) => x.row === Number(b.dataset.create));
       sessionStorageSet("prefill", JSON.stringify(prefillFromRow(r)));
       go("#/new");
     }));
+    root.querySelectorAll("[data-reqinv]").forEach((b) => (b.onclick = async () => {
+      const r = rows.find((x) => x.row === Number(b.dataset.reqinv));
+      const { data: c } = await sb.from("campaign_summary").select("*").eq("id", r.camp.id).maybeSingle();
+      if (c) requestInvoiceDialog(sb, c, { toast, onDone: () => { b.disabled = true; b.textContent = "Requested"; } });
+    }));
+  }
+
+  function drawStats(list) {
+    const live = list.filter((r) => v(r, "Status") === "Active");
+    const notInv = list.filter((r) => v(r, "Invoice Status") && v(r, "Invoice Status") !== "Invoiced");
+    const usdTxt = (t) => (t.curs.length ? `$${Math.round(t.usd).toLocaleString("en-US")}` : "–");
+    const all = totalsUsd(list), ni = totalsUsd(notInv);
+    const tip = (t) => esc(t.curs.map(([c, x]) => `${c} ${Math.round(x).toLocaleString("en-GB")}`).join(" · "));
+    document.getElementById("ov-stats").innerHTML = `
+      <div><div class="n">${n(live.length)}</div><div class="l">Live now</div></div>
+      <div title="${tip(all)}"><div class="n">${usdTxt(all)}</div><div class="l">Booked${list.length !== rows.length ? " in this view" : ""} · ${n(list.length)} campaign${list.length === 1 ? "" : "s"}</div></div>
+      <div class="warn" title="${tip(ni)}"><div class="n">${usdTxt(ni)}</div><div class="l">Still to invoice · ${n(notInv.length)}</div></div>
+      <div><div class="n">${n(list.filter((r) => r.camp).length)}</div><div class="l">In the tracker</div></div>`;
+  }
+  const COLS = [[null, ""], ["artist", "Artist and song"], [null, "PO number"], ["client", "Client"], ["dri", "Stellar DRI"], ["start", "Starts"], ["price", "Price", "num"], ["status", "Status", "end"]];
+  function draw() {
+    const base = filtered(true);
+    STATUS_TABS.forEach(([k]) => { const el = app.querySelector(`[data-ovcount="${CSS.escape(k)}"]`); if (el) el.textContent = n(k ? base.filter((r) => v(r, "Status") === k).length : base.length); });
+    app.querySelectorAll("[data-ovtab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.ovtab === st.status)));
+    const list = filtered();
+    current = list;
+    drawStats(st.status ? base : list);
+    if (!list.length) { listEl.innerHTML = `<div class="panel ov2-empty"><p>No campaigns ${st.status ? `are ${esc((STATUS_PILL[st.status] ?? [, st.status])[1].toLowerCase())}` : "match"}${st.q || FILTERS.some((f) => st[f.key]) ? " with these filters" : ""}.</p></div>`; return; }
+    const head = `<div class="ov2-cols">${COLS.map(([k, label, cls]) => !k ? `<span class="${cls ?? ""}">${label}</span>`
+      : `<button type="button" class="${cls ?? ""}${st.sort === k ? " on" : ""}" data-sort="${k}" title="Sort by ${label.toLowerCase()}">${label}${st.sort === k ? `<i>${st.dir === "asc" ? "↑" : "↓"}</i>` : ""}</button>`).join("")}</div>`;
+    const rowHtml = (r) => `
+      <div class="ov2-row${openRow === r.row ? " sel" : ""}" data-row="${r.row}" tabindex="0" role="button" aria-label="${esc(v(r, "Artist Name"))} ${esc(v(r, "Song Name (s) or Project Name"))}">
+        ${avatar(r)}
+        <div class="ov2-t"><b>${esc(v(r, "Artist Name") || "–")}</b><span>${esc(v(r, "Song Name (s) or Project Name") || "—")}</span></div>
+        <div>${poPill(r)}</div>
+        <div class="ov2-c" title="${esc(v(r, "Client"))}">${esc(v(r, "Client") || "—")}</div>
+        <div class="ov2-c">${esc(v(r, "Stellar DRI") || "—")}</div>
+        <div class="ov2-when">${v(r, "Start Date") ? `<b>${esc(shortDate(v(r, "Start Date")) || v(r, "Start Date"))}</b>` : `<b class="muted">—</b>`}<small>${esc(v(r, "Duration"))}</small></div>
+        <div class="ov2-price" title="${priceUsd(r) != null && curOf(r) !== "USD" ? `≈ $${Math.round(priceUsd(r)).toLocaleString("en-US")}` : ""}">${v(r, "Price") ? `${Math.round(sheetNumber(v(r, "Price")) ?? 0).toLocaleString("en-GB")}<span>${esc(v(r, "Currency"))}</span>` : "–"}${invoiceDue(r) ? `<em>Invoice due</em>` : ""}</div>
+        <div class="ov2-st">${statusPill(v(r, "Status"))}</div>
+      </div>`;
+    let body;
+    if (st.sort === "start") {
+      const groups = new Map();
+      for (const r of list) { const d = sheetDate(v(r, "Start Date")); const k = d ? d.slice(0, 7) : ""; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); }
+      body = [...groups.entries()].map(([k, rs]) => {
+        const t = totalsUsd(rs);
+        return `<div class="ov2-month"><span>${k ? `${MON[Number(k.slice(5)) - 1]} ${k.slice(0, 4)}` : "No start date"}</span><span>${n(rs.length)}${t.curs.length ? ` · $${Math.round(t.usd / 1000)}K` : ""}</span></div>
+          <div class="ov2-list">${rs.map(rowHtml).join("")}</div>`;
+      }).join("");
+    } else body = `<div class="ov2-list ov2-flat">${list.map(rowHtml).join("")}</div>`;
+    listEl.innerHTML = head + body;
+    listEl.querySelectorAll(".ov2-row").forEach((el) => {
+      const r = rows.find((x) => x.row === Number(el.dataset.row));
+      el.onclick = (e) => { if (e.target.closest("[data-copy],a,button")) return; openPanel(r); };
+      el.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === el) { e.preventDefault(); openPanel(r); } };
+    });
   }
   const sortSel = document.getElementById("ov-sort");
   const fcount = document.getElementById("ov-fcount");
@@ -716,10 +824,11 @@ async function renderOverview(token) {
     const el = document.getElementById(elId); el.value = st[key];
     el.oninput = () => { st[key] = el.value; if (key !== "q") persist(); refreshControls(); draw(); };
   };
-  bind("ov-q", "q"); bind("ov-status", "status");
+  bind("ov-q", "q");
   FILTERS.forEach((f) => bind(`ov-${f.key}`, f.key));
+  app.querySelectorAll("[data-ovtab]").forEach((b) => (b.onclick = () => { st.status = b.dataset.ovtab; persist(); draw(); }));
   sortSel.onchange = () => { [st.sort, st.dir] = sortSel.value.split(":"); persist(); draw(); };
-  // Column headers sort too: click once for the natural direction, again to flip it.
+  // Column labels sort too: click once for the natural direction, again to flip it.
   listEl.addEventListener("click", (e) => {
     const b = e.target.closest("[data-sort]");
     if (!b) return;
