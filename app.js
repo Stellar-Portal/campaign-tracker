@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026a";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026a";
-import { renderRoster } from "./roster.js?v=20261026a";
-import { renderDiscover } from "./discover.js?v=20261026a";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026a";
-import { renderTrending } from "./trending.js?v=20261026a";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026a";
-import { confirmDialog } from "./dialog.js?v=20261026a";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026a";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026a";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026b";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026b";
+import { renderRoster } from "./roster.js?v=20261026b";
+import { renderDiscover } from "./discover.js?v=20261026b";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026b";
+import { renderTrending } from "./trending.js?v=20261026b";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026b";
+import { confirmDialog } from "./dialog.js?v=20261026b";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026b";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026b";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -1238,7 +1238,6 @@ async function renderCampaign(token, id, tab = "report") {
     postDaily: async (vid) => (await sb.from("post_daily_stats").select("stat_date,plays,likes,comments,shares").eq("tiktok_video_id", vid).order("stat_date")).data ?? [],
     remove: async (p) => { const { error: e } = await sb.from("posts").delete().eq("campaign_id", id).eq("tiktok_video_id", p.video_id); if (e) toast(e.message); return !e; },
     header: "",
-    avatarAction: `<button type="button" class="art-edit" id="art-edit">Change</button>`,
     heroMeta: `<span class="key-chip status-chip s-${esc(c.status)}">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span class="key-chip po"><span class="key-sub">PO</span><span class="key-text">${esc(c.po_number)}</span>${copyBtn(c.po_number)}</span>` : ""}`,
     heroActions: `
       <a class="btn primary" href="#/c/${esc(id)}/add">Add links</a>
@@ -1308,10 +1307,6 @@ async function renderCampaign(token, id, tab = "report") {
       document.getElementById("share-btn").onclick = (e) => toggleSharePanel(e.currentTarget, c);
       document.getElementById("req-inv").onclick = () => requestInvoiceDialog(sb, c, { toast, onDone: () => renderCampaign(newToken(), id, tab) });
       document.getElementById("del-camp").onclick = () => deleteCampaignFlow(c);
-      document.getElementById("art-edit").onclick = async () => {
-        const pick = await artistPictureDialog(c.artist);
-        if (pick && (await saveArtist(c.artist, pick))) { toast("Artist picture updated"); renderCampaign(++routeToken, id); }
-      };
       document.getElementById("refresh").onclick = async (e) => {
         const btn = e.currentTarget;
         btn.disabled = true; btn.textContent = "Refreshing…";
