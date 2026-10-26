@@ -10,6 +10,12 @@ Read this first. README.md has the long, human version. This file is the short v
 - Regions are named **West** (Americas), **Central** (Europe, Africa, Middle East up to Russia) and **East** (Asia incl. Japan and Australia). Keep those names.
 - Copy style: plain words, no jargon, in-app dialogs (`dialog.js` `confirmDialog`). Never use `confirm()` or `prompt()`.
 
+## Pending fixes (Sam's to-do list)
+Sam asked: keep these until he asks to solve them, and **list them every time he asks to build or fix something else**. Remove an item only once it's done.
+1. **Spot new posts cheaply:** once a day, check the newest videos of the creators on each active campaign's payout sheet through ScrapeCreators (about 1 credit per creator) and add any video that uses the campaign's sound to the right folder. Replaces paying Influencers.club monitoring (0.3 credits per creator per day).
+2. **Cheaper audience lookup:** `creator-insights` buys Influencers.club "Full" (1 credit). Split it: "Analytics" (0.8) when only the audience is needed, "Profile" (0.2) when only the email is needed.
+3. **Influencers.club top-up only when needed:** for vetting on the payout sheet (audience location vs the client's market, audience credibility score) and lookalike shortlists seeded from the campaign's best-performing creators. Their account currently has no credits.
+
 ## Stack
 - Front end: static ES modules on GitHub Pages (https://stellar-portal.github.io/campaign-tracker/), no build step.
   - Cache-busting `?v=YYYYMMDDx` on every import. Bump it everywhere with `grep -rl OLD --include=*.js --include=*.html . | xargs sed -i 's/OLD/NEW/g'`.
