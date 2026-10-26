@@ -2074,3 +2074,12 @@ tr:hover .po-manual, .po-manual:focus { opacity: 1; }
 .people-pick .pp { padding: 7px 14px; border-radius: var(--pill); border: 1px solid var(--hairline); background: var(--canvas); color: var(--ink-80); font-size: 14px; font-weight: 500; }
 .people-pick .pp[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
 .people-pick .pp[aria-pressed="true"]::before { content: "✓ "; }
+/* Bigger previews, quieter numbers */
+.sh-wall.wall, .wall { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 20px; }
+.post .cover .cap { padding: 12px 14px 12px; }
+.post .cover .cap .cap-who { font-size: 12px; }
+.post .cover .cap .cap-views { font-size: 12px; }
+.post .cover .cap .plays { font-size: 18px; }
+.post .cover .tile-top .chip { font-size: 11px; padding: 3px 9px; }
+.post .cover::after { inset: 62% 0 0; }
+@media (max-width: 700px) { .sh-wall.wall, .wall { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } }
