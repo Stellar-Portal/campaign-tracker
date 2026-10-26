@@ -2086,3 +2086,5 @@ tr:hover .po-manual, .po-manual:focus { opacity: 1; }
 /* TikTok's like/comment/share buttons only send people to TikTok: a transparent shield over that strip */
 .pm-shield { position: absolute; right: 0; top: 38%; width: 72px; bottom: 56px; z-index: 2; }
 .pm-tap { z-index: 1; }
+/* Until TikTok's player reports in, clicks go straight to it (that's what wakes it up) */
+.pm-media:not(.api) .pm-tap { pointer-events: none; }
