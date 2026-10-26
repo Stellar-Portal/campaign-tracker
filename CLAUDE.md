@@ -51,7 +51,7 @@ Read this first. README.md has the long, human version. This file is the short v
 ## Data model essentials
 - `campaigns` → `posts` → `post_daily_stats` / `post_latest_stats`; `campaign_sounds`, `campaign_markets` (16 markets), `campaign_folders`.
 - `campaign_summary` view (security_invoker): spend = `creator_costs` + `payout_rows`.
-- Payouts: `payout_sections` and `payout_rows`. Statuses: contacted, waiting_draft, drafted, waiting_payment, paid. The "handled_by" person both sources and pays the creator.
+- Payouts: `payout_sections` and `payout_rows`. Statuses: contacted, waiting_draft, drafted, waiting_payment (shown as "Waiting to post"), posted ("Posted · to pay", set automatically when all commissioned videos are in the tracker), paid. Rows link to creators by `creator_id` (exact handle match, or the "Same person" suggestion for near-misses). Any two of videos / price per video / total compute the third. "Sourced & paid by" only offers the campaign's runners (`campaigns.campaign_runner`, comma-separated team names) and DRI. Margin on the tab = invoiced budget − creator costs.
   - **Creator budget** = `campaigns.spend_cap_percent` (default 30) × budget, and it's a hard limit.
 - Invoices: `invoice_requests`, statuses requested, returned, invoiced, paid, cancelled.
   - A trigger syncs `campaigns.invoiced`.
@@ -59,6 +59,9 @@ Read this first. README.md has the long, human version. This file is the short v
   - Invoices are actually sent from e-conomic. The integration isn't built yet: it's waiting on Sam's app approval (Sales role only for now).
 - Artist pictures: `artists` (name_key, image_url, cm_artist), filled by `artist-search` when a campaign is created or edited. The overview auto-looks-up missing ones (exact name match, max 25 per session).
 - Share links: `share_links`, with settings per category; folders can be hidden.
+- Folders show creators, not uploads: creators with videos in the folder plus `campaign_folder_creators` (added by profile link via the `roster` function's `lookup` action, which never puts them on the roster).
+- `posts.boost_code` (+ `_updated_at`, `_by`): TikTok Spark Ads code per video, team only; the `share` function selects explicit columns and never sends it.
+- Creator avatars are copied to the `avatars` bucket by both `roster` and `process-links` (TikTok's own links expire).
 
 ## Front-end map
 - `app.js`: router, nav and page cache. Desktop menu is icons-only and opens almost instantly on hover (120ms) and pushes the page aside (never covers it), closing 150ms after the pointer leaves or on a click in the page (`navPeek`); Ctrl/⌘+\\ toggles it. Phones keep the top bar.
@@ -66,6 +69,6 @@ Read this first. README.md has the long, human version. This file is the short v
   - Also: overview (`renderOverview`), campaign page (`renderCampaign`: Report/Payouts tabs switch in place, share dialog, ⋯ menu), campaign form, folders.
 - Pop-ups: one app-wide handler (`closePopups` in app.js) closes them on an outside click or Escape. Menus/dropdowns built as `<details>` must be listed in `POPUP_DETAILS`; button-opened panels get `data-pop` and `aria-controls` on their button. Modal `<dialog>`s close on a click on the dimmed backdrop.
 - Artist banners (`.art-band`) are rounded floating cards; on the campaign page the details card overlaps the banner's bottom.
-- `report.js`: charts and post wall, shared with the client view.
+- `report.js`: charts and post wall, shared with the client view. Charts show all four metrics by default and start at zero ("Posted"/"Start") so a line appears from the first check. The video preview drives TikTok's embed with `controls=0` and its postMessage API (own play/seek/mute bar); switching tabs never reloads the video.
 - `payouts.js`, `invoices.js`, `analytics.js` (tabs, zoom routes `#/analytics/<kind>/<value>`), `trending.js`, `roster.js`, `discover.js`.
 - Tests are throwaway Playwright scripts with mocked REST, kept in the session scratchpad and not in the repo. Check every change at 1440px and 390px for zero horizontal overflow and zero page errors.

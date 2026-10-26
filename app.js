@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026j";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026j";
-import { renderRoster } from "./roster.js?v=20261026j";
-import { renderDiscover } from "./discover.js?v=20261026j";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026j";
-import { renderTrending } from "./trending.js?v=20261026j";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026j";
-import { confirmDialog } from "./dialog.js?v=20261026j";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026j";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026j";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026k";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026k";
+import { renderRoster } from "./roster.js?v=20261026k";
+import { renderDiscover } from "./discover.js?v=20261026k";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026k";
+import { renderTrending } from "./trending.js?v=20261026k";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026k";
+import { confirmDialog } from "./dialog.js?v=20261026k";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026k";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026k";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -311,7 +311,7 @@ autoNav.addEventListener?.("change", applyNavMode);
 // One handler for the whole app, so it keeps working on pages restored from the page cache.
 const POPUP_DETAILS = "details.ov2-menu, details.camp-menu, details.ro-more, details.ro-lists, details.df";
 function closePopups(except) {
-  document.querySelectorAll(`${POPUP_DETAILS}`).forEach((d) => { if (d.open && !(except && d.contains(except))) d.open = false; });
+  document.querySelectorAll(`${POPUP_DETAILS}`).forEach((d) => { if (d.open && !(except && (d.contains(except) || except.closest?.(".camp-menu-pop")))) d.open = false; });
   document.querySelectorAll("[data-pop]:not([hidden])").forEach((p) => {
     const btn = p.id ? document.querySelector(`[aria-controls="${CSS.escape(p.id)}"]`) : null;
     if (except && (p.contains(except) || btn?.contains(except))) return;
@@ -982,6 +982,7 @@ async function renderForm(token, id) {
     }
   }
   const allMarkets = await marketList();
+  const teamNames = ((await sb.from("team_members").select("name")).data ?? []).map((t) => t.name).filter((x) => x && x !== "Admin").sort();
   if (id) {
     const [{ data, error }, m, s] = await Promise.all([
       sb.from("campaigns").select("*").eq("id", id).single(),
@@ -1023,7 +1024,13 @@ async function renderForm(token, id) {
         <div><label for="budget">Price (budget)</label><input id="budget" type="number" min="0" step="0.01" value="${v("budget")}"></div>
         <div><label for="currency">Currency</label><input id="currency" list="currencies" maxlength="3" value="${v("currency")}">${list("currencies", CURRENCIES)}</div>
         <div><label for="comms_owner">Stellar DRI</label><input id="comms_owner" value="${v("comms_owner")}"></div>
-        <div><label for="campaign_runner">Campaign runner</label><input id="campaign_runner" value="${v("campaign_runner")}"></div>
+        <div class="runner-field"><label id="runner-l">Running the campaign</label>
+          <div class="people-pick" id="runner-pick" role="group" aria-labelledby="runner-l">${(() => {
+            const sel = splitPeople(c.campaign_runner);
+            return [...new Set([...teamNames, ...sel])].map((nm) => `<button type="button" class="pp" data-pp="${esc(nm)}" aria-pressed="${sel.includes(nm)}">${esc(nm)}</button>`).join("") || `<span class="muted small">Add team members first.</span>`;
+          })()}</div>
+          <input type="hidden" id="campaign_runner" value="${v("campaign_runner")}">
+          <p class="hint">The people who reach out to and pay creators. Only they are offered in the payout sheet.</p></div>
       </div>
 
       <h2>Client</h2>
@@ -1149,6 +1156,10 @@ async function renderForm(token, id) {
   $("po_number").onblur = () => { const po = normalisePO($("po_number").value); if (po) $("po_number").value = po; };
   $("budget").oninput = totals;
   $("currency").oninput = totals;
+  document.querySelectorAll("#runner-pick [data-pp]").forEach((b) => (b.onclick = () => {
+    b.setAttribute("aria-pressed", String(b.getAttribute("aria-pressed") !== "true"));
+    $("campaign_runner").value = [...document.querySelectorAll('#runner-pick [aria-pressed="true"]')].map((x) => x.dataset.pp).join(", ");
+  }));
 
   $("cf").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -1383,6 +1394,18 @@ async function renderCampaign(token, id, tab = "report") {
     loadCovers: async (ids) => (await call({ covers: ids })).covers ?? {},
     postDaily: async (vid) => (await sb.from("post_daily_stats").select("stat_date,plays,likes,comments,shares").eq("tiktok_video_id", vid).order("stat_date")).data ?? [],
     remove: async (p) => { const { error: e } = await sb.from("posts").delete().eq("campaign_id", id).eq("tiktok_video_id", p.video_id); if (e) toast(e.message); return !e; },
+    loadBoost: async (p) => {
+      const { data } = await sb.from("posts").select("boost_code,boost_code_updated_at,boost_code_by").eq("campaign_id", id).eq("tiktok_video_id", p.video_id).maybeSingle();
+      Object.assign(p, { boost_code: data?.boost_code ?? null, boost_code_updated_at: data?.boost_code_updated_at ?? null, boost_code_by: data?.boost_code_by ?? null });
+    },
+    saveBoost: async (p, code) => {
+      const at = code ? new Date().toISOString() : null, by = code ? (await sb.auth.getUser()).data.user?.email ?? null : null;
+      const { error: e } = await sb.from("posts").update({ boost_code: code, boost_code_updated_at: at, boost_code_by: by }).eq("campaign_id", id).eq("tiktok_video_id", p.video_id);
+      if (e) { toast(e.message); return false; }
+      Object.assign(p, { boost_code: code, boost_code_updated_at: at, boost_code_by: by });
+      toast(code ? "Boost code saved" : "Boost code removed");
+      return true;
+    },
     header: "",
     heroMeta: `<span class="key-chip status-chip s-${esc(c.status)}">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span class="key-chip po"><span class="key-sub">PO</span><span class="key-text">${esc(c.po_number)}</span>${copyBtn(c.po_number)}</span>` : ""}`,
     heroActions: `
@@ -1403,9 +1426,15 @@ async function renderCampaign(token, id, tab = "report") {
         </dl>
         ${sheetLine(sync.data, c)}
       </section>
-      <div class="camp-tabs" role="tablist" aria-label="Campaign views">
-        <button type="button" role="tab" data-ctab="report" aria-selected="${tab === "report"}">Report</button>
-        <button type="button" role="tab" data-ctab="payouts" aria-selected="${tab === "payouts"}">Payouts <span class="team-tag">team only</span></button>
+      <div class="ws-switch" role="tablist" aria-label="Campaign views">
+        <button type="button" role="tab" data-ctab="report" aria-selected="${tab === "report"}">
+          <span class="ws-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19h16M7 16V10M12 16V5M17 16v-4"/></svg></span>
+          <span class="ws-t"><b>Report</b><small>Performance and videos, as the client sees them</small></span>
+        </button>
+        <button type="button" role="tab" data-ctab="payouts" aria-selected="${tab === "payouts"}">
+          <span class="ws-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18M16 14.5h2"/></svg></span>
+          <span class="ws-t"><b>Payouts</b><small>Creators, costs and margin · team only</small></span>
+        </button>
       </div>
       <section id="camp-payouts" class="camp-payouts"${tab === "payouts" ? "" : " hidden"}></section>`,
     postsHtml: `
@@ -1415,11 +1444,11 @@ async function renderCampaign(token, id, tab = "report") {
         <div class="posts-tools">
           <a class="btn primary" href="#/c/${esc(id)}/add">+ Add links</a>
           <button type="button" id="refresh" title="${lastChecked ? `Numbers checked ${esc(timeAgo(lastChecked))}` : "Not checked yet"}">Refresh numbers</button>
-          <div class="seg" role="group" aria-label="Layout"><button type="button" data-pview="folders">Folders</button><button type="button" data-pview="grid">All posts</button></div>
+          <div class="seg" role="group" aria-label="Layout"><button type="button" data-pview="folders">Creators by folder</button><button type="button" data-pview="grid">All videos</button></div>
           <button type="button" id="new-folder">New folder</button>
-          <button type="button" id="pick-toggle" aria-pressed="false">Select posts</button>
-          <label class="small" style="display:flex;gap:8px;align-items:center;margin:0">Sort by
-            <select id="sort" style="width:auto"><option value="plays">Most plays</option><option value="newest">Newest first</option><option value="added">Recently added</option></select>
+          <label class="posts-filter" id="folder-filter-wrap" hidden><span class="sr">Folder</span><select id="folder-filter" aria-label="Show videos from"></select></label>
+          <label class="posts-filter"><span class="sr">Sort by</span>
+            <select id="sort" aria-label="Sort by"><option value="plays">Most views</option><option value="newest">Newest first</option><option value="added">Recently added</option></select>
           </label>
         </div>
       </div>
@@ -1431,11 +1460,8 @@ async function renderCampaign(token, id, tab = "report") {
           <button type="submit" class="primary">Create folder</button>
           <button type="button" class="link-btn" id="nf-cancel">Cancel</button>
         </div>
-        <p class="muted small">Folders group posts inside this campaign. Move posts in with <b>Select posts</b>, or add links straight into a folder with its <b>+ Add links</b> button.</p>
+        <p class="muted small">Folders group creators and their videos inside this campaign, for example by creative. Add video or profile links straight into a folder with its <b>+ Add</b> button, or move a video from its preview.</p>
       </form>
-      <div id="folders" class="folders"></div>
-      <section id="folder-panel" class="panel share-panel" hidden></section>
-      <div id="pick-bar" class="pick-bar" hidden></div>
       <div id="posts"><p class="muted">Loading posts…</p></div>
       </div>`,
     onPosts: (root, data) => {
@@ -1455,15 +1481,21 @@ async function renderCampaign(token, id, tab = "report") {
       document.getElementById("share-btn").onclick = () => openShareDialog(c);
       const menu = app.querySelector(".camp-menu");
       if (menu) {
-        // The hero clips overflow, so the menu floats in fixed position under its button.
+        // The banner is its own layer (and the details card sits on top of it), so the open menu
+        // is moved to the page body and floats under its button, above everything.
+        const box = menu.querySelector("div");
+        box.classList.add("camp-menu-pop");
         const place = () => {
-          if (!menu.isConnected) { window.removeEventListener("scroll", place); return; }
+          if (!menu.isConnected) { window.removeEventListener("scroll", place); box.remove(); return; }
           if (!menu.open) return;
-          const r = menu.querySelector("summary").getBoundingClientRect(), box = menu.querySelector("div");
+          const r = menu.querySelector("summary").getBoundingClientRect();
           box.style.top = `${r.bottom + 6}px`;
-          box.style.left = `${Math.min(r.left, window.innerWidth - 206)}px`;
+          box.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 214))}px`;
         };
-        menu.addEventListener("toggle", place);
+        menu.addEventListener("toggle", () => {
+          if (menu.open) { document.body.append(box); place(); } else menu.append(box);
+        });
+        box.addEventListener("click", (e) => { if (e.target.closest("a,button")) menu.open = false; });
         window.addEventListener("scroll", place, { passive: true });
       }
       document.getElementById("req-inv").onclick = () => requestInvoiceDialog(sb, c, { toast, onDone: () => renderCampaign(newToken(), id, tab) });
@@ -1679,14 +1711,15 @@ async function loadSounds(token, id) {
 
 async function loadPosts(token, id, camp) {
   const el = document.getElementById("posts");
-  let posts, folders, folderLinks = {};
+  let posts, folders, folderLinks = {}, fcs = [];
   try {
     [posts, { data: folders }] = await Promise.all([
       fetchAll(() => sb.from("posts")
-        .select("id,folder_id,tiktok_video_id,url,caption,published_at,country_code,cover_path,status,created_at,sound:sounds(title),creator:creators(id,username,display_name,follower_count,is_verified,avatar_url,country_code,on_roster,platform)")
+        .select("id,folder_id,tiktok_video_id,url,caption,published_at,country_code,cover_path,status,created_at,boost_code,boost_code_updated_at,boost_code_by,sound:sounds(title),creator:creators(id,username,display_name,follower_count,is_verified,avatar_url,country_code,on_roster,platform)")
         .eq("campaign_id", id).order("created_at", { ascending: false })),
       sb.from("campaign_folders").select("id,name,market,position,hidden,created_at").eq("campaign_id", id).order("position").order("created_at"),
     ]);
+    fcs = (await sb.from("campaign_folder_creators").select("id,folder_id,creator_id,created_at,creator:creators(id,username,display_name,follower_count,is_verified,avatar_url,country_code,on_roster,platform)").eq("campaign_id", id)).data ?? [];
     folderLinks = Object.fromEntries(((await sb.from("share_links").select("id,token,folder_id").eq("campaign_id", id).eq("revoked", false).not("folder_id", "is", null)).data ?? []).map((l) => [l.folder_id, l]));
   } catch (e) { el.innerHTML = fail(e); return; }
   if (token !== routeToken) return;
@@ -1710,6 +1743,7 @@ async function loadPosts(token, id, camp) {
       country: p.creator?.country_code ?? p.country_code ?? null, sound_title: p.sound?.title ?? null, gone: p.status !== "active", has_cover: !!p.cover_path,
       creator: p.creator ? { id: p.creator.id, on_roster: p.creator.on_roster, platform: p.creator.platform, username: p.creator.username, name: p.creator.display_name, followers: p.creator.follower_count, verified: p.creator.is_verified, avatar: p.creator.avatar_url } : null,
       plays: st.plays ?? null, likes: st.likes ?? null, comments: st.comments ?? null, shares: st.shares ?? null, stats_date: st.stat_date ?? null,
+      boost_code: p.boost_code ?? null, boost_code_updated_at: p.boost_code_updated_at ?? null, boost_code_by: p.boost_code_by ?? null,
     };
   });
   const folderName = (fid) => folders.find((f) => f.id === fid)?.name ?? "";
@@ -1729,53 +1763,37 @@ async function loadPosts(token, id, camp) {
       const { error } = await sb.from("posts").update({ folder_id: folderId }).in("id", items.map((p) => p.id));
       if (error) { toast(error.message); return false; }
       for (const p of items) { const x = list.find((y) => y.id === p.id); if (x) x.folder_id = folderId; }
-      toast(`${items.length === 1 ? "Post" : `${items.length} posts`} moved to ${folderId ? folderName(folderId) : "no folder"}`);
-      drawFolders(); draw();
+      toast(`${items.length === 1 ? "Video" : `${items.length} videos`} moved to ${folderId ? folderName(folderId) : "no folder"}`);
+      draw();
       return true;
     },
-    selected: null,
-    onSelect: () => drawPickBar(),
+    saveBoost: async (p, code) => {
+      const at = code ? new Date().toISOString() : null, by = code ? (await sb.auth.getUser()).data.user?.email ?? null : null;
+      const { error } = await sb.from("posts").update({ boost_code: code, boost_code_updated_at: at, boost_code_by: by }).eq("id", p.id);
+      if (error) { toast(error.message); return false; }
+      Object.assign(p, { boost_code: code, boost_code_updated_at: at, boost_code_by: by });
+      toast(code ? "Boost code saved" : "Boost code removed");
+      return true;
+    },
   };
 
   const sortSel = document.getElementById("sort");
-  const folderEl = document.getElementById("folders");
-  const gridPanel = document.getElementById("folder-panel");
-  const pickBar = document.getElementById("pick-bar");
-  const pickBtn = document.getElementById("pick-toggle");
+  const filterWrap = document.getElementById("folder-filter-wrap"), filterSel = document.getElementById("folder-filter");
   let shown = 48;
   const inView = () => list.filter((p) => !current || (current === "none" ? !p.folder_id : p.folder_id === current));
-  const sum = (ps) => ps.reduce((s, p) => s + (p.gone ? 0 : Number(p.plays ?? 0)), 0);
 
-  function drawFolders() {
-    if (!folders.length) {
-      folderEl.innerHTML = camp.folders_by_market
-        ? `<p class="muted small">Folders appear here for each market you add to the campaign.</p>`
-        : `<p class="muted small">No folders yet. Use <b>New folder</b> to group posts, for example by creative.</p>`;
-      return;
-    }
-    const loose = list.filter((p) => !p.folder_id);
-    const card = (key, name, ps, f) => `
-      <div class="folder${current === key ? " on" : ""}${f?.hidden ? " is-hidden" : ""}">
-        <button type="button" class="folder-main" data-folder="${esc(key)}" aria-pressed="${current === key}">
-          <span class="folder-name">${esc(name)}</span>
-          <span class="folder-n">${compact(sum(ps))} plays</span>
-          <span class="muted small">${n(ps.length)} post${ps.length === 1 ? "" : "s"}${f?.hidden ? " · hidden from clients" : ""}</span>
-        </button>
-        ${f ? `<button type="button" class="folder-more" data-fmenu="${esc(f.id)}" aria-label="Options for ${esc(f.name)}" title="Folder options">⋯</button>` : ""}
-      </div>`;
-    folderEl.innerHTML = `<div class="folder-row">
-      ${card("", "All posts", list)}
-      ${folders.map((f) => card(f.id, f.name, list.filter((p) => p.folder_id === f.id), f)).join("")}
-      ${loose.length ? card("none", "Not in a folder", loose) : ""}
-    </div>`;
-    folderEl.querySelectorAll("[data-folder]").forEach((b) => (b.onclick = () => {
-      current = b.dataset.folder; sessionStorageSet(`folder-${id}`, current); shown = 48;
-      drawFolders(); draw();
-    }));
-    folderEl.querySelectorAll("[data-fmenu]").forEach((b) => (b.onclick = () => openFolderPanel(folders.find((f) => f.id === b.dataset.fmenu))));
+  // "All videos" view: one clean dropdown to choose which folder's videos to show.
+  function drawFilter() {
+    const loose = list.filter((p) => !p.folder_id).length;
+    filterSel.innerHTML = `<option value="">All videos · ${n(list.length)}</option>`
+      + folders.map((f) => `<option value="${esc(f.id)}">${esc(f.name)} · ${n(list.filter((p) => p.folder_id === f.id).length)}</option>`).join("")
+      + (folders.length && loose ? `<option value="none">Not in a folder · ${n(loose)}</option>` : "");
+    filterSel.value = current;
+    filterWrap.hidden = view !== "grid" || !folders.length;
   }
+  filterSel.onchange = () => { current = filterSel.value; sessionStorageSet(`folder-${id}`, current); shown = 48; draw(); };
 
-  async function openFolderPanel(f, panel = gridPanel) {
+  async function openFolderPanel(f, panel) {
     if (!panel.hidden && panel.dataset.folder === f.id) { panel.hidden = true; return; }
     panel.hidden = false; panel.dataset.folder = f.id;
     panel.innerHTML = `<p class="muted small">Loading…</p>`;
@@ -1792,13 +1810,13 @@ async function loadPosts(token, id, camp) {
         <div class="fp-card">
           <div class="fp-line">
             <div><b>Show on client links</b>
-              <p class="muted small">When off, its posts still count in the campaign's totals but aren't named as a separate ${what}.</p></div>
+              <p class="muted small">When off, its videos still count in the campaign's totals but aren't named as a separate ${what}.</p></div>
             <label class="switch" title="Show on client links"><input type="checkbox" id="fp-visible" ${f.hidden ? "" : "checked"} aria-label="Show this ${what} on client links"><span></span></label>
           </div>
         </div>
         <div class="fp-card">
           <b>Client link for this ${what}</b>
-          <p class="muted small">The client sees only this ${what}'s posts and numbers${camp.status === "draft" ? ", once the campaign is active" : ""}. Budgets, spend and margins are never shown.</p>
+          <p class="muted small">The client sees only this ${what}'s videos and numbers${camp.status === "draft" ? ", once the campaign is active" : ""}. Budgets, spend and margins are never shown.</p>
           ${link ? `<div class="share-row"><input id="fp-url" readonly value="${esc(url)}" aria-label="Folder client link">
               <button type="button" class="primary" id="fp-copy">Copy link</button>
               <a class="btn" href="${esc(url)}" target="_blank" rel="noopener">Open</a></div>
@@ -1807,17 +1825,14 @@ async function loadPosts(token, id, camp) {
           : `<div class="actions" style="margin:10px 0 0"><button type="button" class="primary" id="fp-create">Create client link</button></div>`}
         </div>
         <div class="fp-foot">
-          <span class="muted small">${count ? (count === 1 ? "Deleting keeps its post in the campaign, just not in a folder." : `Deleting keeps its ${n(count)} posts in the campaign, just not in a folder.`) : "This folder is empty."}</span>
+          <span class="muted small">${count ? (count === 1 ? "Deleting keeps its video in the campaign, just not in a folder." : `Deleting keeps its ${n(count)} videos in the campaign, just not in a folder.`) : "This folder has no videos."}</span>
           <button type="button" class="danger-lite" id="fp-delete">Delete ${what}</button>
         </div>
       </div>`;
     panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    // Re-open after a change; in the folder view the section was redrawn, so find its new panel.
-    const again = () => { const host = el.querySelector(`.fsec[data-key="${f.id}"] .fs-panel`) ?? (document.body.contains(panel) ? panel : gridPanel); host.dataset.folder = ""; openFolderPanel(f, host); };
+    const again = () => { const host = el.querySelector(`.fsec[data-key="${f.id}"] .fs-panel`); if (!host) return; host.dataset.folder = ""; openFolderPanel(f, host); };
     panel.querySelector("#fp-close").onclick = () => { panel.hidden = true; };
-    // Update the folder's card and section heading in place, so the panel doesn't reload or flicker.
     const refreshHead = () => {
-      drawFolders();
       const h3 = el.querySelector(`.fsec[data-key="${f.id}"] .fsec-title h3`);
       if (h3) h3.innerHTML = `${h3.querySelector("img")?.outerHTML ?? ""}${esc(f.name)}${f.hidden ? ' <span class="badge">Hidden from clients</span>' : ""}${folderLinks[f.id] ? ' <span class="badge on">Client link on</span>' : ""}`;
     };
@@ -1850,9 +1865,7 @@ async function loadPosts(token, id, camp) {
       drawLinkSettings(panel.querySelector("#fp-settings"), link, []);
       const input = panel.querySelector("#fp-url");
       input.onfocus = () => input.select();
-      panel.querySelector("#fp-copy").onclick = async () => {
-        try { await navigator.clipboard.writeText(url); toast("Link copied"); } catch { input.select(); toast("Press Cmd+C to copy"); }
-      };
+      panel.querySelector("#fp-copy").onclick = () => copyLink(url);
       panel.querySelector("#fp-off").onclick = async () => {
         if (!(await confirmDialog({ title: `Turn off the client link for ${f.name}?`, body: "Anyone with it will see \"This link isn't active\".", confirm: "Turn off" }))) return;
         const { error } = await sb.from("share_links").update({ revoked: true }).eq("id", link.id);
@@ -1862,7 +1875,7 @@ async function loadPosts(token, id, camp) {
       };
     }
     panel.querySelector("#fp-delete").onclick = async () => {
-      if (!(await confirmDialog({ title: `Delete the folder "${f.name}"?`, body: esc(`${count ? `Its ${count} post${count === 1 ? "" : "s"} stay in the campaign. ` : ""}${link ? "Its client link stops working." : ""}`.trim()) }))) return;
+      if (!(await confirmDialog({ title: `Delete the folder "${f.name}"?`, body: esc(`${count ? `Its ${count} video${count === 1 ? "" : "s"} stay in the campaign. ` : ""}${link ? "Its client link stops working." : ""}`.trim()) }))) return;
       const { error } = await sb.from("campaign_folders").delete().eq("id", f.id);
       if (error) { toast(error.message); return; }
       toast("Folder deleted");
@@ -1870,30 +1883,6 @@ async function loadPosts(token, id, camp) {
     };
   }
 
-  function drawPickBar() {
-    if (!ctx.selected) { pickBar.hidden = true; return; }
-    const k = ctx.selected.size;
-    pickBar.hidden = false;
-    pickBar.innerHTML = `<span><b>${n(k)}</b> selected</span>
-      <button type="button" class="link-btn" id="pick-all">Select all ${n((view === "grid" ? inView() : list).length)}${view === "grid" ? " shown" : ""}</button>
-      ${k ? `<button type="button" class="link-btn" id="pick-none">Clear</button>` : ""}
-      <span class="spacer"></span>
-      ${folders.length ? `<label class="small" for="pick-to">Move to</label>
-      <select id="pick-to" ${k ? "" : "disabled"}><option value="" disabled selected>Choose a folder</option>${folders.map((f) => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join("")}<option value="none">Not in a folder</option></select>` : `<span class="muted small">Create a folder first, then move posts into it.</span>`}`;
-    pickBar.querySelector("#pick-all").onclick = () => { (view === "grid" ? inView() : list).forEach((p) => ctx.selected.add(p.id)); draw(); drawPickBar(); };
-    pickBar.querySelector("#pick-none")?.addEventListener("click", () => { ctx.selected.clear(); draw(); drawPickBar(); });
-    const to = pickBar.querySelector("#pick-to");
-    if (to) to.onchange = async () => {
-      const items = list.filter((p) => ctx.selected.has(p.id));
-      if (await ctx.move(items, to.value === "none" ? null : to.value)) { ctx.selected.clear(); drawPickBar(); }
-    };
-  }
-  pickBtn.onclick = () => {
-    ctx.selected = ctx.selected ? null : new Set();
-    pickBtn.setAttribute("aria-pressed", !!ctx.selected);
-    pickBtn.textContent = ctx.selected ? "Done selecting" : "Select posts";
-    drawPickBar(); draw();
-  };
   const nfForm = document.getElementById("new-folder-form"), nfBtn = document.getElementById("new-folder"), nfName = document.getElementById("nf-name");
   const closeNewFolder = () => { nfForm.hidden = true; nfName.value = ""; nfBtn.setAttribute("aria-expanded", "false"); };
   nfBtn.setAttribute("aria-expanded", "false");
@@ -1915,7 +1904,7 @@ async function loadPosts(token, id, camp) {
     ctx.folderOf = (p) => folderName(p.folder_id);
     toast(`Folder "${name}" created`);
     closeNewFolder();
-    drawFolders(); drawPickBar(); draw();
+    draw();
   };
 
   let view = sessionStorageGet("posts-view") === "grid" ? "grid" : "folders";
@@ -1924,7 +1913,7 @@ async function loadPosts(token, id, camp) {
     b.onclick = () => {
       view = b.dataset.pview; sessionStorageSet("posts-view", view);
       document.querySelectorAll("[data-pview]").forEach((x) => x.setAttribute("aria-pressed", x.dataset.pview === view));
-      gridPanel.hidden = true; drawPickBar(); draw();
+      draw();
     };
   });
   const sortList = (ps) => {
@@ -1935,72 +1924,115 @@ async function loadPosts(token, id, camp) {
       : String(b.created_at).localeCompare(String(a.created_at)));
   };
   const draw = () => {
-    folderEl.hidden = view !== "grid";
+    drawFilter();
     if (view === "folders") return drawSections();
     if (!list.length) {
-      el.innerHTML = `<div class="panel"><p>No posts yet.</p><a class="btn primary" href="#/c/${esc(id)}/add">Add links</a></div>`;
+      el.innerHTML = `<div class="panel"><p>No videos yet.</p><a class="btn primary" href="#/c/${esc(id)}/add">Add links</a></div>`;
       return;
     }
-    const by = sortSel.value;
-    const sorted = inView().sort((a, b) =>
-      by === "plays" ? (b.plays ?? -1) - (a.plays ?? -1)
-      : by === "newest" ? String(b.published_at ?? "").localeCompare(String(a.published_at ?? ""))
-      : String(b.created_at).localeCompare(String(a.created_at)));
-    renderWall(el, sorted, ctx, { shown, onMore: () => { shown += 48; draw(); } });
+    renderWall(el, sortList(inView()), ctx, { shown, onMore: () => { shown += 48; draw(); } });
   };
-  sortSel.onchange = () => { shown = 48; Object.keys(pages).forEach((k) => (pages[k] = 0)); draw(); };
+  sortSel.onchange = () => { shown = 48; draw(); };
 
-  // ---------- folder view: one section per folder, Cobrand-style, with its own add box ----------
-  const PER_PAGE = 10;
-  const pages = {};
+  // ---------- folder view: the creators in each folder, with their videos rolled up ----------
   const collapsed = new Set(JSON.parse(sessionStorageGet(`collapsed-${id}`) ?? "[]"));
   const saveCollapsed = () => sessionStorageSet(`collapsed-${id}`, JSON.stringify([...collapsed]));
   const flash = JSON.parse(sessionStorageGet(`flash-${id}`) ?? "null");
   sessionStorageSet(`flash-${id}`, "null");
   const CHEVRON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>';
+  const asCreator = (c) => (c ? { id: c.id, on_roster: c.on_roster, platform: c.platform, username: c.username, name: c.display_name, followers: c.follower_count, verified: c.is_verified, avatar: c.avatar_url } : null);
 
-  function sectionRows(ps, key) {
-    const picking = ctx.selected instanceof Set;
-    if (!ps.length) return `<div class="fsec-empty muted small">No posts in this folder yet. Use <b>Add links</b> to add some.</div>`;
-    const page = Math.min(pages[key] ?? 0, Math.ceil(ps.length / PER_PAGE) - 1);
-    pages[key] = page;
-    const rows = ps.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
-    const pagesN = Math.ceil(ps.length / PER_PAGE);
-    return `<div class="table-wrap fsec-table"><table>
-      <thead><tr>${picking ? '<th class="pick-col"><span class="sr">Select</span></th>' : ""}<th>Creator</th><th>Posted</th><th>Country</th><th class="num">Views</th><th class="num">Likes</th><th class="num">Comments</th><th class="num">Shares</th><th class="num">Eng. rate</th><th class="num">Followers</th><th><span class="sr">Actions</span></th></tr></thead>
-      <tbody>${rows.map((p) => `<tr data-pid="${esc(p.id)}"${picking && ctx.selected.has(p.id) ? ' class="picked"' : ""}${p.gone ? ' data-gone="1"' : ""}>
-        ${picking ? `<td class="pick-col"><input type="checkbox" data-rpick="${esc(p.id)}" ${ctx.selected.has(p.id) ? "checked" : ""} aria-label="Select @${esc(p.creator?.username ?? "")}"></td>` : ""}
-        <td><button type="button" class="creator-cell" data-open="${esc(p.id)}">
-          <span class="av">${p.creator?.avatar ? `<img src="${esc(p.creator.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span>${esc((p.creator?.name || p.creator?.username || "?").trim().charAt(0).toUpperCase())}</span></span>
-          <span class="cw"><span class="nm">${esc(p.creator?.name || p.creator?.username || "Unknown")}${p.creator?.verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</span><span class="hd">${isYT(p) ? "YouTube" : "@" + esc(p.creator?.username ?? "unknown")}${p.gone ? ` · <span class="gone-tag">no longer on ${platformName(p)}</span>` : ""}</span></span>
+  function creatorsIn(key) {
+    const ps = list.filter((p) => (key === "none" ? !p.folder_id : p.folder_id === key));
+    const map = new Map();
+    for (const p of ps) {
+      const k = p.creator?.id ?? `u:${p.creator?.username ?? p.id}`;
+      if (!map.has(k)) map.set(k, { key: k, creator: p.creator, posts: [], added: null });
+      map.get(k).posts.push(p);
+    }
+    for (const fc of fcs.filter((x) => (x.folder_id ?? "none") === key)) {
+      if (map.has(fc.creator_id)) map.get(fc.creator_id).added = fc;
+      else map.set(fc.creator_id, { key: fc.creator_id, creator: asCreator(fc.creator), posts: [], added: fc });
+    }
+    const rows = [...map.values()].map((g) => {
+      const live = g.posts.filter((p) => !p.gone);
+      const t = (k) => (live.some((p) => p[k] != null) ? live.reduce((s, p) => s + Number(p[k] ?? 0), 0) : null);
+      return { ...g, posts: sortList(g.posts), videos: g.posts.length, plays: t("plays"), likes: t("likes"), comments: t("comments"), shares: t("shares"),
+        last: g.posts.map((p) => p.published_at).filter(Boolean).sort().at(-1) ?? null, addedAt: g.added?.created_at ?? g.posts.map((p) => p.created_at).sort().at(-1) ?? "" };
+    });
+    const by = sortSel.value;
+    return rows.sort((a, b) => by === "plays" ? (b.plays ?? -1) - (a.plays ?? -1) : by === "newest" ? String(b.last ?? "").localeCompare(String(a.last ?? "")) : String(b.addedAt).localeCompare(String(a.addedAt)));
+  }
+  const avatarHtml = (c) => `<span class="av">${c?.avatar ? `<img src="${esc(c.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span>${esc((c?.name || c?.username || "?").trim().charAt(0).toUpperCase())}</span></span>`;
+  const profileHref = (c) => c?.platform === "youtube" ? `https://www.youtube.com/@${encodeURIComponent(c.username)}` : c?.platform === "instagram" ? `https://www.instagram.com/${encodeURIComponent(c.username)}/` : `https://www.tiktok.com/@${encodeURIComponent(c?.username ?? "")}`;
+
+  function creatorTable(rows, key) {
+    if (!rows.length) return `<div class="fsec-empty muted small">No creators yet. Use <b>+ Add</b> to paste their profile links or video links.</div>`;
+    return `<div class="table-wrap fsec-table"><table class="cr-table">
+      <thead><tr><th>Creator</th><th class="num">Videos</th><th class="num">Views</th><th class="num">Likes</th><th class="num">Comments</th><th class="num">Shares</th><th class="num">Eng. rate</th><th class="num">Followers</th><th>Last posted</th><th><span class="sr">Actions</span></th></tr></thead>
+      <tbody>${rows.map((r) => {
+        const c = r.creator;
+        const er = r.plays ? ((r.likes ?? 0) + (r.comments ?? 0) + (r.shares ?? 0)) / r.plays : null;
+        return `<tr data-ck="${esc(r.key)}"${r.posts.length ? "" : ' class="no-videos"'}>
+        <td><button type="button" class="creator-cell" data-copen="${esc(r.key)}" title="${r.posts.length ? "See their videos" : "Open their profile"}">
+          ${avatarHtml(c)}
+          <span class="cw"><span class="nm">${esc(c?.name || c?.username || "Unknown")}${c?.verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</span><span class="hd">@${esc(c?.username ?? "unknown")}</span></span>
         </button></td>
-        <td class="small">${p.published_at ? esc(ago(p.published_at)) : "–"}</td>
-        <td>${p.country ? `<span title="${esc(regionName(p.country))}">${flag(p.country)}</span>` : "–"}</td>
-        <td class="num plays-cell">${n(p.plays)}</td><td class="num">${n(p.likes)}</td><td class="num">${n(p.comments)}</td><td class="num">${n(p.shares)}</td>
-        <td class="num">${pct(engagement(p))}</td><td class="num">${compact(p.creator?.followers)}</td>
+        <td class="num">${r.posts.length ? n(r.videos) : `<span class="muted small">None yet</span>`}</td>
+        <td class="num plays-cell">${r.posts.length ? n(r.plays) : "–"}</td><td class="num">${r.posts.length ? n(r.likes) : "–"}</td><td class="num">${r.posts.length ? n(r.comments) : "–"}</td><td class="num">${r.posts.length ? n(r.shares) : "–"}</td>
+        <td class="num">${pct(er)}</td><td class="num">${compact(c?.followers)}</td>
+        <td class="small">${r.last ? esc(ago(r.last)) : "–"}</td>
         <td class="row-actions"><div class="card-actions">
-          ${p.creator?.platform === "tiktok" ? (p.creator.on_roster
-            ? `<a href="#/creator/${esc(p.creator.id)}" class="ro-star on" title="On the roster: open their page" aria-label="Open @${esc(p.creator.username)} on the roster">★</a>`
-            : `<button type="button" class="ro-star" data-ract="roster" data-id="${esc(p.id)}" title="Add @${esc(p.creator.username)} to the roster" aria-label="Add @${esc(p.creator.username)} to the roster">☆</button>`) : ""}
-          <button type="button" data-ract="copy" data-id="${esc(p.id)}" title="Copy link" aria-label="Copy link">${ICON.link}</button>
-          <a href="${esc(p.url)}" target="_blank" rel="noopener" title="Open on ${platformName(p)}" aria-label="Open on ${platformName(p)}">${ICON.open}</a>
-          <button type="button" data-ract="remove" data-id="${esc(p.id)}" title="Remove from campaign" aria-label="Remove from campaign">${ICON.trash}</button>
-        </div></td></tr>`).join("")}</tbody></table></div>
-      ${pagesN > 1 ? `<div class="pager"><button type="button" class="link-btn" data-page="${page - 1}" ${page === 0 ? "disabled" : ""} aria-label="Previous page">‹</button>
-        <span class="small muted">Page ${page + 1} of ${pagesN} · ${n(ps.length)} posts</span>
-        <button type="button" class="link-btn" data-page="${page + 1}" ${page >= pagesN - 1 ? "disabled" : ""} aria-label="Next page">›</button></div>` : ""}`;
+          ${c?.platform === "tiktok" && c?.id ? (c.on_roster
+            ? `<a href="#/creator/${esc(c.id)}" class="ro-star on" title="On the roster: open their page" aria-label="Open @${esc(c.username)} on the roster">★</a>`
+            : `<button type="button" class="ro-star" data-ract="roster" data-ck="${esc(r.key)}" title="Add @${esc(c.username)} to the roster" aria-label="Add @${esc(c.username)} to the roster">☆</button>`) : ""}
+          <a href="${esc(profileHref(c))}" target="_blank" rel="noopener" title="Open their profile" aria-label="Open @${esc(c?.username ?? "")}'s profile">${ICON.open}</a>
+          ${r.added && !r.posts.length ? `<button type="button" data-ract="unadd" data-ck="${esc(r.key)}" title="Remove from this folder" aria-label="Remove @${esc(c?.username ?? "")} from this folder">${ICON.trash}</button>` : ""}
+        </div></td></tr>`;
+      }).join("")}</tbody></table></div>`;
+  }
+
+  // What was pasted: video links go through the usual link check; profile links and @handles add creators.
+  const VIDEO_RX = /tiktok\.com\/.*\/video\/\d+|(?:^|\/\/)(?:vm|vt)\.tiktok\.com\/|tiktok\.com\/t\/|youtube\.com\/(?:watch|shorts|live)|youtu\.be\//i;
+  function splitPaste(text) {
+    const tokens = [...new Set(text.split(/[\s,;]+/).map((t) => t.trim().replace(/^[<(\["']+|[>)\]"'.]+$/g, "")).filter(Boolean))];
+    const videos = [], profiles = [];
+    for (const t of tokens) {
+      const url = /^(vm\.|vt\.|www\.|m\.)?(tiktok|instagram|youtube)\.com\//i.test(t) ? `https://${t}` : t;
+      if (/^https?:\/\//i.test(url) && VIDEO_RX.test(url)) videos.push(url);
+      else if (/^https?:\/\//i.test(url) && /(tiktok\.com\/@|instagram\.com\/[\w.]+|youtube\.com\/(@|channel\/))/i.test(url)) profiles.push(url);
+      else if (/^@[\w.]{2,30}$/.test(t)) profiles.push(t);
+    }
+    return { videos, profiles };
+  }
+  async function addCreators(profiles, folderId) {
+    const done = [], failed = [];
+    for (const raw of profiles) {
+      try {
+        const m = raw.match(/tiktok\.com\/@([\w.]+)/i) ?? raw.match(/^@([\w.]+)$/);
+        let c = null;
+        if (m) c = (await sb.from("creators").select("id,username").eq("platform", "tiktok").ilike("username", m[1]).maybeSingle()).data;
+        if (!c) {
+          const { data, error } = await sb.functions.invoke("roster", { body: { action: "lookup", input: raw } });
+          if (error || data?.error) throw new Error(data?.error ?? "Couldn't find that account");
+          c = data;
+        }
+        const { error } = await sb.from("campaign_folder_creators").insert({ campaign_id: id, folder_id: folderId, creator_id: c.id, added_by: (await sb.auth.getUser()).data.user?.email ?? null });
+        if (error && error.code !== "23505") throw new Error(error.message);
+        done.push(`@${c.username}`);
+      } catch (e) { failed.push(`${raw} – ${e.message}`); }
+    }
+    return { done, failed };
   }
 
   function drawSections() {
-    const loose = list.filter((p) => !p.folder_id);
     const groups = [
-      ...folders.map((f) => ({ key: f.id, f, name: f.name, posts: sortList(list.filter((p) => p.folder_id === f.id)) })),
-      ...(loose.length || !folders.length ? [{ key: "none", f: null, name: folders.length ? "Not in a folder" : "All posts", posts: sortList(loose) }] : []),
-    ];
+      ...folders.map((f) => ({ key: f.id, f, name: f.name })),
+      ...(list.some((p) => !p.folder_id) || fcs.some((x) => !x.folder_id) || !folders.length ? [{ key: "none", f: null, name: folders.length ? "Not in a folder" : "All creators" }] : []),
+    ].map((g) => ({ ...g, rows: creatorsIn(g.key) }));
     el.innerHTML = groups.map((g) => {
-      const live = g.posts.filter((p) => !p.gone);
-      const plays = live.reduce((s, p) => s + Number(p.plays ?? 0), 0);
-      const sounds = new Set(live.map((p) => p.sound_title).filter(Boolean)).size;
+      const vids = g.rows.flatMap((r) => r.posts).filter((p) => !p.gone);
+      const plays = vids.reduce((s, p) => s + Number(p.plays ?? 0), 0);
       const shut = collapsed.has(g.key);
       const fl = flash && flash.key === g.key ? flash.text : "";
       const art = camp.artist_image;
@@ -2008,24 +2040,24 @@ async function loadPosts(token, id, camp) {
         <header class="fsec-head${art ? " has-art" : ""}"${art ? ` style="--art:url('${esc(art)}')"` : ""}>
           <div class="fsec-title">
             <h3>${art ? `<img class="fsec-art" src="${esc(art)}" alt="" referrerpolicy="no-referrer">` : ""}${esc(g.name)}${g.f?.hidden ? ' <span class="badge">Hidden from clients</span>' : ""}${g.f && folderLinks[g.f.id] ? ' <span class="badge on">Client link on</span>' : ""}</h3>
-            <div class="fsec-meta"><b>${compact(plays)}</b> plays · ${n(live.length)} post${live.length === 1 ? "" : "s"}${sounds ? ` · ${n(sounds)} sound${sounds === 1 ? "" : "s"}` : ""}${live.length ? ` · ${pct(plays ? live.reduce((s, p) => s + (p.likes ?? 0) + (p.comments ?? 0) + (p.shares ?? 0), 0) / plays : null)} engagement` : ""}</div>
+            <div class="fsec-meta"><b>${n(g.rows.length)}</b> creator${g.rows.length === 1 ? "" : "s"} · <b>${n(vids.length)}</b> video${vids.length === 1 ? "" : "s"} · <b>${compact(plays)}</b> views${vids.length ? ` · ${pct(plays ? vids.reduce((s, p) => s + (p.likes ?? 0) + (p.comments ?? 0) + (p.shares ?? 0), 0) / plays : null)} engagement` : ""}</div>
           </div>
           <div class="fsec-actions">
-            <button type="button" class="primary" data-sact="add">+ Add links</button>
-            ${g.f ? `<button type="button" data-sact="link">${folderLinks[g.f.id] ? "Copy client link" : "Client link"}</button><button type="button" data-sact="edit">Edit</button>` : ""}
+            <button type="button" class="primary" data-sact="add">+ Add</button>
+            ${g.f ? `<button type="button" data-sact="link">${folderLinks[g.f.id] ? "Copy client link" : "Client link"}</button><button type="button" data-sact="edit">Settings</button>` : ""}
             <button type="button" class="icon-btn fsec-chev" data-sact="collapse" aria-expanded="${!shut}" aria-label="${shut ? "Expand" : "Collapse"} ${esc(g.name)}">${CHEVRON}</button>
           </div>
         </header>
         ${fl ? `<div class="fsec-flash small">${fl}</div>` : ""}
         <form class="fsec-add" hidden>
-          <label class="sr" for="add-${esc(g.key)}">TikTok or YouTube links for ${esc(g.name)}</label>
-          <textarea id="add-${esc(g.key)}" placeholder="Paste TikTok or YouTube video links for ${esc(g.name)}, one per line or separated by spaces."></textarea>
-          <div class="fsec-add-row"><span class="small muted" data-count>No links yet.</span><span class="spacer"></span>
-            <button type="button" class="link-btn" data-sact="cancel">Cancel</button><button type="submit" class="primary" disabled>Add links</button></div>
+          <label class="sr" for="add-${esc(g.key)}">Video or profile links for ${esc(g.name)}</label>
+          <textarea id="add-${esc(g.key)}" placeholder="Paste video links to track them, or profile links / @handles to add creators to ${esc(g.name)}. One per line or separated by spaces."></textarea>
+          <div class="fsec-add-row"><span class="small muted" data-count>Nothing pasted yet.</span><span class="spacer"></span>
+            <button type="button" class="link-btn" data-sact="cancel">Cancel</button><button type="submit" class="primary" disabled>Add</button></div>
           <div class="progress" hidden><div></div></div>
         </form>
         <div class="fs-panel panel share-panel" hidden></div>
-        <div class="fsec-body"${shut ? " hidden" : ""}>${sectionRows(g.posts, g.key)}</div>
+        <div class="fsec-body"${shut ? " hidden" : ""}>${creatorTable(g.rows, g.key)}</div>
       </section>`;
     }).join("");
 
@@ -2050,21 +2082,31 @@ async function loadPosts(token, id, camp) {
       }));
       const MAX = 500;
       ta.oninput = () => {
-        const k = parseLinks(ta.value).length;
-        cnt.textContent = k === 0 ? "No links yet." : k > MAX ? `${n(k)} links found. Add up to ${MAX} at a time.` : `${n(k)} link${k === 1 ? "" : "s"} found.`;
-        go.disabled = k === 0 || k > MAX;
-        go.textContent = k > 0 && k <= MAX ? `Add ${n(k)} link${k === 1 ? "" : "s"}` : "Add links";
+        const { videos, profiles } = splitPaste(ta.value);
+        const parts = [videos.length ? `${n(videos.length)} video link${videos.length === 1 ? "" : "s"}` : "", profiles.length ? `${n(profiles.length)} creator${profiles.length === 1 ? "" : "s"}` : ""].filter(Boolean);
+        cnt.textContent = parts.length ? `${parts.join(" and ")} found.` : ta.value.trim() ? "No video or profile links found." : "Nothing pasted yet.";
+        go.disabled = !parts.length || videos.length > MAX;
+        go.textContent = parts.length ? `Add ${parts.join(" and ")}` : "Add";
       };
       addForm.onsubmit = async (e) => {
         e.preventDefault();
-        const urls = parseLinks(ta.value);
-        if (!urls.length) return;
+        const { videos, profiles } = splitPaste(ta.value);
+        if (!videos.length && !profiles.length) return;
         go.disabled = true; ta.disabled = true;
         const bar = addForm.querySelector(".progress"), fill = bar.firstElementChild;
-        bar.hidden = false; cnt.textContent = "Starting…";
+        bar.hidden = false;
+        let text = "";
+        if (profiles.length) {
+          cnt.textContent = `Checking ${n(profiles.length)} profile${profiles.length === 1 ? "" : "s"}…`;
+          const r = await addCreators(profiles, g.f?.id ?? null);
+          text += r.done.length ? `Added ${r.done.map(esc).join(", ")} to ${esc(g.name)}` : "";
+          if (r.failed.length) text += `${text ? " · " : ""}${n(r.failed.length)} profile${r.failed.length === 1 ? "" : "s"} not added:<ul>${r.failed.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
+        }
+        if (!videos.length) { sessionStorageSet(`flash-${id}`, JSON.stringify({ key, text })); renderCampaign(++routeToken, id); return; }
+        cnt.textContent = "Starting…";
         const { data: job, error } = await sb.from("link_jobs").insert({ campaign_id: id, folder_id: g.f?.id ?? null }).select("id").single();
         if (error) { cnt.textContent = error.message; go.disabled = false; ta.disabled = false; return; }
-        const r = await sb.from("link_job_items").insert(urls.map((url) => ({ job_id: job.id, url })));
+        const r = await sb.from("link_job_items").insert(videos.map((url) => ({ job_id: job.id, url })));
         if (r.error) { cnt.textContent = r.error.message; go.disabled = false; ta.disabled = false; return; }
         const tick = async () => {
           if (!document.body.contains(addForm)) return;
@@ -2078,7 +2120,7 @@ async function loadPosts(token, id, camp) {
           if (j?.status !== "done") { setTimeout(tick, 2000); return; }
           const c = (st) => all.filter((i) => i.status === st);
           const failed = c("failed");
-          const text = `Added ${n(c("success").length)} post${c("success").length === 1 ? "" : "s"} to ${esc(g.name)}`
+          text += `${text ? " · " : ""}Added ${n(c("success").length)} video${c("success").length === 1 ? "" : "s"} to ${esc(g.name)}`
             + (c("duplicate").length ? ` · ${n(c("duplicate").length)} already in this campaign` : "")
             + (failed.length ? ` · ${n(failed.length)} failed:<ul>${failed.map((i) => `<li><span class="u">${esc(i.url)}</span> – ${esc(i.error ?? "")}</li>`).join("")}</ul>` : "");
           sessionStorageSet(`flash-${id}`, JSON.stringify({ key, text }));
@@ -2086,30 +2128,31 @@ async function loadPosts(token, id, camp) {
         };
         tick();
       };
-      sec.querySelectorAll("[data-page]").forEach((b) => (b.onclick = () => { pages[key] = Number(b.dataset.page); drawSections(); sec.scrollIntoView({ block: "nearest" }); }));
-      sec.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => openPostModal(g.posts, g.posts.findIndex((p) => p.id === b.dataset.open), ctx)));
-      sec.querySelectorAll("[data-ract=copy]").forEach((b) => (b.onclick = () => copyLink(list.find((p) => p.id === b.dataset.id).url)));
+      sec.querySelectorAll("[data-copen]").forEach((b) => (b.onclick = () => {
+        const r = g.rows.find((x) => x.key === b.dataset.copen);
+        if (r.posts.length) openPostModal(r.posts, 0, ctx);
+        else window.open(profileHref(r.creator), "_blank", "noopener");
+      }));
       sec.querySelectorAll("[data-ract=roster]").forEach((b) => (b.onclick = async () => {
-        const p = list.find((x) => x.id === b.dataset.id);
+        const r = g.rows.find((x) => x.key === b.dataset.ck), c = r.creator;
         b.disabled = true; b.textContent = "…";
-        const { data: r, error: e } = await sb.functions.invoke("roster", { body: { action: "add", input: `@${p.creator.username}`, platform: p.creator.platform ?? "tiktok" } });
-        if (e || r?.error) { b.disabled = false; b.textContent = "☆"; toast(`Couldn't add: ${r?.error ?? e.message}`); return; }
-        toast(`Added @${p.creator.username} to the roster`);
-        list.filter((x) => x.creator?.username === p.creator.username).forEach((x) => { x.creator.on_roster = true; x.creator.id = r.id; });
-        b.outerHTML = `<a href="#/creator/${esc(r.id)}" class="ro-star on" title="On the roster: open their page" aria-label="Open @${esc(p.creator.username)} on the roster">★</a>`;
+        const { data: res, error: e } = await sb.functions.invoke("roster", { body: { action: "add", input: `@${c.username}`, platform: c.platform ?? "tiktok" } });
+        if (e || res?.error) { b.disabled = false; b.textContent = "☆"; toast(`Couldn't add: ${res?.error ?? e.message}`); return; }
+        toast(`Added @${c.username} to the roster`);
+        list.filter((x) => x.creator?.username === c.username).forEach((x) => { x.creator.on_roster = true; });
+        c.on_roster = true;
+        b.outerHTML = `<a href="#/creator/${esc(res.id)}" class="ro-star on" title="On the roster: open their page" aria-label="Open @${esc(c.username)} on the roster">★</a>`;
       }));
-      sec.querySelectorAll("[data-ract=remove]").forEach((b) => (b.onclick = async () => {
-        const p = list.find((x) => x.id === b.dataset.id);
-        if (!(await confirmDialog({ title: `Remove @${p.creator?.username ?? "this creator"}'s video?`, body: "It leaves the campaign and its numbers no longer count.", confirm: "Remove" }))) return;
-        if (await ctx.remove(p)) { toast("Video removed"); renderCampaign(++routeToken, id); }
-      }));
-      sec.querySelectorAll("[data-rpick]").forEach((b) => (b.onchange = () => {
-        if (b.checked) ctx.selected.add(b.dataset.rpick); else ctx.selected.delete(b.dataset.rpick);
-        b.closest("tr").classList.toggle("picked", b.checked); drawPickBar();
+      sec.querySelectorAll("[data-ract=unadd]").forEach((b) => (b.onclick = async () => {
+        const r = g.rows.find((x) => x.key === b.dataset.ck);
+        const { error } = await sb.from("campaign_folder_creators").delete().eq("id", r.added.id);
+        if (error) { toast(error.message); return; }
+        fcs = fcs.filter((x) => x.id !== r.added.id);
+        toast(`@${r.creator?.username ?? "creator"} removed from ${g.name}`);
+        drawSections();
       }));
     });
   }
-  drawFolders();
   draw();
 }
 

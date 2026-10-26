@@ -41,6 +41,22 @@ function checkUrl(raw: string): { ok: true; url: string; videoId: string | null 
   return { ok: true, url: u.toString(), videoId: m?.[1] ?? null };
 }
 
+// TikTok's avatar links expire after a few days, so keep a copy in storage (same place the roster uses).
+async function saveAvatar(key: string, url: string | null): Promise<string | null> {
+  if (!url) return null;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!r.ok) return url;
+    const type = r.headers.get("content-type") ?? "image/jpeg";
+    if (!/jpe?g|png|webp/.test(type)) return url;
+    const safe = key.replace(/[^\w-]/g, "_");
+    const path = `${/^\d+$/.test(key) ? "tt/" : ""}${safe}.${type.includes("webp") ? "webp" : type.includes("png") ? "png" : "jpg"}`;
+    const { error } = await db.storage.from("avatars").upload(path, await r.arrayBuffer(), { contentType: type, upsert: true });
+    if (error) return url;
+    return `${db.storage.from("avatars").getPublicUrl(path).data.publicUrl}?v=${Date.now().toString(36)}`;
+  } catch { return url; }
+}
+
 async function lookup(url: string): Promise<any> {
   if (!SC_KEY) throw new Error("ScrapeCreators key is missing in Supabase secrets");
   const r = await fetch(`https://api.scrapecreators.com/v2/tiktok/video?url=${encodeURIComponent(url)}`, {
@@ -157,7 +173,7 @@ async function processItem(item: Item, job: Job) {
       tiktok_user_id: String(au.uid),
       username: au.unique_id ?? String(au.uid),
       display_name: au.nickname ?? null,
-      avatar_url: first(au.avatar_larger) ?? first(au.avatar_medium) ?? first(au.avatar_thumb),
+      avatar_url: await saveAvatar(String(au.uid), first(au.avatar_larger) ?? first(au.avatar_medium) ?? first(au.avatar_thumb)),
       bio: au.signature ?? null,
       follower_count: au.follower_count ?? null,
       is_verified: (au.verification_type ?? 0) > 0 || !!au.custom_verify || !!au.enterprise_verify_reason,

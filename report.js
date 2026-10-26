@@ -1,4 +1,4 @@
-import { confirmDialog } from "./dialog.js?v=20261026j";
+import { confirmDialog } from "./dialog.js?v=20261026k";
 // The report: one module used in two places.
 // - share.html (a client with a link): what the link's settings allow.
 // - the team dashboard (#/report/<artist>): the same view with everything on, plus "remove".
@@ -17,8 +17,10 @@ const signed = (v) => (v == null ? "" : `${v >= 0 ? "+" : "−"}${big(Math.abs(v
 
 const pct = (v) => (v == null || !isFinite(v) ? "–" : `${(v * 100).toFixed(2)}%`);
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const dayLabel = (d) => `${Number(d.slice(8, 10))} ${MONTHS[Number(d.slice(5, 7)) - 1]}`;
-const dayLong = (d) => `${dayLabel(d)} ${d.slice(0, 4)}`;
+const isDay = (d) => /^\d{4}-\d\d-\d\d$/.test(d ?? "");
+// Chart points can also carry a plain label ("Posted", "Start") instead of a date.
+const dayLabel = (d) => (isDay(d) ? `${Number(d.slice(8, 10))} ${MONTHS[Number(d.slice(5, 7)) - 1]}` : String(d ?? ""));
+const dayLong = (d) => (isDay(d) ? `${dayLabel(d)} ${d.slice(0, 4)}` : String(d ?? ""));
 const regionName = (() => { try { const dn = new Intl.DisplayNames(["en"], { type: "region" }); return (c) => (c ? dn.of(c.toUpperCase()) ?? c : "Unknown"); } catch { return (c) => c ?? "Unknown"; } })();
 const flag = (c) => (c && /^[a-z]{2}$/i.test(c) ? String.fromCodePoint(...[...c.toUpperCase()].map((ch) => 0x1f1a5 + ch.charCodeAt(0))) : "");
 const ago = (iso) => {
@@ -65,6 +67,13 @@ const ICON = {
   close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   prev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
   next: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>',
+  heart: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>',
+  comment: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18l-1 3 4-1.5A8 8 0 1 0 5 18z"/></svg>',
+  share: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5l6 6-6 6M20 11H10a6 6 0 0 0-6 6v1"/></svg>',
+  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>',
+  sound: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4h4l5 4V6L8 10H4zM16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>',
+  muted: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4h4l5 4V6L8 10H4zM17 9l5 6M22 9l-5 6"/></svg>',
 };
 
 // ---------- small shared bits ----------
@@ -78,9 +87,9 @@ function toast(msg) {
   t.textContent = msg; t.classList.add("show");
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2400);
 }
-async function copyLink(url) {
-  try { await navigator.clipboard.writeText(url); toast("Link copied"); }
-  catch { window.prompt("Copy this link:", url); }
+async function copyLink(url, done = "Link copied") {
+  try { await navigator.clipboard.writeText(url); toast(done); }
+  catch { toast("Couldn't copy automatically. Select it and press Cmd+C."); }
 }
 const tip = () => ensureEl("tip", "tip", 'role="tooltip" hidden');
 const hideTip = () => { const t = document.getElementById("tip"); if (t) t.hidden = true; };
@@ -108,7 +117,7 @@ export function chart(host, { dates, panels, empty, allowNegative = false, indep
   const stacked = panels.length > 1;
   const labelled = multi && all.length <= 4 && !stacked && !independent;
   host.innerHTML = `
-    ${multi ? `<div class="legend">${all.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("")}</div>` : ""}
+    ${multi && !labelled ? `<div class="legend">${all.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("")}</div>` : ""}
     ${panels.map((_, k) => `<div class="plot" data-panel="${k}"></div>`).join("")}
     <div class="chart-foot"><button type="button" class="link-btn small" data-table>Show as table</button></div>
     <div class="chart-table" hidden></div>`;
@@ -233,11 +242,18 @@ export function renderWall(el, list, ctx, { shown = 48, view = "grid", onMore } 
       <article class="post${p.gone ? " gone" : ""}${picking && ctx.selected.has(p.id) ? " picked" : ""}">
         <div class="cover-wrap">
           ${pick(p, i)}
-          <button type="button" class="cover" data-i="${i}" aria-label="Preview @${esc(p.creator?.username ?? "")}'s video" title="${esc(`@${p.creator?.username ?? "unknown"} · ${n(p.plays)} views · ${n(p.likes)} likes · ${n(p.comments)} comments${p.shares != null ? ` · ${n(p.shares)} shares` : ""}`)}">
+          <button type="button" class="cover" data-i="${i}" aria-label="Preview @${esc(p.creator?.username ?? "")}'s video: ${esc(n(p.plays))} views">
             <img data-vid="${esc(p.video_id)}" alt="" loading="lazy" ${ctx.covers[p.video_id] ? `src="${esc(ctx.covers[p.video_id])}"` : "hidden"} onerror="this.hidden=true">
-            ${p.gone ? `<span class="chip tl">No longer on ${platformName(p)}</span>` : ctx.showCountry !== false && flag(p.country) ? `<span class="chip tl" title="${esc(regionName(p.country))}">${flag(p.country)}</span>` : ""}
-            ${p.gone ? "" : `<span class="chip tr" ${isYT(p) ? `title="YouTube"` : ""}>${isYT(p) ? "▶ " : ""}${esc(ago(p.published_at))}</span>`}
-            <span class="cap"><span class="cap-who">${isYT(p) ? esc(p.creator?.name || "YouTube") : `@${esc(p.creator?.username ?? "unknown")}`}</span><span class="plays">${compact(p.plays)}</span></span>
+            <span class="tile-top">
+              ${p.gone ? `<span class="chip">No longer on ${platformName(p)}</span>` : `<span class="chip">${ctx.showCountry !== false && flag(p.country) ? `${flag(p.country)} ` : ""}${isYT(p) ? "YouTube · " : ""}${esc(ago(p.published_at))}</span>`}
+            </span>
+            <span class="cap">
+              <span class="cap-who">${isYT(p) ? esc(p.creator?.name || "YouTube") : `@${esc(p.creator?.username ?? "unknown")}`}</span>
+              <span class="cap-views"><b class="plays">${compact(p.plays)}</b> views</span>
+              <span class="cap-more">
+                <span>${ICON.heart}${compact(p.likes)}</span><span>${ICON.comment}${compact(p.comments)}</span>${p.shares != null ? `<span>${ICON.share}${compact(p.shares)}</span>` : ""}
+              </span>
+            </span>
           </button>
           ${actions(p, i)}
         </div>
@@ -299,6 +315,11 @@ async function fetchCovers(page, ctx) {
 }
 
 // ---------- post preview window ----------
+// TikTok's own player shows like/share buttons that only send people to TikTok, and a busy control
+// bar. We hide all of it and drive the player ourselves (TikTok's embed API) with one clean bar.
+const ttSrc = (p) => `https://www.tiktok.com/player/v1/${encodeURIComponent(p.video_id)}?controls=0&progress_bar=0&play_button=0&volume_control=0&fullscreen_button=0&timestamp=0&music_info=0&description=0&rel=0&native_context_menu=0&closed_caption=0&loop=1`;
+const clock = (t) => { t = Math.max(0, Math.floor(t || 0)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; };
+
 export function openPostModal(list, index, ctx) {
   closeModal();
   let i = index;
@@ -308,85 +329,179 @@ export function openPostModal(list, index, ctx) {
   document.body.appendChild(wrap);
   document.body.classList.add("modal-open");
   let tab = "performance";
+  let player = null;   // { frame, playing, muted, t, dur }
+  const team = ctx.mode === "team";
 
-  const draw = () => {
+  const send = (type, value) => player?.frame?.contentWindow?.postMessage({ type, value, "x-tiktok-player": true }, "*");
+  const onMsg = (e) => {
+    const d = typeof e.data === "string" ? (() => { try { return JSON.parse(e.data); } catch { return null; } })() : e.data;
+    if (!d || !d["x-tiktok-player"] || !player || e.source !== player.frame.contentWindow) return;
+    if (d.type === "onPlayerReady") { player.ready = true; wrap.querySelector(".pm-media")?.classList.add("ready"); }
+    if (d.type === "onStateChange") { player.playing = d.value === 1; drawBar(); }
+    if (d.type === "onMute") { player.muted = !!d.value; drawBar(); }
+    if (d.type === "onCurrentTime") { player.t = d.value?.currentTime ?? 0; player.dur = d.value?.duration ?? player.dur; drawBar(); }
+  };
+  window.addEventListener("message", onMsg);
+
+  function drawBar() {
+    const bar = wrap.querySelector(".pm-bar");
+    if (!bar || !player) return;
+    bar.querySelector("[data-pp]").innerHTML = player.playing ? ICON.pause : ICON.play;
+    bar.querySelector("[data-pp]").setAttribute("aria-label", player.playing ? "Pause" : "Play");
+    bar.querySelector("[data-mute]").innerHTML = player.muted ? ICON.muted : ICON.sound;
+    bar.querySelector("[data-mute]").setAttribute("aria-label", player.muted ? "Turn sound on" : "Mute");
+    const pr = bar.querySelector("input[type=range]");
+    if (!pr.matches(":active")) { pr.max = String(player.dur || 0); pr.value = String(player.t || 0); }
+    pr.style.setProperty("--p", `${player.dur ? (player.t / player.dur) * 100 : 0}%`);
+    bar.querySelector("[data-time]").textContent = `${clock(player.t)} / ${clock(player.dur)}`;
+    wrap.querySelector(".pm-tap")?.classList.toggle("paused", !player.playing);
+  }
+
+  // The video side: only rebuilt when the video changes, never when switching tabs.
+  function drawMedia() {
     const p = list[i];
-    const er = engagement(p);
+    const media = wrap.querySelector(".pm-media");
+    const yt = isYT(p);
+    media.classList.remove("ready");
+    media.innerHTML = `
+      ${ctx.covers[p.video_id] ? `<img class="pm-poster" src="${esc(ctx.covers[p.video_id])}" alt="">` : ""}
+      <iframe src="${esc(yt ? embedSrc(p) : ttSrc(p))}" title="${platformName(p)} video by ${esc(p.creator?.name || p.creator?.username || "")}"
+        allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+      ${yt ? "" : `<button type="button" class="pm-tap paused" aria-label="Play or pause"><span>${ICON.play}</span></button>
+      <div class="pm-bar">
+        <button type="button" data-pp aria-label="Play">${ICON.play}</button>
+        <input type="range" min="0" max="0" step="0.1" value="0" aria-label="Position in the video">
+        <span data-time>0:00 / 0:00</span>
+        <button type="button" data-mute aria-label="Mute">${ICON.sound}</button>
+      </div>`}
+      ${list.length > 1 ? `<button type="button" class="pm-nav prev" aria-label="Previous video" ${i === 0 ? "disabled" : ""}>${ICON.prev}</button>
+      <button type="button" class="pm-nav next" aria-label="Next video" ${i === list.length - 1 ? "disabled" : ""}>${ICON.next}</button>` : ""}`;
+    player = yt ? null : { frame: media.querySelector("iframe"), playing: false, muted: false, t: 0, dur: 0 };
+    media.querySelector(".prev")?.addEventListener("click", () => go(-1));
+    media.querySelector(".next")?.addEventListener("click", () => go(1));
+    if (player) {
+      const toggle = () => send(player.playing ? "pause" : "play");
+      media.querySelector(".pm-tap").onclick = toggle;
+      media.querySelector("[data-pp]").onclick = toggle;
+      media.querySelector("[data-mute]").onclick = () => { send(player.muted ? "unMute" : "mute"); player.muted = !player.muted; drawBar(); };
+      const pr = media.querySelector("input[type=range]");
+      pr.oninput = () => { player.t = Number(pr.value); drawBar(); };
+      pr.onchange = () => send("seekTo", Number(pr.value));
+    }
+  }
+
+  function drawSide() {
+    const p = list[i];
     const name = p.creator?.name || p.creator?.username || "Unknown creator";
     const initial = esc((name.match(/[\p{L}\p{N}]/u)?.[0] ?? "?").toUpperCase());
-    wrap.innerHTML = `
-      <div class="pm" role="dialog" aria-modal="true" aria-label="Video by @${esc(p.creator?.username ?? "")}">
-        <div class="pm-media">
-          ${ctx.covers[p.video_id] ? `<img class="pm-poster" src="${esc(ctx.covers[p.video_id])}" alt="">` : ""}
-          <iframe src="${esc(embedSrc(p))}" title="${platformName(p)} video by ${esc(p.creator?.name || p.creator?.username || "")}"
-            allow="encrypted-media; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
-          ${list.length > 1 ? `<button type="button" class="pm-nav prev" aria-label="Previous video" ${i === 0 ? "disabled" : ""}>${ICON.prev}</button>
-          <button type="button" class="pm-nav next" aria-label="Next video" ${i === list.length - 1 ? "disabled" : ""}>${ICON.next}</button>` : ""}
+    const side = wrap.querySelector(".pm-side");
+    side.innerHTML = `
+      <div class="pm-head">
+        <div class="pm-avatar">${p.creator?.avatar ? `<img src="${esc(p.creator.avatar)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span>${initial}</span></div>
+        <div class="pm-who">
+          <div class="pm-name">${esc(name)}${p.creator?.verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</div>
+          <div class="pm-sub"><a href="${esc(profileUrl(p))}" target="_blank" rel="noopener">${isYT(p) && /^UC[\w-]{22}$/.test(p.creator?.username ?? "") ? "YouTube channel" : "@" + esc(p.creator?.username ?? "unknown")}</a>${p.published_at ? ` · ${esc(dayLong(p.published_at.slice(0, 10)))}` : ""}${ctx.showCountry !== false && p.country ? ` · ${flag(p.country)} ${esc(regionName(p.country))}` : ""}</div>
         </div>
-        <div class="pm-side">
-          <div class="pm-head">
-            <div class="pm-avatar">${p.creator?.avatar ? `<img src="${esc(p.creator.avatar)}" alt="" referrerpolicy="no-referrer" onerror="this.replaceWith(document.createTextNode('${initial}'))">` : initial}</div>
-            <div class="pm-who">
-              <div class="pm-name">${esc(name)}${p.creator?.verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</div>
-              <a href="${esc(profileUrl(p))}" target="_blank" rel="noopener">${isYT(p) && /^UC[\w-]{22}$/.test(p.creator?.username ?? "") ? "YouTube channel" : "@" + esc(p.creator?.username ?? "unknown")}</a>
-              <div class="muted small">${p.published_at ? `Posted ${esc(dayLong(p.published_at.slice(0, 10)))}` : ""}${ctx.showCountry !== false && p.country ? ` · ${flag(p.country)} ${esc(regionName(p.country))}` : ""}</div>
-            </div>
-            <button type="button" class="pm-close" aria-label="Close">${ICON.close}</button>
-          </div>
-          <div class="pm-actions">
-            <a class="btn primary" href="${esc(p.url)}" target="_blank" rel="noopener">Watch on ${platformName(p)}</a>
-            <button type="button" class="icon-btn" data-pm="copy" title="Copy link" aria-label="Copy link">${ICON.link}</button>
-            <a class="icon-btn" href="${esc(p.url)}" target="_blank" rel="noopener" title="Open in a new tab" aria-label="Open in a new tab">${ICON.open}</a>
-            ${ctx.mode === "team" && ctx.move && ctx.folders?.length ? `<label class="pm-folder"><span class="sr">Folder</span><select data-pm="folder" aria-label="Folder"><option value="">Not in a folder</option>${ctx.folders.map((f) => `<option value="${esc(f.id)}" ${p.folder_id === f.id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select></label>` : ""}
-            ${ctx.mode === "team" && ctx.remove ? `<button type="button" class="icon-btn danger" data-pm="remove" title="Remove from campaign" aria-label="Remove from campaign">${ICON.trash}</button>` : ""}
-          </div>
-          <div class="pm-tabs" role="tablist">
-            <button type="button" role="tab" data-pmtab="performance" aria-selected="${tab === "performance"}">Performance</button>
-            <button type="button" role="tab" data-pmtab="details" aria-selected="${tab === "details"}">Details</button>
-          </div>
-          <div class="pm-body">
-            ${tab === "performance" ? `
-              <div class="pm-grid">
-                ${METRICS.map((m) => `<div class="pm-tile"><div class="l">${m.label}</div><div class="n">${n(p[m.key])}</div></div>`).join("")}
-                <div class="pm-tile"><div class="l">Engagement rate</div><div class="n">${pct(er)}</div></div>
-                ${p.creator?.followers != null ? `<div class="pm-tile"><div class="l">Creator's followers</div><div class="n">${compact(p.creator.followers)}</div></div>` : ""}
-              </div>
-              <div class="pm-chart"><div class="chart-head"><h3>Views over time</h3></div><div id="pm-chart"><p class="muted small">Loading…</p></div></div>
-              <p class="muted small">Numbers from ${p.stats_date ? esc(dayLong(p.stats_date)) : "the latest check"}. Engagement rate is likes, comments and shares per view.</p>`
-            : `<dl class="pm-details">
-                <dt>Caption</dt><dd>${esc(p.caption || "–")}</dd>
-                ${p.sound_title ? `<dt>Sound</dt><dd>♪ ${esc(p.sound_title)}</dd>` : ""}
-                ${ctx.songOf ? `<dt>Campaign</dt><dd>${esc(ctx.songOf(p) || "–")}</dd>` : ""}
-                ${ctx.folderOf && ctx.folderOf(p) ? `<dt>Folder</dt><dd>${esc(ctx.folderOf(p))}</dd>` : ""}
-                ${p.creator?.followers != null ? `<dt>Creator's followers</dt><dd>${n(p.creator.followers)}</dd>` : ""}
-                ${ctx.showCountry !== false && p.country ? `<dt>Country</dt><dd>${flag(p.country)} ${esc(regionName(p.country))}</dd>` : ""}
-                <dt>Posted</dt><dd>${p.published_at ? esc(dayLong(p.published_at.slice(0, 10))) : "–"}</dd>
-                <dt>${platformName(p)} video ID</dt><dd>${esc(isYT(p) ? p.video_id.slice(3) : p.video_id)}</dd>
-              </dl>`}
-          </div>
-        </div>
-      </div>`;
-    wrap.querySelector(".pm-close").onclick = closeModal;
-    wrap.querySelector(".prev")?.addEventListener("click", () => { if (i > 0) { i--; draw(); } });
-    wrap.querySelector(".next")?.addEventListener("click", () => { if (i < list.length - 1) { i++; draw(); } });
-    wrap.querySelectorAll("[data-pmtab]").forEach((b) => b.onclick = () => { tab = b.dataset.pmtab; draw(); });
-    wrap.querySelector("[data-pm=copy]").onclick = () => copyLink(p.url);
-    const rm = wrap.querySelector("[data-pm=remove]");
+        <button type="button" class="pm-close" aria-label="Close">${ICON.close}</button>
+      </div>
+      <div class="pm-actions">
+        <a class="pm-act" href="${esc(p.url)}" target="_blank" rel="noopener">${ICON.open}<span>Open on ${platformName(p)}</span></a>
+        <button type="button" class="pm-act" data-pm="copy">${ICON.link}<span>Copy link</span></button>
+        ${team && ctx.move && ctx.folders?.length ? `<label class="pm-folder"><span class="sr">Folder</span><select data-pm="folder" aria-label="Folder"><option value="">Not in a folder</option>${ctx.folders.map((f) => `<option value="${esc(f.id)}" ${p.folder_id === f.id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select></label>` : ""}
+        ${team && ctx.remove ? `<button type="button" class="pm-act icon danger" data-pm="remove" title="Remove from campaign" aria-label="Remove from campaign">${ICON.trash}</button>` : ""}
+      </div>
+      <div class="pm-tabs" role="tablist">
+        <button type="button" role="tab" data-pmtab="performance">Performance</button>
+        <button type="button" role="tab" data-pmtab="details">Details</button>
+        ${team && ctx.saveBoost ? `<button type="button" role="tab" data-pmtab="boost">Boost code${p.boost_code ? ' <i class="pm-dot" aria-label="added"></i>' : ""}</button>` : ""}
+      </div>
+      <div class="pm-body"></div>`;
+    side.querySelector(".pm-close").onclick = closeModal;
+    side.querySelector("[data-pm=copy]").onclick = () => copyLink(p.url);
+    const rm = side.querySelector("[data-pm=remove]");
     if (rm) rm.onclick = async () => { if (await removePost(p, ctx)) closeModal(); };
-    const fs = wrap.querySelector("[data-pm=folder]");
+    const fs = side.querySelector("[data-pm=folder]");
     if (fs) fs.onchange = async () => { if (await ctx.move([p], fs.value || null)) { p.folder_id = fs.value || null; } else fs.value = p.folder_id ?? ""; };
-    wrap.querySelector(".pm-close").focus();
-    if (tab === "performance") loadPostChart(p, ctx);
-  };
+    side.querySelectorAll("[data-pmtab]").forEach((b) => (b.onclick = () => { tab = b.dataset.pmtab; drawBody(); }));
+    if (tab === "boost" && !(team && ctx.saveBoost)) tab = "performance";
+    drawBody();
+  }
+
+  function drawBody() {
+    const p = list[i];
+    const body = wrap.querySelector(".pm-body");
+    wrap.querySelectorAll("[data-pmtab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.pmtab === tab)));
+    if (tab === "performance") {
+      body.innerHTML = `
+        <div class="pm-grid">
+          ${METRICS.map((m) => `<div class="pm-tile"><div class="l"><i style="background:${METRIC_COLOR[m.key]}"></i>${m.label}</div><div class="n">${n(p[m.key])}</div></div>`).join("")}
+          <div class="pm-tile"><div class="l">Engagement rate</div><div class="n">${pct(engagement(p))}</div></div>
+          ${p.creator?.followers != null ? `<div class="pm-tile"><div class="l">Creator's followers</div><div class="n">${compact(p.creator.followers)}</div></div>` : ""}
+        </div>
+        <div class="pm-chart"><div id="pm-chart"><p class="muted small">Loading…</p></div></div>
+        <p class="muted small pm-note">Numbers from ${p.stats_date ? esc(dayLong(p.stats_date)) : "the latest check"}. Engagement rate is likes, comments and shares per view.</p>`;
+      loadPostChart(p, ctx);
+    } else if (tab === "details") {
+      body.innerHTML = `<dl class="pm-details">
+        <dt>Caption</dt><dd>${esc(p.caption || "–")}</dd>
+        ${p.sound_title ? `<dt>Sound</dt><dd>♪ ${esc(p.sound_title)}</dd>` : ""}
+        ${ctx.songOf ? `<dt>Campaign</dt><dd>${esc(ctx.songOf(p) || "–")}</dd>` : ""}
+        ${ctx.folderOf && ctx.folderOf(p) ? `<dt>Folder</dt><dd>${esc(ctx.folderOf(p))}</dd>` : ""}
+        ${p.creator?.followers != null ? `<dt>Creator's followers</dt><dd>${n(p.creator.followers)}</dd>` : ""}
+        ${ctx.showCountry !== false && p.country ? `<dt>Country</dt><dd>${flag(p.country)} ${esc(regionName(p.country))}</dd>` : ""}
+        <dt>Posted</dt><dd>${p.published_at ? esc(dayLong(p.published_at.slice(0, 10))) : "–"}</dd>
+        <dt>${platformName(p)} video ID</dt><dd>${esc(isYT(p) ? p.video_id.slice(3) : p.video_id)}</dd>
+      </dl>`;
+    } else {
+      if (p.boost_code === undefined && ctx.loadBoost) {
+        body.innerHTML = `<p class="muted small">Loading…</p>`;
+        ctx.loadBoost(p).then(() => { if (list[i] === p && tab === "boost") { drawSide(); } });
+        return;
+      }
+      body.innerHTML = `
+        <div class="pm-boost">
+          <p class="muted small">The code a creator gives you to boost this video as an ad (TikTok Spark Ads). Team only: clients never see it.</p>
+          <label class="sr" for="pm-boost">Boost code</label>
+          <textarea id="pm-boost" rows="3" placeholder="Paste the boost code, e.g. #y2tOm1yMvd3T…" spellcheck="false">${esc(p.boost_code ?? "")}</textarea>
+          <div class="pm-boost-row">
+            <span class="muted small" data-boost-meta>${p.boost_code_updated_at ? `Added ${esc(dayLong(String(p.boost_code_updated_at).slice(0, 10)))}${p.boost_code_by ? ` by ${esc(p.boost_code_by)}` : ""}` : "No code yet."}</span>
+            <span class="spacer"></span>
+            ${p.boost_code ? `<button type="button" class="link-btn" data-boost="copy">Copy</button>` : ""}
+            <button type="button" class="primary" data-boost="save" disabled>Save code</button>
+          </div>
+        </div>`;
+      const ta = body.querySelector("#pm-boost"), save = body.querySelector("[data-boost=save]");
+      ta.oninput = () => { save.disabled = ta.value.trim() === (p.boost_code ?? ""); };
+      save.onclick = async () => {
+        save.disabled = true;
+        const r = await ctx.saveBoost(p, ta.value.trim() || null);
+        if (!r) { save.disabled = false; return; }
+        drawSide(); tab = "boost"; drawBody();
+      };
+      body.querySelector("[data-boost=copy]")?.addEventListener("click", () => copyLink(p.boost_code, "Boost code copied"));
+      ta.focus();
+    }
+  }
+
+  function go(d) {
+    const j = i + d;
+    if (j < 0 || j >= list.length) return;
+    i = j; drawMedia(); drawSide();
+  }
+
+  wrap.innerHTML = `<div class="pm" role="dialog" aria-modal="true"><div class="pm-media"></div><div class="pm-side"></div></div>`;
   wrap.addEventListener("click", (e) => { if (e.target === wrap) closeModal(); });
   modalKeys = (e) => {
     if (e.key === "Escape") closeModal();
-    else if (e.key === "ArrowLeft" && i > 0 && !e.target.closest?.("input,select,textarea")) { i--; draw(); }
-    else if (e.key === "ArrowRight" && i < list.length - 1 && !e.target.closest?.("input,select,textarea")) { i++; draw(); }
+    else if (e.key === "ArrowLeft" && !e.target.closest?.("input,select,textarea")) go(-1);
+    else if (e.key === "ArrowRight" && !e.target.closest?.("input,select,textarea")) go(1);
+    else if (e.key === " " && player && !e.target.closest?.("input,select,textarea,button,a")) { e.preventDefault(); send(player.playing ? "pause" : "play"); }
   };
   document.addEventListener("keydown", modalKeys);
   closeModal.opener = opener;
-  draw();
+  closeModal.cleanup = () => window.removeEventListener("message", onMsg);
+  drawMedia(); drawSide();
+  wrap.querySelector(".pm-close").focus();
 }
 let modalKeys = null;
 function closeModal() {
@@ -395,6 +510,7 @@ function closeModal() {
   w.remove();
   document.body.classList.remove("modal-open");
   if (modalKeys) document.removeEventListener("keydown", modalKeys);
+  closeModal.cleanup?.(); closeModal.cleanup = null;
   hideTip();
   closeModal.opener?.focus?.();
 }
@@ -411,11 +527,18 @@ async function loadPostChart(p, ctx) {
   const dates = rows.length ? daysBetween(rows[0].stat_date, rows.at(-1).stat_date) : [];
   let lastRow = null;
   const filled = dates.map((d) => (lastRow = map[d] ?? lastRow));
+  // Every video starts at zero when it's posted, so the line can start there straight away
+  // instead of waiting for a second daily check.
+  const posted = p.published_at ? String(p.published_at).slice(0, 10) : null;
+  const xs = dates.length && (!posted || posted >= dates[0]) ? ["Posted", ...dates] : posted ? [posted, ...dates] : dates;
+  const pad = xs.length - dates.length;
+  const vals = (k) => [...Array(pad).fill(0), ...filled.map((r) => r?.[k] ?? null)];
   chart(host, {
-    dates,
-    panels: [{ label: "Views", series: [{ name: "Views", color: BRAND, values: filled.map((r) => r?.plays ?? null) }] }],
-    height: 170,
-    empty: rows.length === 1 ? `Tracking started ${dayLong(rows[0].stat_date)}. The line appears after the next daily check.` : "No daily numbers yet.",
+    dates: xs,
+    panels: [{ label: "Views, likes, comments and shares", series: METRICS.map((m) => ({ name: m.label, color: METRIC_COLOR[m.key], values: vals(m.key) })) }],
+    independent: true,
+    height: 190,
+    empty: "No numbers yet. They appear as soon as the video is first checked.",
   });
 }
 
@@ -423,8 +546,8 @@ async function loadPostChart(p, ctx) {
 // api: { mode, load() → payload, loadCovers(ids), postDaily(vid), remove?(post), header?: html, onHeader?(root) }
 export function mountReport(root, api) {
   let data = null;
-  const state = { tab: null, metrics: ["plays"], from: null, to: null, q: "", camp: "", folder: "", creator: "", country: "", sort: "plays", view: "grid", shown: 48 };
-  const ctx = { mode: api.mode, covers: {}, loadCovers: api.loadCovers, postDaily: api.postDaily, remove: api.remove, onRemoved: null, songOf: null, showCountry: true };
+  const state = { tab: null, metrics: METRICS.map((m) => m.key), from: null, to: null, q: "", camp: "", folder: "", creator: "", country: "", sort: "plays", view: "grid", shown: 48 };
+  const ctx = { mode: api.mode, covers: {}, loadCovers: api.loadCovers, postDaily: api.postDaily, remove: api.remove, saveBoost: api.saveBoost, loadBoost: api.loadBoost, onRemoved: null, songOf: null, showCountry: true };
   let S = {};
 
   (async () => {
@@ -635,11 +758,14 @@ export function mountReport(root, api) {
     el.querySelectorAll("[data-metric]").forEach((b) => b.onclick = () => { toggleMetric(b.dataset.metric); renderOverview(el); });
     if (!S.overview_chart) return;
     const ds = rangeDates();
+    // One day of numbers so far: start the line at zero, where the campaign began.
+    const xs = ds.length === 1 ? ["Start", ...ds] : ds;
+    const at = (d, k) => (d === "Start" ? 0 : sumAt(d, k));
     chart(el.querySelector("#chart"), {
-      dates: ds,
-      panels: [{ label: state.metrics.map(metricLabel).join(", "), series: state.metrics.map((k) => ({ name: metricLabel(k), color: state.metrics.length === 1 ? BRAND : METRIC_COLOR[k], values: ds.map((d) => sumAt(d, k)) })) }],
+      dates: xs,
+      panels: [{ label: state.metrics.map(metricLabel).join(", "), series: state.metrics.map((k) => ({ name: metricLabel(k), color: state.metrics.length === 1 ? BRAND : METRIC_COLOR[k], values: xs.map((d) => at(d, k)) })) }],
       independent: true,
-      empty: "The chart fills in once numbers have been collected on two or more days.",
+      empty: "No numbers yet. The chart appears as soon as the first posts are checked.",
     });
   }
 

@@ -1,7 +1,7 @@
 // Payouts: the PayPal payout sheet, built into each campaign (team only; clients never see it).
 // A campaign has sections (a set of deliverables, e.g. "20x Edits" at $50 each) and one row per creator:
 // who sources and pays them, videos, price, status (contacted → waiting for draft → drafted →
-// waiting for payment → paid) and whether they posted, read from the tracker's posts.
+// waiting to post → posted (to pay) → paid) and their posting progress, read from the tracker's posts.
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const nf = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 const money = (v, cur) => {
@@ -18,24 +18,38 @@ export const STATUS = [
   ["contacted", "Contacted"],
   ["waiting_draft", "Waiting for draft"],
   ["drafted", "Drafted"],
-  ["waiting_payment", "Waiting for payment"],
+  ["waiting_payment", "Waiting to post"],   // the stored key predates the rename; the step is "waiting to post"
+  ["posted", "Posted · to pay"],
   ["paid", "Paid"],
 ];
 const statusName = (s) => (STATUS.find(([k]) => k === s) ?? [s, s])[1];
 const VIA = [["paypal", "PayPal"], ["wise", "Wise"], ["bank", "Bank"]];
 const rowTotal = (r) => (r.amount != null ? Number(r.amount) : r.price_per_video != null ? Number(r.price_per_video) * (r.videos ?? 0) : 0);
+const EARLY = ["contacted", "waiting_draft", "drafted"];
+// How alike two handles are: 0 (nothing) to 1 (same). Catches "@alfiann" vs "@alfiann1920".
+function likeness(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a))) return 0.9;
+  if (a.length >= 5 && b.length >= 5 && (a.includes(b) || b.includes(a))) return 0.8;
+  const m = a.length, n = b.length, d = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 1; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return 1 - d[m][n] / Math.max(m, n);
+}
+// "Ana, Sam & Dan" → ["Ana", "Sam", "Dan"]
+export const splitPeople = (v) => String(v ?? "").split(/\s*(?:,|&|\+|\/|\band\b)\s*/i).map((x) => x.trim()).filter(Boolean);
 
 // ---------- the Payouts tab on a campaign ----------
 export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent }) {
   el.innerHTML = `<p class="muted">Loading payouts…</p>`;
   const cid = campaign.id, cur = campaign.currency || "USD";
-  const [secRes, rowRes, postRes, campRes, teamRes, peopleRes] = await Promise.all([
+  const [secRes, rowRes, postRes, campRes, teamRes] = await Promise.all([
     sb.from("payout_sections").select("*").eq("campaign_id", cid).order("position").order("created_at"),
     sb.from("payout_rows").select("*").eq("campaign_id", cid).order("position").order("created_at"),
-    sb.from("posts").select("creator_id,status,creator:creators(username)").eq("campaign_id", cid),
-    sb.from("campaigns").select("budget,spend_cap_percent").eq("id", cid).maybeSingle(),
+    sb.from("posts").select("creator_id,status,creator:creators(id,username,display_name,avatar_url,follower_count,platform)").eq("campaign_id", cid),
+    sb.from("campaigns").select("budget,spend_cap_percent,campaign_runner,comms_owner").eq("id", cid).maybeSingle(),
     sb.from("team_members").select("name"),
-    sb.from("payout_rows").select("handled_by").not("handled_by", "is", null).limit(1000),
   ]);
   const me = (await sb.auth.getSession()).data.session?.user?.email ?? null;
   if (!isCurrent()) return;
@@ -44,29 +58,40 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
   const sections = secRes.data, rows = rowRes.data;
   const budget = campRes.data?.budget != null ? Number(campRes.data.budget) : null;
   let capPct = Number(campRes.data?.spend_cap_percent ?? 30);
-  const people = [...new Set([...(teamRes.data ?? []).map((t) => t.name), ...(peopleRes.data ?? []).map((r) => r.handled_by)].filter((x) => x && x !== "Admin"))].sort();
-  // Posts in the tracker per creator handle, so "Posted" fills itself in.
-  const postedBy = new Map();
-  for (const p of postRes.data ?? []) {
-    const k = handleKey(p.creator?.username);
-    if (k && p.status !== "removed") postedBy.set(k, (postedBy.get(k) ?? 0) + 1);
-  }
-  const postedOf = (r) => postedBy.get(handleKey(r.handle)) ?? 0;
-  const isPosted = (r) => r.posted_manual || (postedOf(r) > 0 && postedOf(r) >= Math.max(1, r.videos ?? 1));
-  const st = { filter: "all", confirm: null };
+  // Who can source and pay creators here: the people running this campaign (and its DRI).
+  const runners = [...new Set([...splitPeople(campRes.data?.campaign_runner), ...splitPeople(campRes.data?.comms_owner)])];
+  const everyone = [...new Set((teamRes.data ?? []).map((t) => t.name).filter((x) => x && x !== "Admin"))].sort();
+  const people = runners.length ? runners : everyone;
 
-  // Posted but still marked as an earlier step: move them to "Waiting for payment".
-  async function autoBump() {
-    const bump = rows.filter((r) => isPosted(r) && ["contacted", "waiting_draft", "drafted"].includes(r.status));
-    if (!bump.length) return;
-    const { error } = await sb.from("payout_rows").update({ status: "waiting_payment" }).in("id", bump.map((r) => r.id));
-    if (!error) bump.forEach((r) => (r.status = "waiting_payment"));
+  // Creators with videos in this campaign, and how many each has posted.
+  const creators = new Map();
+  for (const p of postRes.data ?? []) {
+    if (!p.creator || p.status === "removed") continue;
+    const id = p.creator.id ?? `u:${handleKey(p.creator.username)}`;
+    const c = creators.get(id) ?? { ...p.creator, id, key: handleKey(p.creator.username), posts: 0 };
+    c.posts++; creators.set(id, c);
   }
-  await autoBump();
+  const byHandle = new Map([...creators.values()].map((c) => [c.key, c]));
+  const creatorOf = (r) => (r.creator_id && creators.get(r.creator_id)) || byHandle.get(handleKey(r.handle)) || null;
+  const postedOf = (r) => creatorOf(r)?.posts ?? 0;
+  const isDone = (r) => r.posted_manual || ((r.videos ?? 0) > 0 && postedOf(r) >= r.videos);
+  const st = { filter: "all", confirm: null, dismissed: new Set(), adding: null };
+
+  // Keep each row in step with the tracker: link exact handle matches, and move the status along
+  // as videos come in (or back, if a video is removed).
+  async function sync() {
+    const link = rows.filter((r) => !r.creator_id && byHandle.get(handleKey(r.handle)) && !String(byHandle.get(handleKey(r.handle)).id).startsWith("u:"));
+    for (const r of link) { const c = byHandle.get(handleKey(r.handle)); r.creator_id = c.id; await sb.from("payout_rows").update({ creator_id: c.id }).eq("id", r.id); }
+    const toPosted = rows.filter((r) => isDone(r) && [...EARLY, "waiting_payment"].includes(r.status));
+    const toWaiting = rows.filter((r) => !isDone(r) && ((postedOf(r) > 0 && EARLY.includes(r.status)) || r.status === "posted"));
+    if (toPosted.length && !(await sb.from("payout_rows").update({ status: "posted" }).in("id", toPosted.map((r) => r.id))).error) toPosted.forEach((r) => (r.status = "posted"));
+    if (toWaiting.length && !(await sb.from("payout_rows").update({ status: "waiting_payment" }).in("id", toWaiting.map((r) => r.id))).error) toWaiting.forEach((r) => (r.status = "waiting_payment"));
+  }
+  await sync();
 
   const spent = () => rows.reduce((s, r) => s + rowTotal(r), 0);
-  const visible = (r) => st.filter === "all" || (st.filter === "topay" && r.status === "waiting_payment") || (st.filter === "draft" && ["contacted", "waiting_draft"].includes(r.status))
-    || (st.filter === "notposted" && !isPosted(r) && r.status !== "paid");
+  const visible = (r) => st.filter === "all" || (st.filter === "topay" && r.status === "posted") || (st.filter === "draft" && ["contacted", "waiting_draft"].includes(r.status))
+    || (st.filter === "notposted" && !isDone(r) && r.status !== "paid");
 
   async function save(table, id, patch) {
     const { error } = await sb.from(table).update(patch).eq("id", id);
@@ -74,82 +99,140 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
     return !error;
   }
 
+  // Suggestions: a row whose handle doesn't match anyone in the tracker, but someone's is close.
+  function suggestions() {
+    const linked = new Set(rows.map((r) => r.creator_id).filter(Boolean));
+    const free = [...creators.values()].filter((c) => !linked.has(c.id));
+    const out = [];
+    for (const r of rows) {
+      if (creatorOf(r) || st.dismissed.has(r.id)) continue;
+      const k = handleKey(r.handle);
+      const best = free.map((c) => ({ c, s: likeness(k, c.key) })).filter((x) => x.s >= 0.6).sort((a, b) => b.s - a.s)[0];
+      if (best) out.push({ r, c: best.c });
+    }
+    return out;
+  }
+  function suggestHtml() {
+    const sg = suggestions();
+    if (!sg.length) return "";
+    return `<div class="po-suggest" role="status">
+      <b>Match creators to their videos</b>
+      ${sg.map(({ r, c }) => `<div class="po-sg">
+        <span>${esc(r.handle)} on the sheet looks like <b>@${esc(c.username)}</b>${c.display_name ? ` <span class="muted">(${esc(c.display_name)})</span>` : ""}, who has ${c.posts} video${c.posts === 1 ? "" : "s"} in this campaign.</span>
+        <span class="po-sg-act"><button type="button" class="primary small-btn" data-sglink="${r.id}" data-c="${c.id}">Same person</button><button type="button" class="link-btn" data-sgno="${r.id}">Not them</button></span>
+      </div>`).join("")}
+    </div>`;
+  }
+
   // The only budget on this tab: the creator budget, a share of what's invoiced (30% by default).
+  // What isn't spent on creators stays with Stellar, so the margin is the invoiced budget minus creator costs.
   const creatorBudget = () => (budget != null ? budget * capPct / 100 : null);
   function summaryHtml() {
     const s = spent(), cap = creatorBudget();
-    const toPay = rows.filter((r) => r.status === "waiting_payment");
+    const toPay = rows.filter((r) => r.status === "posted");
     const left = cap != null ? cap - s : null;
+    const margin = budget != null ? budget - s : null;
     return `
       <div class="po2-main"><div class="n">${cap != null ? money(cap, cur) : "–"}</div>
-        <div class="l">Creator budget · <label class="po-cap"><input type="number" id="po-cap" min="0" max="100" step="1" value="${capPct}" aria-label="Creator budget, percent of the invoiced budget">%</label> of ${money(budget, cur)}</div></div>
-      <div><div class="n">${money(s, cur)}</div><div class="l">Spent${cap ? ` · ${Math.round((s / cap) * 100)}%` : ""}</div></div>
-      <div class="${left != null && left < 0 ? "po2-over" : ""}"><div class="n">${left != null ? money(Math.abs(left), cur) : "–"}</div><div class="l">${left != null && left < 0 ? "Over budget" : "Left to spend"}</div></div>
+        <div class="l">Creator budget · <label class="po-cap"><input type="number" id="po-cap" min="0" max="100" step="1" value="${capPct}" aria-label="Creator budget, percent of the invoiced budget">%</label> of ${money(budget, cur)} invoiced</div></div>
+      <div class="po2-cost"><div class="n">${money(s, cur)}</div><div class="l">Creator costs${budget ? ` · ${Math.round((s / budget) * 100)}% of budget` : ""}</div></div>
+      <div class="${left != null && left < 0 ? "po2-over" : ""}"><div class="n">${left != null ? money(Math.abs(left), cur) : "–"}</div><div class="l">${left != null && left < 0 ? "Over the creator budget" : "Left to spend"}</div></div>
       <div><div class="n">${money(toPay.reduce((a, r) => a + rowTotal(r), 0), cur)}</div><div class="l">To pay · ${toPay.length} creator${toPay.length === 1 ? "" : "s"}</div></div>
+      <div class="po2-margin"><div class="n">${margin != null ? money(margin, cur) : "–"}</div><div class="l">Margin${budget ? ` · ${Math.round((margin / budget) * 100)}%` : ""}</div></div>
       ${cap != null ? `<span class="po2-bar" aria-hidden="true"><i style="width:${Math.min(100, (s / (cap || 1)) * 100)}%"></i></span>` : ""}`;
   }
 
+  const whoOptions = (v) => {
+    const list = v && !people.includes(v) ? [...people, v] : people;
+    return `<option value="">Who?</option>${list.map((p) => `<option${p === v ? " selected" : ""}>${esc(p)}</option>`).join("")}`;
+  };
+  function progressHtml(r) {
+    const posted = postedOf(r), need = r.videos ?? 0;
+    if (r.posted_manual) return `<span class="po-prog done" title="Marked as posted">✓ Posted</span> <button type="button" class="link-btn small" data-unmanual="${r.id}">Undo</button>`;
+    const pctDone = need ? Math.min(100, (posted / need) * 100) : 0;
+    return `<span class="po-prog${need && posted >= need ? " done" : ""}" title="Videos by this creator tracked in this campaign">
+        <span class="po-prog-n">${posted}/${need || "–"}</span><span class="po-prog-bar"><i style="width:${pctDone}%"></i></span></span>
+      ${need && posted < need ? `<button type="button" class="link-btn small po-manual" data-manual="${r.id}" title="They posted somewhere the tracker doesn't follow">Mark posted</button>` : ""}`;
+  }
   function rowHtml(r) {
-    const posted = postedOf(r), need = Math.max(1, r.videos ?? 1);
-    const total = rowTotal(r);
+    const total = rowTotal(r), c = creatorOf(r);
     return `<tr data-row="${r.id}" class="po-st-${r.status}">
-      <td class="po-who"><input class="po-in po-handle" data-f="handle" value="${esc(r.handle)}" aria-label="Creator handle">
+      <td class="po-who">
+        <span class="po-av">${c?.avatar_url ? `<img src="${esc(c.avatar_url)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span>${esc((handleKey(r.handle) || "?").charAt(0).toUpperCase())}</span></span>
+        <input class="po-in po-handle" data-f="handle" value="${esc(r.handle)}" aria-label="Creator handle">
+        ${c ? `<span class="po-ok" title="Matched to @${esc(c.username)}'s videos in this campaign">✓</span>` : ""}
         <a class="po-open" href="https://www.tiktok.com/@${esc(handleKey(r.handle))}" target="_blank" rel="noopener" title="Open profile" aria-label="Open ${esc(r.handle)}'s profile">↗</a></td>
-      <td><input class="po-in" data-f="handled_by" list="po-people" value="${esc(r.handled_by ?? "")}" placeholder="Who" aria-label="Sourced and paid by"></td>
-      <td class="num"><input class="po-in num" data-f="videos" inputmode="numeric" value="${r.videos ?? ""}" aria-label="Videos"></td>
+      <td><select class="po-in po-who-sel" data-f="handled_by" aria-label="Sourced and paid by">${whoOptions(r.handled_by)}</select></td>
+      <td class="num"><input class="po-in num" data-f="videos" inputmode="numeric" value="${r.videos ?? ""}" placeholder="–" aria-label="Videos"></td>
       <td class="num"><input class="po-in num" data-f="price_per_video" inputmode="decimal" value="${r.price_per_video != null ? nf.format(r.price_per_video) : ""}" placeholder="–" aria-label="Price per video"></td>
-      <td class="num"><input class="po-in num po-total" data-f="amount" inputmode="decimal" value="${total ? nf.format(total) : ""}" placeholder="–" aria-label="Total"></td>
+      <td class="num"><input class="po-in num po-total po-cost" data-f="amount" inputmode="decimal" value="${total ? nf.format(total) : ""}" placeholder="–" aria-label="Total"></td>
       <td><select class="po-status s-${r.status}" data-f="status" aria-label="Status">${STATUS.map(([k, l]) => `<option value="${k}"${k === r.status ? " selected" : ""}>${l}</option>`).join("")}</select></td>
-      <td class="po-posted">${posted ? `<span class="po-count${posted >= need ? " ok" : ""}" title="Posts by this creator tracked in this campaign">${posted >= need ? "✓ " : ""}${posted}/${need}</span>`
-        : `<label class="po-check" title="Tick if they posted somewhere the tracker doesn't follow"><input type="checkbox" data-f="posted_manual"${r.posted_manual ? " checked" : ""}><span class="sr">Posted</span></label>`}</td>
+      <td class="po-posted">${progressHtml(r)}</td>
       <td class="po-paid">${r.status === "paid" ? `<select class="po-via" data-f="paid_via" aria-label="Paid via">${VIA.map(([k, l]) => `<option value="${k}"${k === (r.paid_via ?? "paypal") ? " selected" : ""}>${l}</option>`).join("")}</select><span class="muted small">${esc(dayLabel(r.paid_on))}</span>` : `<span class="muted">–</span>`}</td>
       <td><input class="po-in" data-f="notes" value="${esc(r.notes ?? "")}" placeholder="" aria-label="Notes"></td>
       <td class="po-x"><button type="button" class="link-btn" data-del="${r.id}" aria-label="Remove ${esc(r.handle)}">${st.confirm === r.id ? "Remove?" : "×"}</button></td>
     </tr>`;
   }
 
+  function addRowHtml(secId) {
+    const open = st.adding === (secId ?? "");
+    return `<tr class="po-addrow"><td colspan="10">
+      ${open ? `<form class="po-add" data-addto="${secId ?? ""}">
+          <input name="h" list="po-known" placeholder="@handle or TikTok profile link" aria-label="Creator to add" autocomplete="off">
+          <button type="submit" class="primary">Add creator</button>
+          <button type="button" class="link-btn" data-addcancel>Cancel</button>
+          <span class="po-add-msg muted small" aria-live="polite">We check the account exists, so it matches their videos later.</span>
+        </form>`
+      : `<button type="button" class="po-addbtn" data-addopen="${secId ?? ""}"><span>+</span> Add creator</button>`}
+    </td></tr>`;
+  }
+
   function sectionHtml(s) {
     const mine = rows.filter((r) => (r.section_id ?? null) === (s?.id ?? null));
     const shown = mine.filter(visible);
     const sp = mine.reduce((a, r) => a + rowTotal(r), 0);
+    const vids = mine.reduce((a, r) => a + (r.videos ?? 0), 0), posted = mine.reduce((a, r) => a + Math.min(postedOf(r), r.videos ?? 0), 0);
     return `<section class="po-sec" data-sec="${s?.id ?? ""}">
       <div class="po-sec-head">
         ${s ? `<input class="po-sec-name" data-sf="name" value="${esc(s.name)}" aria-label="Section name">` : `<h3>${sections.length ? "Not in a section" : "Creators"}</h3>`}
         <div class="po-sec-sum">
           <span>${mine.length} creator${mine.length === 1 ? "" : "s"}</span>
-          <span><b>${money(sp, cur)}</b></span>
+          ${vids ? `<span>${posted}/${vids} videos posted</span>` : ""}
+          <span class="po-cost"><b>${money(sp, cur)}</b></span>
           ${s ? `<button type="button" class="link-btn muted" data-delsec="${s.id}">${st.confirm === s.id ? "Delete section?" : "Delete"}</button>` : ""}
         </div>
       </div>
       <div class="po-tablewrap"><table class="po-table">
         <colgroup><col class="c-who"><col class="c-by"><col class="c-n"><col class="c-m"><col class="c-m"><col class="c-st"><col class="c-p"><col class="c-paid"><col class="c-notes"><col class="c-x"></colgroup>
-        <thead><tr><th>Creator</th><th>Sourced &amp; paid by</th><th class="num">Videos</th><th class="num">Per video</th><th class="num">Total</th><th>Status</th><th>Posted</th><th>Paid</th><th>Notes</th><th></th></tr></thead>
-        <tbody>${shown.map(rowHtml).join("") || `<tr class="po-empty"><td colspan="10" class="muted small">${mine.length ? "No creators match this filter." : "No creators yet."}</td></tr>`}</tbody>
+        <thead><tr><th>Creator</th><th>Sourced &amp; paid by</th><th class="num">Videos</th><th class="num">Per video</th><th class="num">Total</th><th>Status</th><th>Posting</th><th>Paid</th><th>Notes</th><th></th></tr></thead>
+        <tbody>${shown.map(rowHtml).join("") || (mine.length ? `<tr class="po-empty"><td colspan="10" class="muted small">No creators match this filter.</td></tr>` : "")}${addRowHtml(s?.id ?? null)}</tbody>
       </table></div>
-      <form class="po-add" data-addto="${s?.id ?? ""}"><input name="h" placeholder="+ Add creator: @handle or profile link" aria-label="Add creator"><button type="submit">Add</button></form>
     </section>`;
   }
 
   function draw() {
     const hasLoose = rows.some((r) => !r.section_id) || !sections.length;
+    const known = [...creators.values()].filter((c) => !rows.some((r) => creatorOf(r)?.id === c.id));
     el.innerHTML = `
       <div class="po2-sum" id="po-sum">${summaryHtml()}</div>
+      <div id="po-suggest">${suggestHtml()}</div>
       <div class="po2-tools">
         <div class="po2-filter" role="tablist" aria-label="Show">
-          ${[["all", "All creators"], ["topay", "To pay"], ["draft", "Waiting for draft"], ["notposted", "Not posted"]].map(([k, l]) => `<button type="button" role="tab" data-filter="${k}" aria-selected="${st.filter === k}">${l}</button>`).join("")}
+          ${[["all", "All creators"], ["topay", "To pay"], ["draft", "Waiting for draft"], ["notposted", "Not posted yet"]].map(([k, l]) => `<button type="button" role="tab" data-filter="${k}" aria-selected="${st.filter === k}">${l}</button>`).join("")}
         </div>
         <span class="po-tools-r">
           <button type="button" class="link-btn" id="po-paste">Paste from sheet</button>
           <button type="button" class="link-btn" id="po-newsec">+ New section</button>
         </span>
       </div>
-      <datalist id="po-people">${people.map((p) => `<option value="${esc(p)}">`).join("")}</datalist>
+      <datalist id="po-known">${known.map((c) => `<option value="@${esc(c.username)}">${esc(c.display_name ?? "")} · ${c.posts} video${c.posts === 1 ? "" : "s"} in this campaign</option>`).join("")}</datalist>
       ${!rows.length && !sections.length ? emptyGuide(cur) : `${sections.map(sectionHtml).join("")}
       ${hasLoose ? sectionHtml(null) : ""}`}
-      <p class="muted small po-note">Clients never see payouts. "Posted" counts the creator's posts in the tracker (tick the box for posts it doesn't follow); posted creators move to "Waiting for payment" by themselves.</p>`;
+      <p class="muted small po-note">Clients never see payouts. Fill in any two of videos, price per video and total, and the third is worked out. "Posting" counts the creator's videos in the tracker; when all their videos are up they move to "Posted · to pay" by themselves.${runners.length ? "" : " Tip: set who runs this campaign (Edit campaign) to shorten the \"Sourced & paid by\" list."}</p>`;
     bind();
     el.querySelector("#po-start")?.addEventListener("click", () => el.querySelector("#po-newsec").click());
     el.querySelector("#po-start-paste")?.addEventListener("click", () => el.querySelector("#po-paste").click());
+    el.querySelector(".po-add input")?.focus();
   }
   const refreshSummary = () => { const s = el.querySelector("#po-sum"); if (s) { s.innerHTML = summaryHtml(); bindCap(); } };
   function refreshSection(secId) {
@@ -180,6 +263,47 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
     }));
   }
 
+  // Find the real account behind what was typed: a creator already in this campaign, one already
+  // known to the OS, or (costs a few ScrapeCreators credits) a fresh look-up on TikTok.
+  async function resolveCreator(raw) {
+    const k = handleKey(raw);
+    if (byHandle.get(k)) return byHandle.get(k);
+    const { data: known } = await sb.from("creators").select("id,username,display_name,avatar_url").eq("platform", "tiktok").ilike("username", k).maybeSingle();
+    if (known) return known;
+    const { data, error } = await sb.functions.invoke("roster", { body: { action: "lookup", input: /^https?:/i.test(raw.trim()) ? raw.trim() : `@${k}`, platform: "tiktok" } });
+    if (error || data?.error) throw new Error(data?.error ?? "Couldn't check that account right now");
+    return data;
+  }
+  async function addCreator(form, secId, force = false) {
+    const inp = form.h, msg = form.querySelector(".po-add-msg"), btn = form.querySelector("[type=submit]");
+    const h = handleKey(inp.value);
+    if (!h) return inp.focus();
+    btn.disabled = true; msg.className = "po-add-msg muted small"; msg.textContent = force ? "Adding…" : `Checking @${h}…`;
+    let c = null;
+    if (!force) {
+      try { c = await resolveCreator(inp.value); }
+      catch (e) {
+        btn.disabled = false; msg.className = "po-add-msg small bad";
+        msg.innerHTML = `${esc(e.message)}. <button type="button" class="link-btn" data-force>Add @${esc(h)} anyway</button>`;
+        msg.querySelector("[data-force]").onclick = () => addCreator(form, secId, true);
+        return;
+      }
+    }
+    const last = rows.filter((r) => (r.section_id ?? null) === secId).at(-1);
+    const { data, error } = await sb.from("payout_rows").insert({
+      campaign_id: cid, section_id: secId, handle: `@${c ? handleKey(c.username) : h}`, creator_id: c?.id ?? null,
+      handled_by: last?.handled_by ?? (people.length === 1 ? people[0] : null),
+      price_per_video: last?.price_per_video ?? null, videos: null, amount: null,
+      position: rows.length, created_by: me ?? null,
+    }).select().single();
+    btn.disabled = false;
+    if (error) { msg.textContent = error.message; return; }
+    if (data.amount != null && !(await withinBudget(rowTotal(data)))) { await sb.from("payout_rows").delete().eq("id", data.id); return; }
+    if (c && !creators.has(c.id)) { /* known account, no videos yet */ }
+    rows.push(data); await sync(); draw();
+    toast(c ? `Added @${handleKey(c.username)}${c.display_name ? ` (${c.display_name})` : ""}` : `Added @${h}`);
+  }
+
   function bind() {
     bindCap();
     el.querySelectorAll("[data-filter]").forEach((b) => (b.onclick = () => { st.filter = b.dataset.filter; draw(); }));
@@ -190,43 +314,44 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
       el.querySelector(`.po-sec[data-sec="${data.id}"] .po-sec-name`)?.select();
     };
     el.querySelector("#po-paste").onclick = () => pasteDialog();
+    el.querySelectorAll("[data-sglink]").forEach((b) => (b.onclick = async () => {
+      const r = rows.find((x) => x.id === b.dataset.sglink), c = creators.get(b.dataset.c);
+      const patch = { creator_id: c.id, handle: `@${handleKey(c.username)}` };
+      if (await save("payout_rows", r.id, patch)) { Object.assign(r, patch); await sync(); toast(`Matched to @${c.username}`); draw(); }
+    }));
+    el.querySelectorAll("[data-sgno]").forEach((b) => (b.onclick = () => { st.dismissed.add(b.dataset.sgno); el.querySelector("#po-suggest").innerHTML = suggestHtml(); bind(); }));
     el.querySelectorAll(".po-sec").forEach((box) => {
       const secId = box.dataset.sec || null;
       bindSectionButtons(box);
       box.querySelectorAll("[data-sf]").forEach((inp) => (inp.onchange = async () => {
-        const f = inp.dataset.sf, s = sections.find((x) => x.id === secId);
-        const v = f === "name" ? inp.value.trim() || "Untitled section" : f === "deliverable" ? inp.value.trim() || "video" : num(inp.value);
-        if (f === "deliverables" && v != null) inp.value = Math.round(v);
-        if (await save("payout_sections", secId, { [f]: f === "deliverables" && v != null ? Math.round(v) : v })) { s[f] = v; refreshSection(secId); }
+        const s = sections.find((x) => x.id === secId);
+        const v = inp.value.trim() || "Untitled section";
+        if (await save("payout_sections", secId, { name: v })) { s.name = v; refreshSection(secId); }
       }));
-      box.querySelector(".po-add").onsubmit = async (e) => {
-        e.preventDefault();
-        const inp = e.currentTarget.h, h = handleKey(inp.value);
-        if (!h) return;
-        const last = rows.filter((r) => (r.section_id ?? null) === secId).at(-1);
-        const { data, error } = await sb.from("payout_rows").insert({
-          campaign_id: cid, section_id: secId, handle: `@${h}`, handled_by: last?.handled_by ?? null,
-          price_per_video: last?.price_per_video ?? sections.find((x) => x.id === secId)?.unit_price ?? null, videos: 1,
-          position: rows.length, created_by: me ?? null,
-        }).select().single();
-        if (error) return toast(error.message);
-        if (data.price_per_video != null) data.amount = Number(data.price_per_video);
-        if (data.amount != null && !(await withinBudget(rowTotal(data)))) { await sb.from("payout_rows").delete().eq("id", data.id); return; }
-        if (data.amount != null) await save("payout_rows", data.id, { amount: data.amount });
-        rows.push(data); await autoBump(); draw();
-        el.querySelector(`.po-sec[data-sec="${secId ?? ""}"] .po-add input`)?.focus();
-      };
+      box.querySelector("[data-addopen]")?.addEventListener("click", () => { st.adding = secId ?? ""; draw(); });
+      box.querySelector("[data-addcancel]")?.addEventListener("click", () => { st.adding = null; draw(); });
+      const form = box.querySelector(".po-add");
+      if (form) {
+        form.onsubmit = (e) => { e.preventDefault(); addCreator(form, secId); };
+        form.h.onkeydown = (e) => { if (e.key === "Escape") { st.adding = null; draw(); } };
+      }
     });
-    el.querySelectorAll("tr[data-row]").forEach((tr) => {
-      const r = rows.find((x) => x.id === tr.dataset.row);
-      tr.querySelectorAll("[data-f]").forEach((inp) => (inp.onchange = () => editRow(r, inp, tr)));
-      tr.querySelector("[data-del]").onclick = async (e) => {
-        if (st.confirm !== r.id) { st.confirm = r.id; e.currentTarget.textContent = "Remove?"; return; }
-        const { error } = await sb.from("payout_rows").delete().eq("id", r.id);
-        if (error) return toast(error.message);
-        rows.splice(rows.indexOf(r), 1); st.confirm = null; draw();
-      };
-    });
+    el.querySelectorAll("tr[data-row]").forEach((tr) => bindRow(tr, rows.find((x) => x.id === tr.dataset.row)));
+  }
+  function bindRow(tr, r) {
+    tr.querySelectorAll("[data-f]").forEach((inp) => (inp.onchange = () => editRow(r, inp, tr)));
+    tr.querySelector("[data-manual]")?.addEventListener("click", () => setManual(r, tr, true));
+    tr.querySelector("[data-unmanual]")?.addEventListener("click", () => setManual(r, tr, false));
+    tr.querySelector("[data-del]").onclick = async (e) => {
+      if (st.confirm !== r.id) { st.confirm = r.id; e.currentTarget.textContent = "Remove?"; return; }
+      const { error } = await sb.from("payout_rows").delete().eq("id", r.id);
+      if (error) return toast(error.message);
+      rows.splice(rows.indexOf(r), 1); st.confirm = null; draw();
+    };
+  }
+  async function setManual(r, tr, on) {
+    if (!(await save("payout_rows", r.id, { posted_manual: on }))) return;
+    r.posted_manual = on; await sync(); refreshRow(tr, r); refreshSummary(); refreshSection(r.section_id ?? null);
   }
 
   // Creator spend may never go over the creator budget (raise the % above if a campaign needs more).
@@ -235,53 +360,65 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
     if (cap == null) return true;
     const after = spent() + extra;
     if (after <= cap + 0.005) return true;
-    toast(`That would take creator spend to ${money(after, cur)}, over the creator budget of ${money(cap, cur)}. Raise the % if this campaign needs more.`);
+    toast(`That would take creator costs to ${money(after, cur)}, over the creator budget of ${money(cap, cur)}. Raise the % if this campaign needs more.`);
     return false;
+  }
+
+  // Videos × price = total. Whichever two were filled in last decide the third.
+  const MONEY_FIELDS = ["videos", "price_per_video", "amount"];
+  const has = (r, f) => r[f] != null && r[f] !== "";
+  function orderOf(r) {
+    if (!r._order) r._order = has(r, "videos") && has(r, "price_per_video") ? ["price_per_video", "videos", "amount"] : has(r, "amount") && has(r, "videos") ? ["amount", "videos", "price_per_video"] : ["price_per_video", "videos", "amount"];
+    return r._order;
+  }
+  function solve(r, f) {
+    const order = [f, ...orderOf(r).filter((x) => x !== f)];
+    r._order = order;
+    const [a, b, target] = order;
+    const out = {};
+    if (!has(r, a) || !has(r, b)) return out;
+    const v = Number(r.videos), p = Number(r.price_per_video), t = Number(r.amount);
+    if (target === "amount") out.amount = Math.round(v * p * 100) / 100;
+    if (target === "price_per_video" && v > 0) out.price_per_video = Math.round((t / v) * 100) / 100;
+    if (target === "videos" && p > 0) out.videos = Math.max(0, Math.round(t / p));
+    return out;
   }
 
   async function editRow(r, inp, tr) {
     const f = inp.dataset.f;
     const before = rowTotal(r), prev = { ...r };
     const patch = {};
-    if (f === "posted_manual") patch.posted_manual = inp.checked;
-    else if (f === "status") {
+    if (f === "status") {
       patch.status = inp.value;
       if (inp.value === "paid") { patch.paid_on = r.paid_on ?? today(); patch.paid_via = r.paid_via ?? "paypal"; }
       else { patch.paid_on = null; patch.paid_via = null; }
     } else if (f === "paid_via") patch.paid_via = inp.value;
-    else if (f === "handle") { const h = handleKey(inp.value); if (!h) { inp.value = r.handle; return; } patch.handle = `@${h}`; }
+    else if (f === "handle") {
+      const h = handleKey(inp.value); if (!h) { inp.value = r.handle; return; }
+      patch.handle = `@${h}`; patch.creator_id = byHandle.get(h)?.id ?? null;
+    }
     else if (f === "handled_by" || f === "notes") patch[f] = inp.value.trim() || null;
-    else if (f === "videos") {
-      patch.videos = Math.max(0, Math.round(num(inp.value) ?? 0));
-      if (r.price_per_video != null) patch.amount = patch.videos * Number(r.price_per_video);
-    } else if (f === "price_per_video") {
-      patch.price_per_video = num(inp.value);
-      if (patch.price_per_video != null) patch.amount = patch.price_per_video * (r.videos ?? 1);
-    } else if (f === "amount") patch.amount = num(inp.value);
-    if (patch.posted_manual && ["contacted", "waiting_draft", "drafted"].includes(r.status)) patch.status = "waiting_payment";
-
+    else if (MONEY_FIELDS.includes(f)) {
+      const v = num(inp.value);
+      patch[f] = f === "videos" && v != null ? Math.max(0, Math.round(v)) : v;
+      Object.assign(r, patch);
+      Object.assign(patch, solve(r, f));
+    }
     Object.assign(r, patch);
     if (rowTotal(r) > before && !(await withinBudget(0))) { Object.assign(r, prev); refreshRow(tr, r); return; }
     if (!(await save("payout_rows", r.id, patch))) { Object.assign(r, prev); refreshRow(tr, r); return; }
-    if (f === "handle") { tr.querySelector(".po-open").href = `https://www.tiktok.com/@${handleKey(r.handle)}`; }
-    if (["status", "posted_manual", "videos", "handle"].includes(f) || patch.status) {
-      if (st.filter !== "all" && !visible(r)) { draw(); return; }
-      refreshRow(tr, r);
-    } else if (["price_per_video", "amount"].includes(f)) {
-      const t = tr.querySelector(".po-total"); if (t && f !== "amount") t.value = rowTotal(r) ? nf.format(rowTotal(r)) : "";
-    }
+    if (["videos", "handle"].includes(f) || "videos" in patch) await sync();
+    if (st.filter !== "all" && !visible(r)) { draw(); return; }
+    if (f === "handle") { draw(); return; }
+    refreshRow(tr, r, f);
     refreshSummary(); refreshSection(r.section_id ?? null);
   }
-  function refreshRow(tr, r) {
+  function refreshRow(tr, r, focusField) {
     const tmp = document.createElement("tbody"); tmp.innerHTML = rowHtml(r);
     const fresh = tmp.firstElementChild; tr.replaceWith(fresh);
-    fresh.querySelectorAll("[data-f]").forEach((inp) => (inp.onchange = () => editRow(r, inp, fresh)));
-    fresh.querySelector("[data-del]").onclick = async (e) => {
-      if (st.confirm !== r.id) { st.confirm = r.id; e.currentTarget.textContent = "Remove?"; return; }
-      const { error } = await sb.from("payout_rows").delete().eq("id", r.id);
-      if (error) return toast(error.message);
-      rows.splice(rows.indexOf(r), 1); st.confirm = null; draw();
-    };
+    bindRow(fresh, r);
+    // Keep the keyboard where it was (e.g. tabbing from videos to price).
+    if (focusField && document.activeElement === document.body) fresh.querySelector(`[data-f="${focusField}"]`)?.closest("td")?.nextElementSibling?.querySelector("input,select")?.focus();
   }
 
   // Paste rows copied from the Google payout sheet (one creator per line, columns in the sheet's order).
@@ -321,11 +458,11 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
         sections.push(data); secId = data.id;
       }
       const add = parsed.reduce((a, r) => a + (r.amount ?? 0), 0);
-      if (creatorBudget() != null && spent() + add > creatorBudget() + 0.005) { toast(`These rows add ${money(add, cur)} and would take creator spend over the creator budget of ${money(creatorBudget(), cur)}. Raise the % first if this campaign needs more.`); draw(); return; }
+      if (creatorBudget() != null && spent() + add > creatorBudget() + 0.005) { toast(`These rows add ${money(add, cur)} and would take creator costs over the creator budget of ${money(creatorBudget(), cur)}. Raise the % first if this campaign needs more.`); draw(); return; }
       const ins = parsed.map((r, i) => ({ ...r, campaign_id: cid, section_id: secId, position: rows.length + i, created_by: me ?? null }));
       const { data, error } = await sb.from("payout_rows").insert(ins).select();
       if (error) return toast(error.message);
-      rows.push(...data); await autoBump(); toast(`Added ${data.length} creators`); draw();
+      rows.push(...data); await sync(); toast(`Added ${data.length} creators`); draw();
     };
     d.showModal();
     f.t.focus();
@@ -338,7 +475,7 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
 function emptyGuide(cur) {
   const ex = [
     ["@likekyuuna_s", "Nana", 1, 400, "Waiting for draft", "waiting_draft", "0/1", ""],
-    ["@rubyra6", "Nana", 1, 200, "Waiting for payment", "waiting_payment", "✓ 1/1", ""],
+    ["@rubyra6", "Nana", 1, 200, "Posted · to pay", "posted", "✓ 1/1", ""],
     ["@atdpark", "Nana", 1, 70, "Paid", "paid", "✓ 1/1", "PayPal · 18 Oct"],
     ["@gabisthatyouu", "Dan", 1, 200, "Contacted", "contacted", "0/1", ""],
   ];
@@ -374,7 +511,7 @@ export function parseSheet(text) {
     const note = (c[7] ?? "").trim();
     const code = note.toLowerCase();
     let status = code === "c" || code === "contacted" ? "contacted" : code === "wd" ? "waiting_draft" : code === "wp" ? "waiting_payment" : /^draft/.test(code) ? "drafted" : "contacted";
-    if (posted && status !== "paid") status = "waiting_payment";
+    if (posted && status !== "paid") status = "posted";
     if (sent) status = "paid";
     const videos = vids != null ? Math.round(vids) : 1;
     out.push({
@@ -410,7 +547,7 @@ export async function renderPayoutsHome(app, sb, { isCurrent, go }) {
 
   const draw = () => {
     const mine = rows.filter((r) => !st.who || r.handled_by === st.who);
-    const toPay = mine.filter((r) => r.status === "waiting_payment").sort((a, b) => (camps[a.campaign_id]?.artist ?? "").localeCompare(camps[b.campaign_id]?.artist ?? ""));
+    const toPay = mine.filter((r) => r.status === "posted").sort((a, b) => (camps[a.campaign_id]?.artist ?? "").localeCompare(camps[b.campaign_id]?.artist ?? ""));
     const byCamp = new Map();
     for (const r of mine) { const a = byCamp.get(r.campaign_id) ?? []; a.push(r); byCamp.set(r.campaign_id, a); }
     const cur = (cid) => camps[cid]?.currency || "USD";
@@ -430,7 +567,7 @@ export async function renderPayoutsHome(app, sb, { isCurrent, go }) {
           <tbody>${toPay.map((r) => `<tr class="row-link" data-go="#/c/${r.campaign_id}/payouts">
             <td><b>${esc(r.handle)}</b></td><td>${esc(camps[r.campaign_id]?.artist ?? "")} <span class="muted">${esc(camps[r.campaign_id]?.song ?? "")}</span></td>
             <td class="muted">${esc(secName[r.section_id] ?? "")}</td><td>${esc(r.handled_by ?? "")}</td><td class="num">${r.videos ?? ""}</td><td class="num">${money(rowTotal(r), cur(r.campaign_id))}</td></tr>`).join("")}</tbody></table></div>`
-          : `<p class="muted" style="margin:0">No creators are waiting for payment${st.who ? ` for ${esc(st.who)}` : ""}.</p>`}
+          : `<p class="muted" style="margin:0">Nobody has finished posting and is waiting to be paid${st.who ? ` for ${esc(st.who)}` : ""}.</p>`}
       </section>
       <section class="panel">
         <h2>Campaigns</h2>

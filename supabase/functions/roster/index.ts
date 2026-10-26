@@ -8,6 +8,8 @@
 //   { action: "add", input, platform? } team member: add to the roster (or re-add) and refresh now;
 //                                     platform is only needed for a bare @handle (default TikTok)
 //   { action: "refresh", creator_id } team member: refresh one creator now
+//   { action: "lookup", input, platform? } team member: check a profile exists and save/refresh the creator
+//                                     without putting them on the roster (used by folders and payouts)
 //   {}                                schedule: refresh roster creators not checked for 7 days (a few per run)
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
@@ -381,6 +383,12 @@ Deno.serve(async (req) => {
     if (body?.action === "add") {
       const { platform, handle } = await resolveInput(body.input, body.platform);
       return json(await refreshCreator(platform, handle, { add: true, addedBy: member }));
+    }
+    if (body?.action === "lookup") {
+      const { platform, handle } = await resolveInput(body.input, body.platform);
+      const r = await refreshCreator(platform, handle);
+      const { data: c } = await db.from("creators").select("id,username,display_name,avatar_url,follower_count,platform,is_verified").eq("id", r.id).single();
+      return json(c);
     }
     if (body?.action === "refresh") {
       const { data: c } = await db.from("creators").select("username,platform,tiktok_user_id").eq("id", body.creator_id).maybeSingle();
