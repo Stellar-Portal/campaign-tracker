@@ -1,4 +1,4 @@
-import { confirmDialog } from "./dialog.js?v=20261026e";
+import { confirmDialog } from "./dialog.js?v=20261026f";
 // The report: one module used in two places.
 // - share.html (a client with a link): what the link's settings allow.
 // - the team dashboard (#/report/<artist>): the same view with everything on, plus "remove".

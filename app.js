@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026e";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026e";
-import { renderRoster } from "./roster.js?v=20261026e";
-import { renderDiscover } from "./discover.js?v=20261026e";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026e";
-import { renderTrending } from "./trending.js?v=20261026e";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026e";
-import { confirmDialog } from "./dialog.js?v=20261026e";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026e";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026e";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026f";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026f";
+import { renderRoster } from "./roster.js?v=20261026f";
+import { renderDiscover } from "./discover.js?v=20261026f";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026f";
+import { renderTrending } from "./trending.js?v=20261026f";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026f";
+import { confirmDialog } from "./dialog.js?v=20261026f";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026f";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026f";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -273,8 +273,8 @@ const NAV = [
   ]],
 ];
 // Menu: icons only on desktop. Hovering for a moment opens it over the page; it closes again
-// a few seconds after the pointer leaves (or straight away on a click in the page). Ctrl/⌘ + \ toggles it.
-const NAV_OPEN_DELAY = 1200, NAV_CLOSE_DELAY = 5000;
+// a second after the pointer leaves (or straight away on a click in the page). Ctrl/⌘ + \ toggles it.
+const NAV_OPEN_DELAY = 1000, NAV_CLOSE_DELAY = 1000;
 const autoNav = matchMedia("(hover: hover) and (min-width: 901px)");
 let navOpenT = 0, navCloseT = 0;
 function navPeek(on) {

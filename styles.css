@@ -1889,3 +1889,14 @@ main:has(.camp-details) .art-band { padding-bottom: 72px !important; }
 .brand img.brand-mark { display: none; }
 body.nav-collapsed .brand img.brand-mark { display: block; }
 @media (max-width: 900px) { body .brand img.brand-mark { display: none !important; } }
+/* Closed menu: no strip, faint icons on the page background */
+.sidebar { transition: width 0.34s cubic-bezier(.2,.8,.2,1), padding 0.34s cubic-bezier(.2,.8,.2,1), box-shadow 0.34s ease, background-color 0.3s ease; }
+@media (min-width: 901px) {
+  body.nav-collapsed .sidebar { background: transparent; }
+  body.nav-collapsed .sidebar .nav-item { color: rgba(0,0,0,0.38); }
+  body.nav-collapsed .sidebar .nav-item:hover { background: rgba(0,0,0,0.05); color: var(--ink); }
+  body.nav-collapsed .sidebar .nav-item.on { background: none; color: var(--accent); box-shadow: none; }
+  body.nav-collapsed .sidebar .nav-label { background: transparent; }
+  body.nav-collapsed .sidebar .who { border-color: transparent; }
+  body.nav-collapsed .sidebar .who button { color: rgba(0,0,0,0.38); border-color: transparent; }
+}
