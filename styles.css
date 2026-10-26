@@ -1869,7 +1869,7 @@ body.nav-collapsed .brand-mark { display: block; width: 32px; height: 32px; bord
 .brand .brand-mark { flex: none; }
 .sidebar { overflow-x: hidden; transition: width 0.34s cubic-bezier(.2,.8,.2,1), padding 0.34s cubic-bezier(.2,.8,.2,1), box-shadow 0.34s ease; }
 .sidebar .nav-item, .sidebar .brand, .sidebar .who .email { white-space: nowrap; }
-body.nav-peek .content { margin-left: 68px; }
+body.nav-peek .content { margin-left: var(--nav-w); }
 body.nav-peek .sidebar { box-shadow: 14px 0 44px rgba(10, 20, 90, 0.28); }
 body.nav-peek .sidebar .nav-item span, body.nav-peek .sidebar .nav-label, body.nav-peek .sidebar .brand img, body.nav-peek .sidebar .brand span, body.nav-peek .sidebar .who .email { animation: nav-fade 0.3s 0.1s both; }
 @keyframes nav-fade { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
@@ -1900,3 +1900,6 @@ body.nav-collapsed .brand img.brand-mark { display: block; }
   body.nav-collapsed .sidebar .who { border-color: transparent; }
   body.nav-collapsed .sidebar .who button { color: rgba(0,0,0,0.38); border-color: transparent; }
 }
+/* The open menu pushes the page aside instead of covering it */
+.content { transition: margin-left 0.34s cubic-bezier(.2,.8,.2,1); }
+body.nav-peek .sidebar { box-shadow: none; }

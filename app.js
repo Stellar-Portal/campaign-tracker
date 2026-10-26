@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026f";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026f";
-import { renderRoster } from "./roster.js?v=20261026f";
-import { renderDiscover } from "./discover.js?v=20261026f";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026f";
-import { renderTrending } from "./trending.js?v=20261026f";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026f";
-import { confirmDialog } from "./dialog.js?v=20261026f";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026f";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026f";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026g";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026g";
+import { renderRoster } from "./roster.js?v=20261026g";
+import { renderDiscover } from "./discover.js?v=20261026g";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026g";
+import { renderTrending } from "./trending.js?v=20261026g";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026g";
+import { confirmDialog } from "./dialog.js?v=20261026g";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026g";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026g";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -310,7 +310,7 @@ autoNav.addEventListener?.("change", applyNavMode);
 function renderNav(active) {
   document.getElementById("nav").innerHTML = NAV.map(([group, items]) => `
     <div class="nav-group"><div class="nav-label">${esc(group)}</div>
-      ${items.map((it) => `<a href="${it.href}" title="${esc(it.label)}${it.soon ? " (soon)" : ""}" class="nav-item${it.key === active ? " on" : ""}"${it.key === active ? ' aria-current="page"' : ""}>
+      ${items.map((it) => `<a href="${it.href}" aria-label="${esc(it.label)}${it.soon ? " (soon)" : ""}" class="nav-item${it.key === active ? " on" : ""}"${it.key === active ? ' aria-current="page"' : ""}>
         <svg viewBox="0 0 24 24" aria-hidden="true">${NAV_ICON[it.icon]}</svg><span>${esc(it.label)}</span>${it.soon ? '<i class="soon">Soon</i>' : ""}</a>`).join("")}
     </div>`).join("");
   document.querySelector('.nav-item.on')?.scrollIntoView?.({ block: "nearest", inline: "nearest" });

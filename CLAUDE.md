@@ -61,7 +61,7 @@ Read this first. README.md has the long, human version. This file is the short v
 - Share links: `share_links`, with settings per category; folders can be hidden.
 
 ## Front-end map
-- `app.js`: router, nav and page cache. Desktop menu is icons-only and opens over the page after 1s of hover, closing 1s after the pointer leaves or on a click in the page (`navPeek`); Ctrl/⌘+\\ toggles it. Phones keep the top bar.
+- `app.js`: router, nav and page cache. Desktop menu is icons-only and opens after 1s of hover and pushes the page aside (never covers it), closing 1s after the pointer leaves or on a click in the page (`navPeek`); Ctrl/⌘+\\ toggles it. Phones keep the top bar.
   - Page cache: KEEPABLE hashes stay in the DOM for 3 minutes and are cleared on any write.
   - Also: overview (`renderOverview`), campaign page (`renderCampaign`: Report/Payouts tabs switch in place, share dialog, ⋯ menu), campaign form, folders.
 - Artist banners (`.art-band`) are rounded floating cards; on the campaign page the details card overlaps the banner's bottom.
