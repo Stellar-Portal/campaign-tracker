@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026h";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026h";
-import { renderRoster } from "./roster.js?v=20261026h";
-import { renderDiscover } from "./discover.js?v=20261026h";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026h";
-import { renderTrending } from "./trending.js?v=20261026h";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026h";
-import { confirmDialog } from "./dialog.js?v=20261026h";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026h";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026h";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026i";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026i";
+import { renderRoster } from "./roster.js?v=20261026i";
+import { renderDiscover } from "./discover.js?v=20261026i";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026i";
+import { renderTrending } from "./trending.js?v=20261026i";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026i";
+import { confirmDialog } from "./dialog.js?v=20261026i";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026i";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026i";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -791,7 +791,7 @@ async function renderOverview(token) {
       <div class="warn" title="${tip(ni)}"><div class="n">${usdTxt(ni)}</div><div class="l">Still to invoice · ${n(notInv.length)}</div></div>
       <div><div class="n">${n(list.filter((r) => r.camp).length)}</div><div class="l">In the tracker</div></div>`;
   }
-  const COLS = [[null, ""], ["artist", "Artist and song"], [null, "PO number"], ["client", "Client"], ["dri", "Stellar DRI"], ["start", "Starts"], ["price", "Price", "num"], ["status", "Status", "end"]];
+  const COLS = [["artist", "Artist and song", "first"], [null, "PO number", "po-h"], ["client", "Client"], ["dri", "Stellar DRI"], ["start", "Starts"], ["price", "Price", "num"], ["status", "Status"]];
   function draw() {
     const base = filtered(true);
     STATUS_TABS.forEach(([k]) => { const el = app.querySelector(`[data-ovcount="${CSS.escape(k)}"]`); if (el) el.textContent = n(k ? base.filter((r) => v(r, "Status") === k).length : base.length); });

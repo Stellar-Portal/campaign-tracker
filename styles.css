@@ -1903,3 +1903,20 @@ body.nav-collapsed .brand img.brand-mark { display: block; }
 /* The open menu pushes the page aside instead of covering it */
 .content { transition: margin-left 0.34s cubic-bezier(.2,.8,.2,1); }
 body.nav-peek .sidebar { box-shadow: none; }
+/* Overview columns: one clean grid, labels sit exactly over what they describe */
+.ov2-cols, .ov2-row { grid-template-columns: 44px minmax(0, 1.5fr) 128px minmax(0, 1fr) 120px 104px 120px 96px; gap: 20px; }
+.ov2-cols { padding: 10px 20px 8px; border-bottom: 1px solid var(--hairline); margin-bottom: 4px; }
+.ov2-cols .first { grid-column: 1 / span 2; }
+.ov2-cols .po-h { padding-left: 10px; margin: 0; }
+.ov2-cols .num { text-align: right; justify-self: end; }
+.ov2-st { justify-self: start; }
+.ov2-month { margin: 22px 20px 10px; }
+.ov2-month:first-of-type { margin-top: 14px; }
+/* Not enough room for every column (narrow window, or the menu open): compact two-line cards */
+@container (max-width: 1060px) {
+  .ov2-cols { display: none; }
+  .ov2-row { grid-template-columns: 44px minmax(0, 1fr) auto; grid-template-areas: "av t st" "av po price"; gap: 4px 14px; }
+  .ov2-row > :nth-child(1) { grid-area: av; } .ov2-row > :nth-child(2) { grid-area: t; } .ov2-row > :nth-child(3) { grid-area: po; }
+  .ov2-row > :nth-child(4), .ov2-row > :nth-child(5), .ov2-row > :nth-child(6) { display: none; }
+  .ov2-row > :nth-child(7) { grid-area: price; } .ov2-row > :nth-child(8) { grid-area: st; justify-self: end; }
+}
