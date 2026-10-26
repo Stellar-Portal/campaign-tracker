@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026d";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026d";
-import { renderRoster } from "./roster.js?v=20261026d";
-import { renderDiscover } from "./discover.js?v=20261026d";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026d";
-import { renderTrending } from "./trending.js?v=20261026d";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026d";
-import { confirmDialog } from "./dialog.js?v=20261026d";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026d";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026d";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026e";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026e";
+import { renderRoster } from "./roster.js?v=20261026e";
+import { renderDiscover } from "./discover.js?v=20261026e";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026e";
+import { renderTrending } from "./trending.js?v=20261026e";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026e";
+import { confirmDialog } from "./dialog.js?v=20261026e";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026e";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026e";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -235,7 +235,7 @@ async function isTeamMember() {
 function renderWho(user) {
   who.innerHTML = `<span class="email" title="${esc(user.email)}">${esc(user.email)}</span><button id="signout" type="button" title="Sign out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg><span>Sign out</span></button>`;
   // The account's saved menu choice wins over this browser's copy.
-  loadPrefs().then((p) => { if (p?.ui && typeof p.ui.nav_collapsed === "boolean") setNavCollapsed(p.ui.nav_collapsed, false); }).catch(() => {});
+  loadPrefs().catch(() => {});
   document.getElementById("signout").onclick = async () => { await sb.auth.signOut(); };
 }
 
@@ -272,24 +272,42 @@ const NAV = [
     { key: "trending", href: "#/trending", label: "Trending", icon: "trending" },
   ]],
 ];
-// Collapsible menu: icons only, remembered for this person (browser copy first, so there's no flash).
-const NAV_KEY = "nav-collapsed";
-function setNavCollapsed(on, save = true) {
-  document.body.classList.toggle("nav-collapsed", on);
-  const b = document.getElementById("nav-toggle");
-  const label = on ? "Expand the menu" : "Collapse the menu";
-  if (b) { b.setAttribute("aria-expanded", String(!on)); b.setAttribute("aria-label", label); b.title = `${label} (Ctrl + \\)`; }
-  if (!save) return;
-  try { localStorage.setItem(NAV_KEY, on ? "1" : "0"); } catch { /* ignore */ }
-  if (PREFS.loaded) savePrefs("ui", { ...(PREFS.data.ui ?? {}), nav_collapsed: on });
+// Menu: icons only on desktop. Hovering for a moment opens it over the page; it closes again
+// a few seconds after the pointer leaves (or straight away on a click in the page). Ctrl/⌘ + \ toggles it.
+const NAV_OPEN_DELAY = 1200, NAV_CLOSE_DELAY = 5000;
+const autoNav = matchMedia("(hover: hover) and (min-width: 901px)");
+let navOpenT = 0, navCloseT = 0;
+function navPeek(on) {
+  clearTimeout(navOpenT); clearTimeout(navCloseT);
+  if (!autoNav.matches) return;
+  document.body.classList.toggle("nav-collapsed", !on);
+  document.body.classList.toggle("nav-peek", on);
 }
-try { if (localStorage.getItem(NAV_KEY) === "1") document.body.classList.add("nav-collapsed"); } catch { /* ignore */ }
-document.getElementById("nav-toggle")?.addEventListener("click", () => setNavCollapsed(!document.body.classList.contains("nav-collapsed")));
-// Ctrl/⌘ + \ toggles it too.
-document.addEventListener("keydown", (e) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setNavCollapsed(!document.body.classList.contains("nav-collapsed")); } });
+function applyNavMode() {
+  clearTimeout(navOpenT); clearTimeout(navCloseT);
+  document.body.classList.remove("nav-peek");
+  document.body.classList.toggle("nav-collapsed", autoNav.matches);
+}
+applyNavMode();
+autoNav.addEventListener?.("change", applyNavMode);
+{
+  const side = document.getElementById("sidebar");
+  side?.addEventListener("mouseenter", () => {
+    clearTimeout(navCloseT);
+    if (document.body.classList.contains("nav-collapsed")) navOpenT = setTimeout(() => navPeek(true), NAV_OPEN_DELAY);
+  });
+  side?.addEventListener("mouseleave", () => {
+    clearTimeout(navOpenT);
+    if (document.body.classList.contains("nav-peek")) navCloseT = setTimeout(() => navPeek(false), NAV_CLOSE_DELAY);
+  });
+  side?.addEventListener("focusin", (e) => { if (e.target.matches(":focus-visible") && document.body.classList.contains("nav-collapsed")) navPeek(true); });
+  document.addEventListener("pointerdown", (e) => { if (document.body.classList.contains("nav-peek") && !side?.contains(e.target)) navPeek(false); });
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); navPeek(!document.body.classList.contains("nav-peek")); }
+  });
+}
 
 function renderNav(active) {
-  setNavCollapsed(document.body.classList.contains("nav-collapsed"), false);
   document.getElementById("nav").innerHTML = NAV.map(([group, items]) => `
     <div class="nav-group"><div class="nav-label">${esc(group)}</div>
       ${items.map((it) => `<a href="${it.href}" title="${esc(it.label)}${it.soon ? " (soon)" : ""}" class="nav-item${it.key === active ? " on" : ""}"${it.key === active ? ' aria-current="page"' : ""}>

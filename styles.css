@@ -1863,3 +1863,29 @@ body.has-back .ov2-cols { top: 56px; }
 .art-band .hero-actions .camp-menu > div .danger { color: var(--bad); }
 .share-dialog .set-head { margin-top: 20px; }
 .share-dialog .set-head:first-of-type { margin-top: 8px; }
+/* ---------- Menu opens on hover (desktop) ---------- */
+.brand-mark { display: none; }
+body.nav-collapsed .brand-mark { display: block; width: 32px; height: 32px; border-radius: 9px; background: none; }
+.brand .brand-mark { flex: none; }
+.sidebar { overflow-x: hidden; transition: width 0.34s cubic-bezier(.2,.8,.2,1), padding 0.34s cubic-bezier(.2,.8,.2,1), box-shadow 0.34s ease; }
+.sidebar .nav-item, .sidebar .brand, .sidebar .who .email { white-space: nowrap; }
+body.nav-peek .content { margin-left: 68px; }
+body.nav-peek .sidebar { box-shadow: 14px 0 44px rgba(10, 20, 90, 0.28); }
+body.nav-peek .sidebar .nav-item span, body.nav-peek .sidebar .nav-label, body.nav-peek .sidebar .brand img, body.nav-peek .sidebar .brand span, body.nav-peek .sidebar .who .email { animation: nav-fade 0.3s 0.1s both; }
+@keyframes nav-fade { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sidebar { transition: none; } body.nav-peek .sidebar * { animation: none !important; } }
+
+/* ---------- Artist banner as a floating card ---------- */
+main .art-band { margin: -12px 0 0 !important; padding: 24px 36px 32px !important; border-radius: 24px; box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 12px 32px rgba(0,0,0,.10); }
+main .art-band::before, .content .art-band::before { display: none; }
+main .art-band::after { background: linear-gradient(180deg, rgba(0,0,0,.18) 0%, rgba(0,0,0,.30) 55%, rgba(0,0,0,.62) 100%); }
+main .art-band ~ * .camp-details, main .art-band ~ .camp-details, .camp-details { position: relative; z-index: 2; margin: -48px 20px 0 !important; box-shadow: 0 8px 28px rgba(0,0,0,.10); border-color: transparent; }
+main:has(.camp-details) .art-band { padding-bottom: 72px !important; }
+@media (max-width: 700px) {
+  main .art-band { padding: 18px 18px 28px !important; border-radius: 20px; }
+  main:has(.camp-details) .art-band { padding-bottom: 64px !important; }
+  .camp-details { margin: -44px 10px 0 !important; }
+}
+.brand img.brand-mark { display: none; }
+body.nav-collapsed .brand img.brand-mark { display: block; }
+@media (max-width: 900px) { body .brand img.brand-mark { display: none !important; } }
