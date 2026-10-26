@@ -2088,3 +2088,9 @@ tr:hover .po-manual, .po-manual:focus { opacity: 1; }
 .pm-tap { z-index: 1; }
 /* Until TikTok's player reports in, clicks go straight to it (that's what wakes it up) */
 .pm-media:not(.api) .pm-tap { pointer-events: none; }
+/* TikTok's player draws its own header (avatar, name, logo) across the top and the like / comment /
+   share / settings buttons down the right edge; none of them can be switched off. The player is made a
+   little bigger than its window and pushed up, so those strips fall outside the frame and only the
+   video (and our own bar) shows. */
+.pm-media:has(iframe[src*="tiktok.com/player"]) { background: #000; }
+.pm-media iframe[src*="tiktok.com/player"] { inset: auto; left: 0; top: -60px; width: calc(100% + 58px); height: calc(100% + 60px); }

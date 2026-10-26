@@ -1,4 +1,4 @@
-import { confirmDialog } from "./dialog.js?v=20261027e";
+import { confirmDialog } from "./dialog.js?v=20261027f";
 // The report: one module used in two places.
 // - share.html (a client with a link): what the link's settings allow.
 // - the team dashboard (#/report/<artist>): the same view with everything on, plus "remove".
@@ -376,7 +376,6 @@ export function openPostModal(list, index, ctx) {
       <iframe src="${esc(yt ? embedSrc(p) : ttSrc(p))}" title="${platformName(p)} video by ${esc(p.creator?.name || p.creator?.username || "")}"
         allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
       ${yt ? "" : `<button type="button" class="pm-tap" aria-label="Play or pause"><span>${ICON.play}</span></button>
-      <div class="pm-shield" aria-hidden="true"></div>
       <div class="pm-bar">
         <button type="button" data-pp aria-label="Play">${ICON.play}</button>
         <input type="range" min="0" max="0" step="0.1" value="0" aria-label="Position in the video">
