@@ -73,3 +73,12 @@ Clicking a creator on the Roster (or in a comparison) opens them in a side panel
 
 ## Discover
 **Discover** (`discover.js`, `#/discover`) finds new creators through Influencers.club's Discovery API on Instagram, YouTube, TikTok, Twitch and X: **AI search** (a plain-language brief that Influencers.club turns into filters, shown as "AI searched for"), **Lookalike / username search** (creators similar to a @handle or profile link), and **All filters** (location, followers, last post, engagement, gender, language, niche, bio, age, verified, growth, posting frequency, posts, audience age/interests/credibility/location/language/gender, hashtags, captions, average views/likes/comments/downloads, and "creator has"; only the filters a platform supports are shown). Influencers.club's API has no TikTok Shop or Tagged-profiles filter. Results can be added to the roster in one click or used as the start of a lookalike search. The `discover` Edge Function runs searches (0.01 credits per creator returned, 25 per page), keeps every search in `discovery_searches` (a repeat within 24 hours is free; "Recent searches by the team" reopens them) and caches the filter value lists in `ic_dictionary` (free, refreshed monthly).
+
+## Campaign page layout
+
+- Top: Share with client (opens a dialog with the client link and its settings), Request invoice, and a ⋯ menu for Edit and Delete.
+- Details card: client, DRI, dates and the team-only budget with its invoice status.
+- Report / Payouts switch in place without reloading.
+- Add links and Refresh numbers sit with the posts.
+- Link settings: each category has an "All" switch.
+- Payouts show only the creator budget (a % of the invoiced budget, 30% by default). Creator spend can't go over it; raise the % if needed.

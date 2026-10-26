@@ -24,7 +24,6 @@ export const STATUS = [
 const statusName = (s) => (STATUS.find(([k]) => k === s) ?? [s, s])[1];
 const VIA = [["paypal", "PayPal"], ["wise", "Wise"], ["bank", "Bank"]];
 const rowTotal = (r) => (r.amount != null ? Number(r.amount) : r.price_per_video != null ? Number(r.price_per_video) * (r.videos ?? 0) : 0);
-const sectionBudget = (s) => (s.deliverables != null && s.unit_price != null ? s.deliverables * Number(s.unit_price) : null);
 
 // ---------- the Payouts tab on a campaign ----------
 export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent }) {
@@ -75,17 +74,19 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
     return !error;
   }
 
+  // The only budget on this tab: the creator budget, a share of what's invoiced (30% by default).
+  const creatorBudget = () => (budget != null ? budget * capPct / 100 : null);
   function summaryHtml() {
-    const s = spent(), cap = budget != null ? budget * capPct / 100 : null;
+    const s = spent(), cap = creatorBudget();
     const toPay = rows.filter((r) => r.status === "waiting_payment");
-    const over = cap != null && s > cap;
+    const left = cap != null ? cap - s : null;
     return `
-      <div class="stat"><div class="n">${money(budget, cur)}</div><div class="l">Budget invoiced</div></div>
-      <div class="stat"><div class="n">${money(s, cur)}</div><div class="l">Creator spend${budget ? ` · ${Math.round((s / budget) * 100)}% of budget` : ""}</div></div>
-      <div class="stat${over ? " po-over" : ""}"><div class="n">${cap != null ? money(Math.abs(cap - s), cur) : "–"}</div>
-        <div class="l">${over ? "Over" : "Left under"} the <label class="po-cap"><input type="number" id="po-cap" min="0" max="100" step="1" value="${capPct}" aria-label="Spend cap, percent of budget">% spend cap</label></div></div>
-      <div class="stat"><div class="n">${budget != null ? money(budget - s, cur) : "–"}</div><div class="l">Margin${budget ? ` · ${Math.round(((budget - s) / budget) * 100)}%` : ""}</div></div>
-      <div class="stat"><div class="n">${money(toPay.reduce((a, r) => a + rowTotal(r), 0), cur)}</div><div class="l">To pay · ${toPay.length} creator${toPay.length === 1 ? "" : "s"}</div></div>`;
+      <div class="po2-main"><div class="n">${cap != null ? money(cap, cur) : "–"}</div>
+        <div class="l">Creator budget · <label class="po-cap"><input type="number" id="po-cap" min="0" max="100" step="1" value="${capPct}" aria-label="Creator budget, percent of the invoiced budget">%</label> of ${money(budget, cur)}</div></div>
+      <div><div class="n">${money(s, cur)}</div><div class="l">Spent${cap ? ` · ${Math.round((s / cap) * 100)}%` : ""}</div></div>
+      <div class="${left != null && left < 0 ? "po2-over" : ""}"><div class="n">${left != null ? money(Math.abs(left), cur) : "–"}</div><div class="l">${left != null && left < 0 ? "Over budget" : "Left to spend"}</div></div>
+      <div><div class="n">${money(toPay.reduce((a, r) => a + rowTotal(r), 0), cur)}</div><div class="l">To pay · ${toPay.length} creator${toPay.length === 1 ? "" : "s"}</div></div>
+      ${cap != null ? `<span class="po2-bar" aria-hidden="true"><i style="width:${Math.min(100, (s / (cap || 1)) * 100)}%"></i></span>` : ""}`;
   }
 
   function rowHtml(r) {
@@ -111,51 +112,41 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
     const mine = rows.filter((r) => (r.section_id ?? null) === (s?.id ?? null));
     const shown = mine.filter(visible);
     const sp = mine.reduce((a, r) => a + rowTotal(r), 0);
-    const sb_ = s ? sectionBudget(s) : null;
-    const pctOf = sb_ ? Math.round((sp / sb_) * 100) : null;
     return `<section class="po-sec" data-sec="${s?.id ?? ""}">
       <div class="po-sec-head">
-        ${s ? `<input class="po-sec-name" data-sf="name" value="${esc(s.name)}" aria-label="Section name">
-          <div class="po-deliv">
-            <input class="po-in num" data-sf="deliverables" inputmode="numeric" value="${s.deliverables ?? ""}" placeholder="0" aria-label="Number of deliverables">
-            <input class="po-in" data-sf="deliverable" value="${esc(s.deliverable)}" aria-label="Deliverable (edit, video…)">
-            <span class="muted">at</span>
-            <input class="po-in num" data-sf="unit_price" inputmode="decimal" value="${s.unit_price != null ? nf.format(s.unit_price) : ""}" placeholder="price" aria-label="Price per deliverable">
-            <span class="muted">each</span>
-          </div>` : `<h3>Not in a section</h3>`}
+        ${s ? `<input class="po-sec-name" data-sf="name" value="${esc(s.name)}" aria-label="Section name">` : `<h3>${sections.length ? "Not in a section" : "Creators"}</h3>`}
         <div class="po-sec-sum">
-          ${sb_ != null ? `<span>Budget <b>${money(sb_, cur)}</b></span>` : ""}
-          <span>Spent <b>${money(sp, cur)}</b>${pctOf != null ? ` <i class="${pctOf > capPct ? "bad" : "good"}">${pctOf}%</i>` : ""}</span>
-          ${sb_ != null ? `<span>Margin <b>${money(sb_ - sp, cur)}</b></span>` : ""}
+          <span>${mine.length} creator${mine.length === 1 ? "" : "s"}</span>
+          <span><b>${money(sp, cur)}</b></span>
           ${s ? `<button type="button" class="link-btn muted" data-delsec="${s.id}">${st.confirm === s.id ? "Delete section?" : "Delete"}</button>` : ""}
         </div>
       </div>
-      <div class="table-wrap"><table class="po-table">
+      <div class="po-tablewrap"><table class="po-table">
         <colgroup><col class="c-who"><col class="c-by"><col class="c-n"><col class="c-m"><col class="c-m"><col class="c-st"><col class="c-p"><col class="c-paid"><col class="c-notes"><col class="c-x"></colgroup>
         <thead><tr><th>Creator</th><th>Sourced &amp; paid by</th><th class="num">Videos</th><th class="num">Per video</th><th class="num">Total</th><th>Status</th><th>Posted</th><th>Paid</th><th>Notes</th><th></th></tr></thead>
         <tbody>${shown.map(rowHtml).join("") || `<tr class="po-empty"><td colspan="10" class="muted small">${mine.length ? "No creators match this filter." : "No creators yet."}</td></tr>`}</tbody>
       </table></div>
-      <form class="po-add" data-addto="${s?.id ?? ""}"><input name="h" placeholder="Add creator: @handle or profile link" aria-label="Add creator"><button type="submit">Add</button></form>
+      <form class="po-add" data-addto="${s?.id ?? ""}"><input name="h" placeholder="+ Add creator: @handle or profile link" aria-label="Add creator"><button type="submit">Add</button></form>
     </section>`;
   }
 
   function draw() {
     const hasLoose = rows.some((r) => !r.section_id) || !sections.length;
     el.innerHTML = `
-      <div class="stats po-stats" id="po-sum">${summaryHtml()}</div>
-      <div class="po-tools">
-        <div class="seg" role="group" aria-label="Show">
-          ${[["all", "All"], ["topay", "To pay"], ["draft", "Waiting for draft"], ["notposted", "Not posted"]].map(([k, l]) => `<button type="button" data-filter="${k}" aria-pressed="${st.filter === k}">${l}</button>`).join("")}
+      <div class="po2-sum" id="po-sum">${summaryHtml()}</div>
+      <div class="po2-tools">
+        <div class="po2-filter" role="tablist" aria-label="Show">
+          ${[["all", "All creators"], ["topay", "To pay"], ["draft", "Waiting for draft"], ["notposted", "Not posted"]].map(([k, l]) => `<button type="button" role="tab" data-filter="${k}" aria-selected="${st.filter === k}">${l}</button>`).join("")}
         </div>
         <span class="po-tools-r">
-          <button type="button" id="po-paste">Paste from sheet</button>
-          <button type="button" id="po-newsec">New section</button>
+          <button type="button" class="link-btn" id="po-paste">Paste from sheet</button>
+          <button type="button" class="link-btn" id="po-newsec">+ New section</button>
         </span>
       </div>
       <datalist id="po-people">${people.map((p) => `<option value="${esc(p)}">`).join("")}</datalist>
       ${!rows.length && !sections.length ? emptyGuide(cur) : `${sections.map(sectionHtml).join("")}
       ${hasLoose ? sectionHtml(null) : ""}`}
-      <p class="muted small po-note">Team only: clients never see payouts. "Posted" counts this creator's posts in the tracker; tick the box for posts it doesn't follow. Posted creators move to "Waiting for payment" by themselves.</p>`;
+      <p class="muted small po-note">Clients never see payouts. "Posted" counts the creator's posts in the tracker (tick the box for posts it doesn't follow); posted creators move to "Waiting for payment" by themselves.</p>`;
     bind();
     el.querySelector("#po-start")?.addEventListener("click", () => el.querySelector("#po-newsec").click());
     el.querySelector("#po-start-paste")?.addEventListener("click", () => el.querySelector("#po-paste").click());
@@ -238,12 +229,13 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
     });
   }
 
-  // Creator spend may never go over the campaign's budget.
+  // Creator spend may never go over the creator budget (raise the % above if a campaign needs more).
   async function withinBudget(extra = 0) {
-    if (budget == null) return true;
+    const cap = creatorBudget();
+    if (cap == null) return true;
     const after = spent() + extra;
-    if (after <= budget + 0.005) return true;
-    toast(`That would take creator spend to ${money(after, cur)}, over the campaign budget of ${money(budget, cur)}`);
+    if (after <= cap + 0.005) return true;
+    toast(`That would take creator spend to ${money(after, cur)}, over the creator budget of ${money(cap, cur)}. Raise the % if this campaign needs more.`);
     return false;
   }
 
@@ -329,7 +321,7 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
         sections.push(data); secId = data.id;
       }
       const add = parsed.reduce((a, r) => a + (r.amount ?? 0), 0);
-      if (budget != null && spent() + add > budget + 0.005) { toast(`These rows add ${money(add, cur)} and would take creator spend over the campaign budget of ${money(budget, cur)}`); draw(); return; }
+      if (creatorBudget() != null && spent() + add > creatorBudget() + 0.005) { toast(`These rows add ${money(add, cur)} and would take creator spend over the creator budget of ${money(creatorBudget(), cur)}. Raise the % first if this campaign needs more.`); draw(); return; }
       const ins = parsed.map((r, i) => ({ ...r, campaign_id: cid, section_id: secId, position: rows.length + i, created_by: me ?? null }));
       const { data, error } = await sb.from("payout_rows").insert(ins).select();
       if (error) return toast(error.message);
@@ -350,17 +342,17 @@ function emptyGuide(cur) {
     ["@atdpark", "Nana", 1, 70, "Paid", "paid", "✓ 1/1", "PayPal · 18 Oct"],
     ["@gabisthatyouu", "Dan", 1, 200, "Contacted", "contacted", "0/1", ""],
   ];
-  return `<section class="panel po-empty-guide">
+  return `<section class="po-empty-guide">
     <h2 style="margin:0 0 6px">No payout sheet for this campaign yet</h2>
     <p class="muted" style="margin:0 0 14px">It replaces this campaign's tab in the PayPal Payout Sheet. Two ways to start:</p>
     <ol class="po-steps">
-      <li><b>Create a section</b> for each set of deliverables, e.g. "20x Edits" at $50 per edit, then add creators one by one with their @handle or profile link.</li>
+      <li><b>Create a section</b> for each set of deliverables, e.g. "20x Edits", then add creators one by one with their @handle or profile link.</li>
       <li><b>Or paste from the sheet</b>: in the Google sheet, select a section's creator rows (from the handle to the notes column), copy, and paste them here.</li>
     </ol>
     <div class="actions" style="margin:12px 0 22px"><button type="button" class="primary" id="po-start">Create a section</button><button type="button" id="po-start-paste">Paste from sheet</button></div>
     <div class="po-example" aria-label="Example">
-      <div class="po-sec-head"><span class="badge">Example</span><h3>7–10x FOM Challenge</h3><span class="muted small">10 videos at $200 each</span>
-        <div class="po-sec-sum"><span>Budget <b>${money(2000, cur)}</b></span><span>Spent <b>${money(870, cur)}</b> <i class="bad">44%</i></span><span>Margin <b>${money(1130, cur)}</b></span></div></div>
+      <div class="po-sec-head"><span class="badge">Example</span><h3>7–10x FOM Challenge</h3>
+        <div class="po-sec-sum"><span>4 creators</span><span><b>${money(870, cur)}</b></span></div></div>
       <div class="table-wrap"><table class="po-table po-table-ex">
         <thead><tr><th>Creator</th><th>Sourced &amp; paid by</th><th class="num">Videos</th><th class="num">Total</th><th>Status</th><th>Posted</th><th>Paid</th></tr></thead>
         <tbody>${ex.map(([h, by, v, t, sl, sk, p, paid]) => `<tr><td><b>${h}</b></td><td>${by}</td><td class="num">${v}</td><td class="num"><b>${money(t, cur)}</b></td>

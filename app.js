@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026c";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026c";
-import { renderRoster } from "./roster.js?v=20261026c";
-import { renderDiscover } from "./discover.js?v=20261026c";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026c";
-import { renderTrending } from "./trending.js?v=20261026c";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026c";
-import { confirmDialog } from "./dialog.js?v=20261026c";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026c";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026c";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026d";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026d";
+import { renderRoster } from "./roster.js?v=20261026d";
+import { renderDiscover } from "./discover.js?v=20261026d";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026d";
+import { renderTrending } from "./trending.js?v=20261026d";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026d";
+import { confirmDialog } from "./dialog.js?v=20261026d";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026d";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026d";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -1349,36 +1349,26 @@ async function renderCampaign(token, id, tab = "report") {
     header: "",
     heroMeta: `<span class="key-chip status-chip s-${esc(c.status)}">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span class="key-chip po"><span class="key-sub">PO</span><span class="key-text">${esc(c.po_number)}</span>${copyBtn(c.po_number)}</span>` : ""}`,
     heroActions: `
-      <a class="btn primary" href="#/c/${esc(id)}/add">Add links</a>
-      <button type="button" id="refresh">Refresh numbers</button>
-      <button type="button" id="share-btn" aria-expanded="false" aria-controls="share-panel">Share with client</button>
+      <button type="button" id="share-btn">Share with client</button>
       <button type="button" id="req-inv">Request invoice</button>
-      <a class="btn" href="#/c/${esc(id)}/edit">Edit</a>
-      <button type="button" id="del-camp" class="danger-lite">Delete</button>
-      <span class="updated" id="updated" title="${lastChecked ? `Numbers checked ${esc(timeAgo(lastChecked))}` : ""}"></span>`,
+      <details class="camp-menu"><summary aria-label="More actions">⋯</summary><div>
+        <a href="#/c/${esc(id)}/edit">Edit campaign</a>
+        <button type="button" id="del-camp" class="danger">Delete campaign…</button>
+      </div></details>`,
     afterHero: `
-      <section id="share-panel" class="panel share-panel" hidden></section>
       <section class="camp-details" aria-label="Campaign details">
         <dl>
           ${detail("Client", c.client)}
           ${detail("Stellar DRI", c.comms_owner)}
           ${detail("Dates", c.start_date ? `${date(c.start_date)}${c.end_date ? ` – ${date(c.end_date)}` : ""}` : null)}
           ${detail("Markets", mk)}
-          ${detail("Numbers", lastChecked ? `checked ${timeAgo(lastChecked)}` : null)}
-          ${(invReqs.data ?? []).length ? `<div><dt>Invoicing</dt><dd><a href="#/invoices">${invReqs.data.map((r) => `${invoicePill(r)} ${money(r.amount, r.currency)}${r.invoice_number ? ` #${esc(r.invoice_number)}` : ""}`).join("<br>")}</a></dd></div>` : ""}
+          ${c.budget != null ? `<div class="camp-budget"><dt>Budget <span class="team-tag">team only</span></dt><dd>${esc(money(c.budget, c.currency))}${(invReqs.data ?? []).length ? ` <a href="#/invoices" class="camp-inv">${invReqs.data.map((r) => `${invoicePill(r)}${r.invoice_number ? ` #${esc(r.invoice_number)}` : ""}`).join(" ")}</a>` : ` <span class="muted small">not invoiced yet</span>`}</dd></div>` : ""}
         </dl>
         ${sheetLine(sync.data, c)}
       </section>
-      <div class="stats money-strip" aria-label="Money (team only)">
-        <div class="stat money"><div class="n">${money(c.budget, c.currency)}</div><div class="l">Budget</div></div>
-        <div class="stat money"><div class="n">${money(c.spend, c.currency)}</div><div class="l">Spend</div></div>
-        <div class="stat money"><div class="n">${c.budget != null ? money(c.margin, c.currency) : "–"}</div><div class="l">Margin</div></div>
-        <div class="stat money"><div class="n">${cpv(c.cost_per_view, c.currency)}</div><div class="l">Cost per view</div></div>
-        <div class="stat"><div class="n small-n">Team only</div><div class="l">Clients never see this row</div></div>
-      </div>
-      <div class="camp-tabs tabs" role="tablist" aria-label="Campaign views">
-        <a role="tab" href="#/c/${esc(id)}" aria-selected="${tab === "report"}">Report</a>
-        <a role="tab" href="#/c/${esc(id)}/payouts" aria-selected="${tab === "payouts"}">Payouts <span class="muted">· team only</span></a>
+      <div class="camp-tabs" role="tablist" aria-label="Campaign views">
+        <button type="button" role="tab" data-ctab="report" aria-selected="${tab === "report"}">Report</button>
+        <button type="button" role="tab" data-ctab="payouts" aria-selected="${tab === "payouts"}">Payouts <span class="team-tag">team only</span></button>
       </div>
       <section id="camp-payouts" class="camp-payouts"${tab === "payouts" ? "" : " hidden"}></section>`,
     postsHtml: `
@@ -1386,6 +1376,8 @@ async function renderCampaign(token, id, tab = "report") {
       <div class="section-head">
         <h2>Posts</h2>
         <div class="posts-tools">
+          <a class="btn primary" href="#/c/${esc(id)}/add">+ Add links</a>
+          <button type="button" id="refresh" title="${lastChecked ? `Numbers checked ${esc(timeAgo(lastChecked))}` : "Not checked yet"}">Refresh numbers</button>
           <div class="seg" role="group" aria-label="Layout"><button type="button" data-pview="folders">Folders</button><button type="button" data-pview="grid">All posts</button></div>
           <button type="button" id="new-folder">New folder</button>
           <button type="button" id="pick-toggle" aria-pressed="false">Select posts</button>
@@ -1394,6 +1386,7 @@ async function renderCampaign(token, id, tab = "report") {
           </label>
         </div>
       </div>
+      <p class="muted small posts-updated" id="updated">${lastChecked ? `Numbers checked ${esc(timeAgo(lastChecked))}. They refresh automatically every day.` : "Numbers are collected once links are added."}</p>
       <form id="new-folder-form" class="nf-panel" hidden>
         <div class="nf-row">
           <label for="nf-name">New folder</label>
@@ -1410,10 +1403,34 @@ async function renderCampaign(token, id, tab = "report") {
       </div>`,
     onPosts: (root, data) => {
       if (token !== routeToken) return;
-      app.classList.toggle("camp-on-payouts", tab === "payouts");
-      if (tab === "payouts") renderCampaignPayouts(document.getElementById("camp-payouts"), sb, { campaign: c, toast, isCurrent: () => token === routeToken });
+      // Report / Payouts switch in place: no reload, and the address follows so a refresh keeps the tab.
+      let payoutsDrawn = false;
+      const showTab = (t) => {
+        app.classList.toggle("camp-on-payouts", t === "payouts");
+        document.getElementById("camp-payouts").hidden = t !== "payouts";
+        app.querySelectorAll("[data-ctab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.ctab === t)));
+        history.replaceState(history.state, "", `#/c/${id}${t === "payouts" ? "/payouts" : ""}`);
+        if (t === "payouts" && !payoutsDrawn) { payoutsDrawn = true; renderCampaignPayouts(document.getElementById("camp-payouts"), sb, { campaign: c, toast, isCurrent: () => token === routeToken }); }
+      };
+      app.querySelectorAll("[data-ctab]").forEach((b) => (b.onclick = () => showTab(b.dataset.ctab)));
+      showTab(tab);
       loadPosts(token, id, { ...c, artist_image: data.artist_image });
-      document.getElementById("share-btn").onclick = (e) => toggleSharePanel(e.currentTarget, c);
+      document.getElementById("share-btn").onclick = () => openShareDialog(c);
+      const menu = app.querySelector(".camp-menu");
+      if (menu) {
+        // The hero clips overflow, so the menu floats in fixed position under its button.
+        const place = () => {
+          if (!menu.isConnected) { window.removeEventListener("scroll", place); document.removeEventListener("click", close); return; }
+          if (!menu.open) return;
+          const r = menu.querySelector("summary").getBoundingClientRect(), box = menu.querySelector("div");
+          box.style.top = `${r.bottom + 6}px`;
+          box.style.left = `${Math.min(r.left, window.innerWidth - 206)}px`;
+        };
+        menu.addEventListener("toggle", place);
+        const close = (e) => { if (menu.open && !menu.contains(e.target)) menu.open = false; };
+        document.addEventListener("click", close);
+        window.addEventListener("scroll", place, { passive: true });
+      }
       document.getElementById("req-inv").onclick = () => requestInvoiceDialog(sb, c, { toast, onDone: () => renderCampaign(newToken(), id, tab) });
       document.getElementById("del-camp").onclick = () => deleteCampaignFlow(c);
       document.getElementById("refresh").onclick = async (e) => {
@@ -1431,7 +1448,7 @@ async function renderCampaign(token, id, tab = "report") {
         toast(ok || gone
           ? `Updated ${ok} post${ok === 1 ? "" : "s"}${gone ? `, ${gone} no longer available` : ""}${r.skipped_recent ? `. ${r.skipped_recent} were already up to date` : ""}`
           : "Everything was updated in the last hour already");
-        renderCampaign(++routeToken, id);
+        renderCampaign(newToken(), id, app.classList.contains("camp-on-payouts") ? "payouts" : "report");
       };
     },
     onError: (e) => { app.innerHTML = fail(e); },
@@ -1443,12 +1460,17 @@ async function renderCampaign(token, id, tab = "report") {
 const shareUrl = (t) => new URL(`share.html#t=${t}`, location.origin + location.pathname).toString();
 const sameArtist = (a, b) => (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
 
-async function toggleSharePanel(btn, c) {
-  const panel = document.getElementById("share-panel");
-  const open = panel.hidden;
-  panel.hidden = !open;
-  btn.setAttribute("aria-expanded", open);
-  if (open) await drawSharePanel(panel, c);
+// Sharing opens as its own window over the page, with the link first and the settings under it.
+async function openShareDialog(c) {
+  const d = document.createElement("dialog");
+  d.className = "share-dialog";
+  d.innerHTML = `<button type="button" class="share-x" aria-label="Close">×</button><div class="share-panel"></div>`;
+  document.body.append(d);
+  d.querySelector(".share-x").onclick = () => d.close();
+  d.addEventListener("click", (e) => { if (e.target === d) d.close(); });
+  d.onclose = () => d.remove();
+  d.showModal();
+  await drawSharePanel(d.querySelector(".share-panel"), c);
 }
 
 async function drawSharePanel(panel, c) {
@@ -1509,10 +1531,19 @@ function drawLinkSettings(el, link, camps) {
     return `<label class="row${sub ? " sub" : ""}"><span>${label}${note ? ` <span class="muted small">${note}</span>` : ""}</span>
       <span class="switch"><input type="checkbox" data-key="${key}" ${S[key] && !disabled && !off ? "checked" : ""} ${disabled ? "disabled" : ""}><span></span></span></label>`;
   };
+  // Each section has one switch that turns everything in it on or off.
+  const GROUPS = {
+    analytics: ["overview", "overview_chart", "sounds", "songs", "songs_chart", ...(link.folder_id ? [] : ["folders"]), "countries", "countries_chart"],
+    posts: ["posts", "posts_country_filter"],
+    creators: ["show_country", "show_followers"],
+  };
+  const liveCamps = camps.filter((x) => x.status !== "draft");
+  const groupOn = (g) => g === "campaigns" ? liveCamps.some((x) => !S.hidden_campaigns.includes(x.id)) : GROUPS[g].some((k) => S[k]);
+  const head = (g, label) => `<div class="set-head"><h3>${label}</h3><label class="set-all" title="Turn all ${label.toLowerCase()} settings on or off"><span>All</span><span class="switch"><input type="checkbox" data-group="${g}" ${groupOn(g) ? "checked" : ""}><span></span></span></label></div>`;
   el.innerHTML = `
     <h2 style="margin-bottom:2px">Link settings</h2>
     <p class="muted small" style="margin-top:0">Changes apply to the link straight away. Anything switched off is never sent to the client's browser.</p>
-    <h3>Analytics</h3>
+    ${head("analytics", "Analytics")}
     ${row("overview", "Overview numbers")}
     ${row("overview_chart", "Overview chart", { sub: true, parent: "overview" })}
     ${row("sounds", "Sound analytics")}
@@ -1521,14 +1552,14 @@ function drawLinkSettings(el, link, camps) {
     ${link.folder_id ? "" : row("folders", "Market and folder breakdown", { note: "folders hidden from clients are never named" })}
     ${row("countries", "Country analytics")}
     ${row("countries_chart", "Countries chart", { sub: true, parent: "countries" })}
-    <h3>Posts</h3>
+    ${head("posts", "Posts")}
     ${row("posts", "Post wall")}
     ${row("posts_country_filter", "Country filter", { sub: true, parent: "posts" })}
-    ${camps.length ? "<h3>Campaigns</h3>" : ""}
+    ${liveCamps.length > 1 ? head("campaigns", "Campaigns") : camps.length ? "<h3>Campaigns</h3>" : ""}
     ${camps.map((x) => x.status === "draft"
       ? `<label class="row"><span>${esc(x.song ?? "Untitled")} <span class="muted small">upcoming, not shown yet</span></span><span class="switch"><input type="checkbox" disabled><span></span></span></label>`
       : `<label class="row"><span>${esc(x.song ?? "Untitled")}</span><span class="switch"><input type="checkbox" data-camp="${esc(x.id)}" ${S.hidden_campaigns.includes(x.id) ? "" : "checked"}><span></span></span></label>`).join("")}
-    <h3>Creators</h3>
+    ${head("creators", "Creators")}
     ${row("show_country", "Creator country", { note: "also used for country analytics" })}
     ${row("show_followers", "Creator follower counts")}
     <p class="never">Budgets, spend, margins and creator costs can't be shown on client links.</p>`;
@@ -1542,6 +1573,12 @@ function drawLinkSettings(el, link, camps) {
     if (intro) intro.dataset.stale = "1";
   };
   el.querySelectorAll("[data-key]").forEach((i) => i.onchange = () => { S[i.dataset.key] = i.checked; save(); });
+  el.querySelectorAll("[data-group]").forEach((i) => i.onchange = () => {
+    const g = i.dataset.group;
+    if (g === "campaigns") S.hidden_campaigns = i.checked ? [] : liveCamps.map((x) => x.id);
+    else for (const k of GROUPS[g]) S[k] = i.checked;
+    save();
+  });
   el.querySelectorAll("[data-camp]").forEach((i) => i.onchange = () => {
     const id = i.dataset.camp;
     S.hidden_campaigns = i.checked ? S.hidden_campaigns.filter((x) => x !== id) : [...new Set([...S.hidden_campaigns, id])];
@@ -2060,13 +2097,12 @@ function renderReport(token, artist) {
     },
     header: `<div class="client-view-note">
         <span>Client view: what a client link shows with every setting on. Upcoming campaigns appear here but not on client links.</span>
-        <button type="button" id="rep-share" aria-expanded="false" aria-controls="share-panel">Share with client</button>
+        <button type="button" id="rep-share">Share with client</button>
       </div>`,
     onHeader: (root) => {
       if (token !== routeToken) return;
-      root.querySelector(".band")?.insertAdjacentHTML("afterend", `<section id="share-panel" class="panel share-panel" hidden></section>`);
       const b = root.querySelector("#rep-share");
-      if (b) b.onclick = () => toggleSharePanel(b, c);
+      if (b) b.onclick = () => openShareDialog(c);
     },
     onError: (e) => { app.innerHTML = fail(e); },
   });
