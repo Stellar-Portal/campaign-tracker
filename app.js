@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261023q";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261023q";
-import { renderRoster } from "./roster.js?v=20261023q";
-import { renderDiscover } from "./discover.js?v=20261023q";
-import { renderAnalytics } from "./analytics.js?v=20261023q";
-import { renderTrending } from "./trending.js?v=20261023q";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261023q";
-import { confirmDialog } from "./dialog.js?v=20261023q";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261023q";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261023q";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026a";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026a";
+import { renderRoster } from "./roster.js?v=20261026a";
+import { renderDiscover } from "./discover.js?v=20261026a";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026a";
+import { renderTrending } from "./trending.js?v=20261026a";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026a";
+import { confirmDialog } from "./dialog.js?v=20261026a";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026a";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026a";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -80,6 +80,7 @@ function depthOf(hash) {
   if (p[0] === "c") return p[2] && p[2] !== "payouts" ? 2 : 1;
   if (p[0] === "new" || p[0] === "report") return 1;
   if (p[0] === "trending") return p[1] === "artist" ? 1 : 0;
+  if (p[0] === "analytics") return Math.floor((p.length - 1) / 2);
   return 0;
 }
 function trackHistory() {
@@ -108,6 +109,7 @@ function parentOf(hash) {
     return "#/roster";
   }
   if (p[0] === "trending" && p.length > 1) return p[1] === "artist" ? "#/trending/artists" : "#/trending";
+  if (p[0] === "analytics" && p.length > 2) return `#/${p.slice(0, -2).join("/")}`;
   return null;
 }
 function pageName(hash) {
@@ -119,6 +121,7 @@ function pageName(hash) {
   if (p[0] === "report") return "Client view";
   if (p[0] === "creator") return "Creator";
   if (p[0] === "roster") return p[p.length - 2] === "c" ? "Creator" : p[1] === "list" ? (p[3] === "compare" ? "Comparison" : "List") : "Roster";
+  if (p[0] === "analytics" && p.length > 2) return drillTitle(p[p.length - 2], decodeURIComponent(p[p.length - 1]));
   if (p[0] === "trending") return p[1] === "artist" ? "Artist" : p[1] === "artists" ? "Trending artists" : "Trending";
   return { analytics: "Analytics", discover: "Discover", payouts: "Payouts", payments: "Creator payments", invoices: "Invoices" }[p[0]] ?? "Previous page";
 }
@@ -2075,11 +2078,18 @@ function keepShownPage(nextHash) {
   pageCache.set(h, { frag, token: shown.token, at: Date.now(), scroll: window.scrollY, cls: app.className });
   app.innerHTML = `<p class="muted pad">Loading…</p>`;
 }
-function restorePage(h) {
+function restorePage(h, from) {
   const k = pageCache.get(h);
   pageCache.delete(h);
   if (!k || Date.now() - k.at > KEEP_MS) return false;
   app.innerHTML = ""; app.className = k.cls; app.appendChild(k.frag);
+  app.querySelectorAll(".an-zooming").forEach((el) => el.classList.remove("an-zooming"));
+  // Coming back up from a page inside it (a zoomed-in chart, say): zoom back out.
+  if (from && from.startsWith(`${h === "#/" ? "#/overview" : h}/`)) {
+    app.style.transformOrigin = "50% 30%";
+    app.classList.remove("an-zoom-out"); void app.offsetWidth; app.classList.add("an-zoom-out");
+    setTimeout(() => app.classList.remove("an-zoom-out"), 600);
+  }
   routeToken = k.token; shown = { hash: h, token: k.token };
   requestAnimationFrame(() => window.scrollTo(0, k.scroll));
   return true;
@@ -2088,6 +2098,7 @@ let teamOk = null;   // whether this user is on the team list, checked once per 
 
 async function route() {
   const target = normHash(location.hash);
+  const prevShown = shown.hash;
   keepShownPage(target);
   const token = newToken();
   const user = await signedInUser();
@@ -2117,10 +2128,10 @@ async function route() {
   lastPageKey = pageKey;
   const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover", "payouts", "invoices"].includes(parts[0]) ? parts[0] : "campaigns";
   renderNav(section);
-  if (KEEPABLE.has(target) && restorePage(target)) { lastPageKey = pageKey; return; }
+  if (KEEPABLE.has(target) && restorePage(target, prevShown)) { lastPageKey = pageKey; return; }
   shown = { hash: target, token };
   if (section === "overview") return renderOverview(token);
-  if (section === "analytics") return renderAnalytics(app, sb, { isCurrent: () => token === routeToken, go });
+  if (section === "analytics") return renderAnalytics(app, sb, { isCurrent: () => token === routeToken, go, parts });
   if (section === "trending") return renderTrending(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (section === "roster") return renderRoster(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (section === "invoices") return renderInvoices(app, sb, { isCurrent: () => token === routeToken, go, toast });

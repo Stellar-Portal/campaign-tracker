@@ -1665,3 +1665,16 @@ svg.gb .gb-g:hover .gb-hit, svg.gb .gb-hit:focus-visible { fill: var(--accent-ti
 .inv-team-list select, .inv-team .inv-do-row select { width: auto; padding: 6px 34px 6px 10px; font-size: 13px; }
 @media (max-width: 900px) { .inv-split { grid-template-columns: 1fr; } .inv-card { position: static; } .inv-dialog .inv-form { grid-template-columns: 1fr; } }
 .inv-dialog textarea { font-family: var(--font); font-size: 14px; }
+/* Analytics: zooming into a chart */
+.an-zoomable { cursor: pointer; }
+.hb-row.an-zoomable:hover .hb-label { color: var(--accent); }
+.dn-legend li.an-zoomable:hover span { color: var(--accent); }
+#an-out { transition: transform 0.17s ease-in, opacity 0.17s ease-in; }
+#an-out.an-zooming { transform: scale(1.06); opacity: 0; }
+@keyframes an-zoom-in { from { transform: scale(0.86); opacity: 0; filter: blur(4px); } 60% { filter: blur(0); } to { transform: none; opacity: 1; } }
+@keyframes an-zoom-out { from { transform: scale(1.08); opacity: 0; } to { transform: none; opacity: 1; } }
+#app.an-zoom-in { animation: an-zoom-in 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+#app.an-zoom-out { animation: an-zoom-out 0.36s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@media (prefers-reduced-motion: reduce) { #app.an-zoom-in, #app.an-zoom-out { animation: none; } #an-out.an-zooming { transform: none; } }
+.an-crumbs { font-size: 14px; color: var(--muted); margin: 0 0 4px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.an-crumbs a { color: var(--accent); }

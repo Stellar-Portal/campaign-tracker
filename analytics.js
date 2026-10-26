@@ -1,7 +1,7 @@
 // Analytics: charts across every campaign in the Campaign Overview sheet, plus tracker performance.
 // Money is shown in USD (ECB rates, refreshed daily in fx_rates). Every chart says how many
 // campaigns it is based on, has a hover read-out and a "Show as table" view.
-import { chart, esc } from "./report.js?v=20261023q";
+import { chart, esc } from "./report.js?v=20261026a";
 
 // Validated categorical slots (dataviz palette); cobalt only for single-series charts.
 const SLOT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
@@ -164,9 +164,21 @@ function groupBars(groups, series, width, { key = "gb", H = 280, fmt = usdShort,
   </svg>`;
 }
 
-export async function renderAnalytics(app, sb, { isCurrent, go }) {
-  app.innerHTML = `<p class="muted pad">Loading analytics…</p>`;
-  const [snap, fx, camps, daily, folders, markets] = await Promise.all([
+// Data is kept for two minutes, so zooming in and out of charts doesn't reload anything.
+let DATA = null, DATA_AT = 0;
+const DRILL = { region: "Client market", month: "Start month", client: "Client", market: "Market", dri: "DRI", label: "Label type" };
+const drillPath = (pairs) => `#/analytics${pairs.map(([k, v]) => `/${k}/${encodeURIComponent(v)}`).join("")}`;
+const regionName = (v) => (v === "none" ? "Not set" : (REGIONS.find(([k]) => k === v) ?? [, v])[1]);
+const monthName = (m) => `${MONTHS[Number(m.slice(5)) - 1]} ${m.slice(0, 4)}`;
+export const drillTitle = (k, v) => (k === "region" ? regionName(v) : k === "month" ? monthName(v) : v);
+
+export async function renderAnalytics(app, sb, { isCurrent, go, parts = [] }) {
+  // #/analytics/<kind>/<value>[/<kind>/<value>…]: a zoomed-in view, filtered by each pair in turn.
+  const pairs = [];
+  for (let i = 1; i + 1 < parts.length; i += 2) if (DRILL[parts[i]]) pairs.push([parts[i], decodeURIComponent(parts[i + 1])]);
+  const fresh = DATA && Date.now() - DATA_AT < 120000;
+  if (!fresh) app.innerHTML = `<p class="muted pad">Loading analytics…</p>`;
+  const [snap, fx, camps, daily, folders, markets] = fresh ? DATA : await Promise.all([
     sb.from("overview_snapshot").select("sheet,headers,rows,synced_at").eq("id", 1).maybeSingle(),
     sb.from("fx_rates").select("currency,per_usd,rate_date"),
     sb.from("campaign_summary").select("id,artist,song,po_number,status,currency,budget,spend,total_plays,live_posts,cost_per_view"),
@@ -174,6 +186,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
     sb.from("campaign_folders").select("id,campaign_id,name,market"),
     sb.from("campaign_markets").select("campaign_id,market,share_percent,amount"),
   ]);
+  if (!fresh) { DATA = [snap, fx, camps, daily, folders, markets]; DATA_AT = Date.now(); }
   if (!isCurrent()) return;
   const s = snap.data ?? {};
   const rate = Object.fromEntries((fx.data ?? []).map((r) => [r.currency, Number(r.per_usd)]));
@@ -215,12 +228,15 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
   const inQuarter = (m, key) => { if (!m) return false; const [y, mo] = m.split("-").map(Number); const fyStart = mo >= 4 ? y : y - 1; const qn = Math.floor(((mo - 4 + 12) % 12) / 3) + 1; return key === `${fyStart}-Q${qn}`; };
   const allDris = [...new Set(all.flatMap((x) => x.dris))].sort();
   const VIEWS = [["cols", "Columns"], ["pie", "Pie"], ["list", "List"]];
-  const st = { views: (() => { try { return JSON.parse(localStorage.getItem("an-views") ?? "{}"); } catch { return {}; } })(), period: "", region: "", dri: "", campSort: "margin", campAll: false, tab: (() => { try { return localStorage.getItem("an-tab") || "money"; } catch { return "money"; } })() };
+  const st = { period: "", region: "", dri: "", views: (() => { try { return JSON.parse(localStorage.getItem("an-views") ?? "{}"); } catch { return {}; } })(), ...(() => { try { return JSON.parse(sessionStorage.getItem("an-filters") ?? "{}"); } catch { return {}; } })(), campSort: "margin", campAll: false, tab: (() => { try { return localStorage.getItem("an-tab") || "money"; } catch { return "money"; } })() };
 
+  const drilled = pairs.length > 0;
+  const crumbs = pairs.map(([k, v], i) => ({ k, v, title: drillTitle(k, v), href: drillPath(pairs.slice(0, i + 1)) }));
   app.innerHTML = `
-    <div class="page-head">
-      <div><h1>Analytics</h1>
-        <p class="muted small" style="margin:6px 0 0">${esc(s.sheet ?? "Campaign Overview")} · ${all.length} campaigns · amounts in USD${rateDate ? ` at ECB rates from ${esc(rateDate)}` : ""}</p></div>
+    <div class="page-head${drilled ? " an-drill-head" : ""}">
+      <div>${drilled ? `<nav class="an-crumbs" aria-label="Zoom path"><a href="#/analytics">Analytics</a>${crumbs.slice(0, -1).map((c) => ` <span>›</span> <a href="${esc(c.href)}">${esc(c.title)}</a>`).join("")} <span>›</span></nav>` : ""}
+        <h1>${drilled ? esc(crumbs.at(-1).title) : "Analytics"}</h1>
+        <p class="muted small" style="margin:6px 0 0">${drilled ? `${esc(crumbs.map((c) => DRILL[c.k]).join(" · "))} · everything below is only these campaigns · click any chart to zoom further` : `${esc(s.sheet ?? "Campaign Overview")} · ${all.length} campaigns · amounts in USD${rateDate ? ` at ECB rates from ${esc(rateDate)}` : ""} · click any chart to zoom in`}</p></div>
     </div>
     ${!all.length ? `<div class="panel"><p>No campaigns yet. Analytics fills in from the Campaign overview once the sheet has been read.</p></div>` : `
     <div class="filters an-filters">
@@ -232,10 +248,19 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
   if (!all.length) return;
   const out = document.getElementById("an-out");
 
+  function drillMatch(x, k, v) {
+    if (k === "region") return v === "none" ? !REGIONS.some(([r]) => r === x.region) : x.region === v;
+    if (k === "month") return x.month === v;
+    if (k === "client") return x.client === v;
+    if (k === "market") return (x.allocs[v] ?? 0) > 0;
+    if (k === "dri") return x.dris.includes(v);
+    if (k === "label") return x.label === v;
+    return true;
+  }
   function draw() {
     const list = all.filter((x) =>
       (!st.period || (st.period.startsWith("m:") ? x.month === st.period.slice(2) : inQuarter(x.month, st.period))) &&
-      (!st.region || x.region === st.region) && (!st.dri || x.dris.includes(st.dri)));
+      (!st.region || x.region === st.region) && (!st.dri || x.dris.includes(st.dri)) && pairs.every(([k, v]) => drillMatch(x, k, v)));
     const priced = list.filter((x) => x.priceUsd != null);
     const booked = priced.reduce((t, x) => t + x.priceUsd, 0);
     const invoiced = priced.filter((x) => x.invoiced).reduce((t, x) => t + x.priceUsd, 0);
@@ -256,7 +281,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
     const byClient = new Map();
     for (const x of priced) { const c = byClient.get(x.client) ?? { label: x.client, value: 0, n: 0, labels: new Set() }; c.value += x.priceUsd; c.n++; c.labels.add(x.label); byClient.set(x.client, c); }
     const clients = [...byClient.values()].sort((a, b) => b.value - a.value);
-    const topClients = clients.slice(0, 10).map((c) => ({ label: c.label, value: c.value, sub: `${c.n} campaign${c.n === 1 ? "" : "s"}`, tag: [...c.labels].filter((l) => l !== "Unknown").join("/") }));
+    const topClients = clients.slice(0, 10).map((c) => ({ key: c.label, label: c.label, value: c.value, sub: `${c.n} campaign${c.n === 1 ? "" : "s"}`, tag: [...c.labels].filter((l) => l !== "Unknown").join("/") }));
     const restClients = clients.slice(10);
     if (restClients.length) topClients.push({ label: `Other (${restClients.length} clients)`, value: restClients.reduce((t, c) => t + c.value, 0), sub: `${restClients.reduce((t, c) => t + c.n, 0)} campaigns`, color: NOTSET });
     const labelSplit = ["Major", "Indie", "Other"].map((l, i) => ({ l, color: [BRAND, BRAND_LIGHT, GREEN][i], v: priced.filter((x) => x.label === l).reduce((t, x) => t + x.priceUsd, 0), n: priced.filter((x) => x.label === l).length }));
@@ -275,7 +300,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
     const dates = [...new Set(dailyRows.map((r) => r.stat_date))].sort();
     const viewsByDate = dates.map((d) => dailyRows.filter((r) => r.stat_date === d).reduce((t, r) => t + Number(r.plays ?? 0), 0));
     const topViews = tracked.filter((x) => Number(x.camp.total_plays) > 0).sort((a, b) => b.camp.total_plays - a.camp.total_plays).slice(0, 10)
-      .map((x) => ({ label: `${x.artist}${x.song ? ` – ${x.song}` : ""}`, value: Number(x.camp.total_plays), sub: x.priceUsd ? `${usdShort((x.priceUsd / x.camp.total_plays) * 1000)} per 1K` : "" }));
+      .map((x) => ({ camp: x.camp, label: `${x.artist}${x.song ? ` – ${x.song}` : ""}`, value: Number(x.camp.total_plays), sub: x.priceUsd ? `${usdShort((x.priceUsd / x.camp.total_plays) * 1000)} per 1K` : "" }));
     const cpmRows = tracked.filter((x) => x.priceUsd && Number(x.camp.total_plays) > 0);
     const totalViews = tracked.reduce((t, x) => t + Number(x.camp.total_plays ?? 0), 0);
     const cpm = cpmRows.length ? (cpmRows.reduce((t, x) => t + x.priceUsd, 0) / cpmRows.reduce((t, x) => t + Number(x.camp.total_plays), 0)) * 1000 : null;
@@ -291,7 +316,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
       const xs = priced.filter((x) => (k ? x.region === k : !REGIONS.some(([r]) => r === x.region)));
       const cs = xs.filter((x) => costOf(x) != null);
       const rev = xs.reduce((t, x) => t + x.priceUsd, 0), crev = cs.reduce((t, x) => t + x.priceUsd, 0), cost = cs.reduce((t, x) => t + costOf(x), 0);
-      return { label: l, color: c, rev, n: xs.length, cost, crev, margin: crev ? (crev - cost) / crev : null, nc: cs.length };
+      return { key: k || "none", label: l, color: c, rev, n: xs.length, cost, crev, margin: crev ? (crev - cost) / crev : null, nc: cs.length };
     }).filter((r) => r.n);
     const maxRegion = Math.max(...regions.map((r) => r.rev), 1);
     // By campaign, ranked.
@@ -313,15 +338,16 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
       colsTodo.push({ id, items, fmt, key });
       return { view, body: `<div class="an-svg" data-cols="${id}"></div>` };
     };
-    const regionPie = regions.map((r) => ({ label: r.label, value: r.rev, color: r.color, sub: `${r.n} campaign${r.n === 1 ? "" : "s"}` }));
-    const monthPie = months.map((m, i) => ({ label: m.label, value: regionSeries.reduce((t, se) => t + se.values[i], 0) })).filter((m) => m.value > 0);
+    const regionPie = regions.map((r) => ({ key: r.key, label: r.label, value: r.rev, color: r.color, sub: `${r.n} campaign${r.n === 1 ? "" : "s"}` }));
+    const monthPie = months.map((m, i) => ({ key: m.key, label: m.label, value: regionSeries.reduce((t, se) => t + se.values[i], 0) })).filter((m) => m.value > 0);
     const campByRev = [...campRows].sort((a, b) => b.rev - a.rev);
-    const campPie = campByRev.slice(0, 10).map((r) => ({ label: r.name, value: r.rev, sub: r.client }));
+    const campPie = campByRev.slice(0, 10).map((r) => ({ label: r.name, value: r.rev, sub: r.client, camp: r.camp }));
     if (campByRev.length > 10) campPie.push({ label: `Other (${campByRev.length - 10} campaigns)`, value: campByRev.slice(10).reduce((t, r) => t + r.rev, 0), color: NOTSET });
     const cashPie = [{ label: "Paid", value: paid, color: GREEN }, { label: "Invoiced, not paid", value: Math.max(0, invoiced - paid), color: BRAND }, { label: "Not invoiced yet", value: Math.max(0, booked - invoiced), color: BRAND_LIGHT }];
     const cashCols = [{ label: "Booked", value: booked, color: BRAND_LIGHT }, { label: "Invoiced", value: invoiced, color: BRAND }, { label: "Paid", value: paid, color: GREEN }];
     const vw = (id, d = "cols") => st.views[id] ?? d;
     const tab = st.tab;
+    const show = (t) => drilled || tab === t;
     const tabs = [["money", "Money"], ["clients", "Clients & markets"], ["team", "Team"], ["performance", "Performance"]];
     const hero = (label, value, sub, main = false) => `<div class="an-hero-card${main ? " main" : ""}"><div class="l">${esc(label)}</div><div class="n">${value}</div>${sub ? `<div class="d">${sub}</div>` : ""}</div>`;
     const marginBar = (m) => m == null ? `<span class="muted small">no cost yet</span>`
@@ -339,10 +365,10 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
         <span><b>${usdShort(booked - invoiced)}</b> still to invoice</span>
         <span><b>${usdShort(paid)}</b> paid</span>
       </div>
-      <div class="tabs an-tabs" role="tablist" aria-label="Analytics views">
+      <div class="tabs an-tabs" role="tablist" aria-label="Analytics views"${drilled ? " hidden" : ""}>
         ${tabs.map(([k, l]) => `<button type="button" role="tab" data-antab="${k}" aria-selected="${tab === k}">${l}</button>`).join("")}
       </div>
-      ${tab === "money" ? `
+      ${show("money") ? `
       <div class="an-grid">
         ${card({ id: "an-regions", wide: true, title: "By client market", note: vw("an-regions") === "pie" ? "Share of revenue" : "Costs and margin count only campaigns with a recorded cost", views: [["cols", "Columns"], ["pie", "Pie"]], view: vw("an-regions"),
           body: `${vw("an-regions") === "pie" ? donut(regionPie, { key: "rgp", center: "revenue" }) : `<div class="legend"><span><i style="background:${BRAND}"></i>Revenue</span><span><i style="background:${BRAND_LIGHT}"></i>Costs</span><span><i style="background:${GREEN}"></i>Margin</span></div>
@@ -369,7 +395,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
               ${toInvoice.length > 6 ? `<a href="#/" class="small" data-go-inv>See all ${toInvoice.length} in the Campaign overview</a>` : ""}</div>` : `<p class="muted small">Every finished campaign is invoiced.</p>`),
           table: tableHtml(["Campaign", "Client", "Price (USD)"], toInvoice.map((x) => [`${x.artist}${x.song ? ` – ${x.song}` : ""}`, x.client, usd(x.priceUsd)])) })}
       </div>` : ""}
-      ${tab === "clients" ? (() => {
+      ${show("clients") ? (() => {
         const cl = vis("an-clients", topClients, { key: "cl", center: "revenue" });
         const mk = vis("an-markets", byMarket.map((m) => ({ ...m, sub: `${m.n} campaign${m.n === 1 ? "" : "s"}` })), { key: "mk", center: "budget" });
         return `
@@ -382,7 +408,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
           table: tableHtml(["Market", "Campaigns", "Budget (USD)"], byMarket.map((m) => [m.label, String(m.n), usd(m.value)])) })}
       </div>`;
       })() : ""}
-      ${tab === "team" ? (() => {
+      ${show("team") ? (() => {
         const tm = vis("an-team", team, { key: "tm", center: "revenue" });
         return `
       <div class="an-hero an-hero-sm">
@@ -395,7 +421,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
           table: tableHtml(["DRI", "Campaigns", "Revenue (USD)"], team.map((t) => [t.label, String(t.n), usd(t.value)])) })}
       </div>`;
       })() : ""}
-      ${tab === "performance" ? (!tracked.length ? `<div class="panel" style="margin-top:18px"><p class="muted" style="margin:0">None of these campaigns are in the tracker yet. Use <b>Create</b> on the Campaign overview to start tracking them; views and cost per view appear here.</p></div>` : (() => {
+      ${show("performance") ? (!tracked.length ? `<div class="panel" style="margin-top:18px"><p class="muted" style="margin:0">None of these campaigns are in the tracker yet. Use <b>Create</b> on the Campaign overview to start tracking them; views and cost per view appear here.</p></div>` : (() => {
         const tv = vis("an-top", topViews, { key: "tv", fmt: compactN, center: "views" });
         return `
       <div class="an-hero an-hero-sm">
@@ -409,6 +435,8 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
           table: tableHtml(["Campaign", "Views", "Price per 1K views"], topViews.map((t) => [t.label, num(t.value), t.sub])) })}
       </div>`;
       })()) : ""}`;
+    // In a zoomed view, the chart for the dimension we zoomed into would be a single bar: leave it out.
+    for (const [k] of pairs) out.querySelector(`#${{ region: "an-regions", month: "an-months", client: "an-clients", market: "an-markets", dri: "an-team" }[k] ?? "none"}`)?.remove();
     for (const c of colsTodo) {
       const el = out.querySelector(`[data-cols="${c.id}"]`);
       if (el) el.innerHTML = groupBars(c.items.map((it) => it.label), [{ name: "Value", color: BRAND, colors: c.items.map((it) => it.color ?? BRAND), values: c.items.map((it) => it.value) }], el.clientWidth || W,
@@ -461,14 +489,54 @@ export async function renderAnalytics(app, sb, { isCurrent, go }) {
       const subLabel = kind === "tv" ? "Per 1K views" : kind === "cp" ? "Client" : "Campaigns";
       return { title: it.label, rows: [[dot, what, kind === "tv" ? num(it.value) : usd(it.value)], ...(it.sub ? [["", subLabel, it.sub.replace(/ campaigns?$/, "").replace(/ per 1K$/, "")]] : []), ["", kind === "cashp" ? "Share of booked" : "Share", pct(sum ? it.value / sum : null)]] };
     });
+    // Click a column, slice or row to zoom into it.
+    const target = (k) => {
+      const [kind, iStr] = k.split(":"); const i = Number(iStr);
+      const pick = (arr) => arr[i];
+      if (kind === "rg" || kind === "rgp") return ["region", (kind === "rg" ? regions : regionPie)[i]?.key];
+      if (kind === "mc") return ["month", months[i]?.key];
+      if (kind === "mop") return ["month", monthPie[i]?.key];
+      if (kind === "cl") return ["client", pick(topClients)?.key];
+      if (kind === "mk") return ["market", pick(byMarket)?.label];
+      if (kind === "tm") return ["dri", pick(team)?.label];
+      if (kind === "lbl") return ["label", labelSplit.filter((y) => y.v)[i]?.l];
+      if (kind === "tv" || kind === "cp") { const c = pick(kind === "tv" ? topViews : campPie)?.camp; return c ? ["camp", c.id] : null; }
+      return null;
+    };
+    out.querySelectorAll("[data-tip]").forEach((el) => {
+      const t = target(el.dataset.tip);
+      if (!t || !t[1] || pairs.some(([k]) => k === t[0])) return;
+      el.classList.add("an-zoomable");
+      const zoom = (e) => {
+        hideTip();
+        const r = el.getBoundingClientRect();
+        const x = e?.clientX ?? r.left + r.width / 2, y = e?.clientY ?? r.top + r.height / 2;
+        try { sessionStorage.setItem("an-zoom", JSON.stringify({ x, y, at: Date.now() })); } catch { /* ignore */ }
+        const dest = t[0] === "camp" ? `#/c/${t[1]}` : drillPath([...pairs, t]);
+        const ob = out.getBoundingClientRect();
+        out.style.transformOrigin = `${x - ob.left}px ${y - ob.top}px`;
+        out.classList.add("an-zooming");
+        setTimeout(() => go(dest), matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 170);
+      };
+      el.addEventListener("click", zoom);
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); zoom(); } });
+    });
     out.querySelectorAll("[data-tbl]").forEach((b) => (b.onclick = () => {
       const t = out.querySelector(`[data-tblbody="${b.dataset.tbl}"]`); t.hidden = !t.hidden; b.textContent = t.hidden ? "Show as table" : "Hide table";
     }));
     out.querySelector("[data-go-inv]")?.addEventListener("click", (e) => { e.preventDefault(); try { sessionStorage.setItem("ov-status", "Completed"); } catch { /* ignore */ } go("#/"); });
   }
-  const bind = (id, key) => { const el = document.getElementById(id); el.value = st[key]; el.onchange = () => { st[key] = el.value; out.style.opacity = "0.55"; requestAnimationFrame(() => { draw(); out.style.opacity = ""; }); }; };
+  const bind = (id, key) => { const el = document.getElementById(id); el.value = st[key]; el.onchange = () => { st[key] = el.value; try { sessionStorage.setItem("an-filters", JSON.stringify({ period: st.period, region: st.region, dri: st.dri })); } catch { /* ignore */ } out.style.opacity = "0.55"; requestAnimationFrame(() => { draw(); out.style.opacity = ""; }); }; };
   bind("an-period", "period"); bind("an-region", "region"); bind("an-dri", "dri");
   draw();
+  if (drilled) {
+    // Grow out of the point that was clicked; arriving any other way (Back from a deeper zoom) zooms out instead.
+    let z = null; try { z = JSON.parse(sessionStorage.getItem("an-zoom") ?? "null"); sessionStorage.removeItem("an-zoom"); } catch { /* ignore */ }
+    const zin = z && Date.now() - z.at < 4000, ar = app.getBoundingClientRect(), cls = zin ? "an-zoom-in" : "an-zoom-out";
+    app.style.transformOrigin = zin ? `${z.x - ar.left}px ${z.y - ar.top}px` : "50% 30%";
+    app.classList.remove("an-zoom-in", "an-zoom-out"); void app.offsetWidth; app.classList.add(cls);
+    setTimeout(() => app.classList.remove(cls), 600);
+  }
   let t;
   const onResize = () => { clearTimeout(t); t = setTimeout(() => { if (isCurrent() && document.getElementById("an-out")) draw(); else removeEventListener("resize", onResize); }, 200); };
   addEventListener("resize", onResize);
