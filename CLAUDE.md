@@ -59,7 +59,7 @@ Read this first. README.md has the long, human version. This file is the short v
   - Invoices are actually sent from e-conomic. The integration isn't built yet: it's waiting on Sam's app approval (Sales role only for now).
 - Artist pictures: `artists` (name_key, image_url, cm_artist), filled by `artist-search` when a campaign is created or edited. The overview auto-looks-up missing ones (exact name match, max 25 per session).
 - Share links: `share_links`, with settings per category; folders can be hidden.
-- Folders show creators, not uploads: creators with videos in the folder plus `campaign_folder_creators` (added by profile link via the `roster` function's `lookup` action, which never puts them on the roster).
+- Folders show creators, not uploads: creators with videos in the folder plus `campaign_folder_creators` (added by profile link via the `roster` function's `lookup` action (TikTok: profile only, 1 ScrapeCreators credit; never puts them on the roster)).
 - `posts.boost_code` (+ `_updated_at`, `_by`): TikTok Spark Ads code per video, team only; the `share` function selects explicit columns and never sends it.
 - Creator avatars are copied to the `avatars` bucket by both `roster` and `process-links` (TikTok's own links expire).
 

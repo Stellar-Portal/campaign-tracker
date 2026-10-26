@@ -8,8 +8,8 @@
 //   { action: "add", input, platform? } team member: add to the roster (or re-add) and refresh now;
 //                                     platform is only needed for a bare @handle (default TikTok)
 //   { action: "refresh", creator_id } team member: refresh one creator now
-//   { action: "lookup", input, platform? } team member: check a profile exists and save/refresh the creator
-//                                     without putting them on the roster (used by folders and payouts)
+//   { action: "lookup", input, platform? } team member: check a profile exists and save the creator without
+//                                     putting them on the roster (folders and payouts). TikTok: 1 credit (profile only)
 //   {}                                schedule: refresh roster creators not checked for 7 days (a few per run)
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
@@ -386,6 +386,20 @@ Deno.serve(async (req) => {
     }
     if (body?.action === "lookup") {
       const { platform, handle } = await resolveInput(body.input, body.platform);
+      if (platform === "tiktok") {
+        // Only "does this account exist, and who is it": the profile alone (1 credit), not their videos.
+        const p = await sc("/v1/tiktok/profile", { handle });
+        const u = p?.user ?? p?.userInfo?.user ?? {}, st = p?.stats ?? p?.userInfo?.stats ?? {};
+        if (!u?.id && !u?.uniqueId) throw new NotFound("Creator not found");
+        const key = String(u.id ?? u.uniqueId);
+        const { data: c, error } = await db.from("creators").upsert({
+          tiktok_user_id: key, platform: "tiktok", username: String(u.uniqueId ?? handle).toLowerCase(), display_name: u.nickname ?? null,
+          avatar_url: await saveAvatar(key, u.avatarLarger ?? u.avatarMedium ?? u.avatarThumb ?? null),
+          follower_count: num(st.followerCount ?? st.follower_count), is_verified: !!u.verified,
+        }, { onConflict: "tiktok_user_id" }).select("id,username,display_name,avatar_url,follower_count,platform,is_verified").single();
+        if (error) throw new Error(error.message);
+        return json(c);
+      }
       const r = await refreshCreator(platform, handle);
       const { data: c } = await db.from("creators").select("id,username,display_name,avatar_url,follower_count,platform,is_verified").eq("id", r.id).single();
       return json(c);
