@@ -1,4 +1,4 @@
-import { confirmDialog } from "./dialog.js?v=20261027a";
+import { confirmDialog } from "./dialog.js?v=20261027b";
 // The report: one module used in two places.
 // - share.html (a client with a link): what the link's settings allow.
 // - the team dashboard (#/report/<artist>): the same view with everything on, plus "remove".
@@ -342,13 +342,16 @@ export function openPostModal(list, index, ctx) {
     if (d.type === "onStateChange" && player.wantSound && d.value === 2) { player.wantSound = false; send("play"); }
     if (d.type === "onStateChange") { player.playing = d.value === 1; if (d.value === 1) player.started = true; drawBar(); }
     if (d.type === "onMute") { player.muted = !!d.value; drawBar(); }
-    if (d.type === "onCurrentTime") { player.t = d.value?.currentTime ?? 0; player.dur = d.value?.duration ?? player.dur; drawBar(); }
+    if (d.type === "onCurrentTime") { player.t = d.value?.currentTime ?? 0; player.dur = d.value?.duration ?? player.dur; player.tick = Date.now(); player.ready = true; drawBar(); }
   };
   window.addEventListener("message", onMsg);
 
+  // Playing = the clock moved in the last second (TikTok's state events flicker when a video loops).
+  const isPlaying = () => !!player && (Date.now() - (player.tick ?? 0) < 1000 || player.playing);
   function drawBar() {
     const bar = wrap.querySelector(".pm-bar");
     if (!bar || !player) return;
+    player.playing = isPlaying();
     bar.querySelector("[data-pp]").innerHTML = player.playing ? ICON.pause : ICON.play;
     bar.querySelector("[data-pp]").setAttribute("aria-label", player.playing ? "Pause" : "Play");
     bar.querySelector("[data-mute]").innerHTML = player.muted ? ICON.muted : ICON.sound;
@@ -357,6 +360,7 @@ export function openPostModal(list, index, ctx) {
     if (!pr.matches(":active")) { pr.max = String(player.dur || 0); pr.value = String(player.t || 0); }
     pr.style.setProperty("--p", `${player.dur ? (player.t / player.dur) * 100 : 0}%`);
     bar.querySelector("[data-time]").textContent = `${clock(player.t)} / ${clock(player.dur)}`;
+    wrap.querySelector(".pm-tap")?.classList.toggle("paused", !player.playing);
   }
 
   // The video side: only rebuilt when the video changes, never when switching tabs.
@@ -369,7 +373,8 @@ export function openPostModal(list, index, ctx) {
       ${ctx.covers[p.video_id] ? `<img class="pm-poster" src="${esc(ctx.covers[p.video_id])}" alt="">` : ""}
       <iframe src="${esc(yt ? embedSrc(p) : ttSrc(p))}" title="${platformName(p)} video by ${esc(p.creator?.name || p.creator?.username || "")}"
         allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
-      ${yt ? "" : `<div class="pm-shield" aria-hidden="true"></div>
+      ${yt ? "" : `<button type="button" class="pm-tap" aria-label="Play or pause"><span>${ICON.play}</span></button>
+      <div class="pm-shield" aria-hidden="true"></div>
       <div class="pm-bar">
         <button type="button" data-pp aria-label="Play">${ICON.play}</button>
         <input type="range" min="0" max="0" step="0.1" value="0" aria-label="Position in the video">
@@ -391,8 +396,13 @@ export function openPostModal(list, index, ctx) {
       // Show the player once it's ready (or after a moment, whatever TikTok reports).
       setTimeout(() => media.classList.add("ready"), 2500);
       // Before anyone has clicked inside the player, browsers only allow it to play muted.
-      const toggle = () => { if (player.playing) return send("pause"); if (!player.started) { send("mute"); player.muted = true; } send("play"); };
+      const toggle = () => {
+        const on = isPlaying();
+        send(on ? "pause" : "play");
+        player.playing = !on; player.tick = on ? 0 : Date.now(); drawBar();
+      };
       media.querySelector("[data-pp]").onclick = toggle;
+      media.querySelector(".pm-tap").onclick = toggle;
       media.querySelector("[data-mute]").onclick = () => {
         if (player.muted) { player.wantSound = true; send("unMute"); setTimeout(() => { if (player) player.wantSound = false; }, 1500); }
         else send("mute");
