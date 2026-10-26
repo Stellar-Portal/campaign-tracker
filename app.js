@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026i";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026i";
-import { renderRoster } from "./roster.js?v=20261026i";
-import { renderDiscover } from "./discover.js?v=20261026i";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026i";
-import { renderTrending } from "./trending.js?v=20261026i";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026i";
-import { confirmDialog } from "./dialog.js?v=20261026i";
-import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026i";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026i";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261026j";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261026j";
+import { renderRoster } from "./roster.js?v=20261026j";
+import { renderDiscover } from "./discover.js?v=20261026j";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261026j";
+import { renderTrending } from "./trending.js?v=20261026j";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261026j";
+import { confirmDialog } from "./dialog.js?v=20261026j";
+import { renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261026j";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261026j";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -307,6 +307,30 @@ autoNav.addEventListener?.("change", applyNavMode);
   });
 }
 
+// Pop-ups (menus, filter panels, dropdowns) close on a click anywhere outside them or on Escape.
+// One handler for the whole app, so it keeps working on pages restored from the page cache.
+const POPUP_DETAILS = "details.ov2-menu, details.camp-menu, details.ro-more, details.ro-lists, details.df";
+function closePopups(except) {
+  document.querySelectorAll(`${POPUP_DETAILS}`).forEach((d) => { if (d.open && !(except && d.contains(except))) d.open = false; });
+  document.querySelectorAll("[data-pop]:not([hidden])").forEach((p) => {
+    const btn = p.id ? document.querySelector(`[aria-controls="${CSS.escape(p.id)}"]`) : null;
+    if (except && (p.contains(except) || btn?.contains(except))) return;
+    p.hidden = true; btn?.setAttribute("aria-expanded", "false");
+  });
+}
+document.addEventListener("pointerdown", (e) => closePopups(e.target), true);
+// Pop-up windows (dialogs) close on a click on the dimmed area around them, like Escape does.
+let downOn = null;
+document.addEventListener("pointerdown", (e) => { downOn = e.target; }, true);
+document.addEventListener("click", (e) => {
+  const d = e.target;
+  if (!(d instanceof HTMLDialogElement) || !d.open || downOn !== d) return;
+  const r = d.getBoundingClientRect();
+  if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return;
+  if (d.dispatchEvent(new Event("cancel", { cancelable: true }))) d.close();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePopups(null); });
+
 function renderNav(active) {
   document.getElementById("nav").innerHTML = NAV.map(([group, items]) => `
     <div class="nav-group"><div class="nav-label">${esc(group)}</div>
@@ -538,8 +562,8 @@ async function renderOverview(token) {
       <div class="ov2-tabs" role="tablist" aria-label="Status">${STATUS_TABS.map(([k, l]) => `<button type="button" role="tab" data-ovtab="${esc(k)}">${l}<b data-ovcount="${esc(k)}"></b></button>`).join("")}</div>
       <label class="ov2-search" id="ov-searchwrap"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input id="ov-q" type="search" placeholder="Search artist, song, client, PO…" aria-label="Search the overview"></label>
       <div class="ov-filt">
-        <button type="button" class="ov2-icon" id="ov-fbtn" aria-expanded="false" aria-controls="ov-fpanel" title="Filter and sort"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M6 10h8M9 15h2"/></svg><span class="ov-count" id="ov-fcount" hidden></span></button>
-        <div class="ov-fpanel" id="ov-fpanel" role="dialog" aria-label="Filter and sort" hidden>
+        <button type="button" class="ov2-icon" id="ov-fbtn" aria-expanded="false" aria-controls="ov-fpanel" title="Filter and sort"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 6h13M6 10.5h8M8.5 15h3"/></svg><span class="ov-count" id="ov-fcount" hidden></span></button>
+        <div class="ov-fpanel" id="ov-fpanel" role="dialog" aria-label="Filter and sort" data-pop hidden>
           <label class="ov2-sortlbl"><span>Sort by</span><select id="ov-sort">${Object.keys(SORTS).map((k) => [SORTS[k].first, other(SORTS[k].first)].map((d) => `<option value="${k}:${d}">${esc(sortLabel(k, d))}</option>`).join("")).join("")}</select></label>
           ${FILTERS.map((f) => `<label><span>${esc(f.label)}</span><select id="ov-${f.key}"><option value="">${esc(f.all)}</option>${optionsFor(f).map(([x, l]) => `<option value="${esc(x)}">${esc(l)}</option>`).join("")}</select></label>`).join("")}
           <div class="ov-fpanel-foot"><button type="button" class="link-btn" id="ov-fclear">Clear filters</button><span class="muted small">Saved for you only</span></div>
@@ -858,12 +882,7 @@ async function renderOverview(token) {
   const fbtn = document.getElementById("ov-fbtn"), fpanel = document.getElementById("ov-fpanel");
   const setPanel = (open) => { fpanel.hidden = !open; fbtn.setAttribute("aria-expanded", open); if (open) fpanel.querySelector("select")?.focus(); };
   fbtn.onclick = () => setPanel(fpanel.hidden);
-  const outside = (e) => {
-    if (!document.body.contains(fpanel)) { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", esc_); return; }
-    if (!fpanel.hidden && !e.target.closest(".ov-filt")) setPanel(false);
-  };
-  const esc_ = (e) => { if (e.key === "Escape" && !fpanel.hidden) { setPanel(false); fbtn.focus(); } };
-  document.addEventListener("pointerdown", outside); document.addEventListener("keydown", esc_);
+  // Clicking outside and Escape are handled for every pop-up by closePopups() below.
   document.getElementById("ov-fclear").onclick = () => {
     FILTERS.forEach((f) => { st[f.key] = ""; document.getElementById(`ov-${f.key}`).value = ""; });
     persist(); refreshControls(); draw();
@@ -1438,15 +1457,13 @@ async function renderCampaign(token, id, tab = "report") {
       if (menu) {
         // The hero clips overflow, so the menu floats in fixed position under its button.
         const place = () => {
-          if (!menu.isConnected) { window.removeEventListener("scroll", place); document.removeEventListener("click", close); return; }
+          if (!menu.isConnected) { window.removeEventListener("scroll", place); return; }
           if (!menu.open) return;
           const r = menu.querySelector("summary").getBoundingClientRect(), box = menu.querySelector("div");
           box.style.top = `${r.bottom + 6}px`;
           box.style.left = `${Math.min(r.left, window.innerWidth - 206)}px`;
         };
         menu.addEventListener("toggle", place);
-        const close = (e) => { if (menu.open && !menu.contains(e.target)) menu.open = false; };
-        document.addEventListener("click", close);
         window.addEventListener("scroll", place, { passive: true });
       }
       document.getElementById("req-inv").onclick = () => requestInvoiceDialog(sb, c, { toast, onDone: () => renderCampaign(newToken(), id, tab) });

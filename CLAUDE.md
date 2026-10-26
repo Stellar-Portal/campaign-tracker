@@ -64,6 +64,7 @@ Read this first. README.md has the long, human version. This file is the short v
 - `app.js`: router, nav and page cache. Desktop menu is icons-only and opens almost instantly on hover (120ms) and pushes the page aside (never covers it), closing 150ms after the pointer leaves or on a click in the page (`navPeek`); Ctrl/⌘+\\ toggles it. Phones keep the top bar.
   - Page cache: KEEPABLE hashes stay in the DOM for 3 minutes and are cleared on any write.
   - Also: overview (`renderOverview`), campaign page (`renderCampaign`: Report/Payouts tabs switch in place, share dialog, ⋯ menu), campaign form, folders.
+- Pop-ups: one app-wide handler (`closePopups` in app.js) closes them on an outside click or Escape. Menus/dropdowns built as `<details>` must be listed in `POPUP_DETAILS`; button-opened panels get `data-pop` and `aria-controls` on their button. Modal `<dialog>`s close on a click on the dimmed backdrop.
 - Artist banners (`.art-band`) are rounded floating cards; on the campaign page the details card overlaps the banner's bottom.
 - `report.js`: charts and post wall, shared with the client view.
 - `payouts.js`, `invoices.js`, `analytics.js` (tabs, zoom routes `#/analytics/<kind>/<value>`), `trending.js`, `roster.js`, `discover.js`.
