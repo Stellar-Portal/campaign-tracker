@@ -2093,4 +2093,6 @@ tr:hover .po-manual, .po-manual:focus { opacity: 1; }
    little bigger than its window and pushed up, so those strips fall outside the frame and only the
    video (and our own bar) shows. */
 .pm-media:has(iframe[src*="tiktok.com/player"]) { background: #000; }
-.pm-media iframe[src*="tiktok.com/player"] { inset: auto; left: 0; top: -60px; width: calc(100% + 58px); height: calc(100% + 60px); }
+/* The player fits the video to its height, so widening it only adds black bars at the sides, where
+   TikTok's buttons then sit, outside the frame. Centred, so the video itself loses nothing at the sides. */
+.pm-media iframe[src*="tiktok.com/player"] { inset: auto; left: -64px; top: -56px; width: calc(100% + 128px); height: calc(100% + 56px); }
