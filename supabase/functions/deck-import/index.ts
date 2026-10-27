@@ -1,5 +1,5 @@
 // deck-import (team only): reads a Figma Slides file and builds a deck version.
-//   { action: "build", url | file_key, deck_id?, new_deck?, title?, width, height, slides: [{ node, links: [{url,label,x,y,w,h}], videos: [{name,x,y,w,h,clip?:{x,y,w,h,r}}] }] }
+//   { action: "build", url | file_key, deck_id?, new_deck?, title?, width, height, slides: [{ node, links: [{url,label,x,y,w,h}], videos: [{name,x,y,w,h,clip?:{x,y,w,h,r},overlays?:[{node,x,y,w,h}]}] }] }
 //       Boxes are in slide pixels. A video's clip is the part a parent frame (e.g. a phone mockup) leaves visible.
 //       creates a new deck version: Figma renders each slide as an image (REST /images), links and video
 //       boxes become %-positioned spots, and TikTok videos (ID read from the Snaptik layer name) are
@@ -112,6 +112,23 @@ async function build(body: any, user: string) {
       const r = await figma(`/images/${key}?ids=${encodeURIComponent(ids)}&format=jpg&scale=1.5&use_absolute_bounds=true`);
       Object.assign(urls, r.images ?? {});
     }
+    // 2. Layers above a video (phone bezels, captions) as transparent PNGs, drawn back on top of the playing video.
+    const overIds = [...new Set(input.flatMap((s: any) => (Array.isArray(s.videos) ? s.videos : []).flatMap((v: any) => (Array.isArray(v.overlays) ? v.overlays : []).map((o: any) => String(o.node ?? "")))))]
+      .filter((id) => /^[\d:;I-]+$/.test(id)).slice(0, 100);
+    const overUrls: Record<string, string> = {};
+    for (let i = 0; i < overIds.length; i += 10) {
+      const r = await figma(`/images/${key}?ids=${encodeURIComponent(overIds.slice(i, i + 10).join(","))}&format=png&scale=1.5&use_absolute_bounds=true`);
+      Object.assign(overUrls, r.images ?? {});
+    }
+    const overPaths: Record<string, string> = {};
+    for (const id of overIds) {
+      if (!overUrls[id]) continue;
+      const img = await fetch(overUrls[id]);
+      if (!img.ok) continue;
+      const path = `${base}/over-${id.replace(/[^\w-]/g, "_")}.png`;
+      const { error } = await db.storage.from("deck-media").upload(path, await img.arrayBuffer(), { contentType: "image/png", upsert: true });
+      if (!error) overPaths[id] = path;
+    }
     const slideRows: any[] = [], spotRows: any[] = [];
     for (let i = 0; i < input.length; i++) {
       const s = input[i], n = i + 1, src = urls[s.node];
@@ -138,6 +155,9 @@ async function build(body: any, user: string) {
           x: pct(num(v.x, -W, W), W), y: pct(num(v.y, -H, H), H), w: pct(num(v.w, 0, W), W), h: pct(num(v.h, 0, H), H), status: "missing" };
         const c = v.clip;
         if (c && typeof c === "object") row.clip = { x: pct(num(c.x, -W, W), W), y: pct(num(c.y, -H, H), H), w: pct(num(c.w, 0, W), W), h: pct(num(c.h, 0, H), H), r: pct(num(c.r, 0, W), W) };
+        const over = (Array.isArray(v.overlays) ? v.overlays : []).filter((o: any) => overPaths[String(o.node)])
+          .map((o: any) => ({ path: overPaths[String(o.node)], x: pct(num(o.x, -W, W), W), y: pct(num(o.y, -H, H), H), w: pct(num(o.w, 0, W), W), h: pct(num(o.h, 0, H), H) }));
+        if (over.length) row.overlays = over;
         const again = reuse(tiktok, name);
         if (again) { row.video_path = again; row.status = "ready"; }
         else if (!tiktok) row.note = "No TikTok ID in the video's layer name. Add the video file or its TikTok link.";

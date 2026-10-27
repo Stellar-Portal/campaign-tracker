@@ -85,9 +85,9 @@ async function liveLink(token: unknown) {
 async function content(versionId: string) {
   const [{ data: slides }, { data: spots }] = await Promise.all([
     db.from("deck_slides").select("n,image_path,width,height,title").eq("version_id", versionId).order("n"),
-    db.from("deck_spots").select("id,n,kind,url,label,x,y,w,h,clip,video_path,status").eq("version_id", versionId).order("n"),
+    db.from("deck_spots").select("id,n,kind,url,label,x,y,w,h,clip,overlays,video_path,status").eq("version_id", versionId).order("n"),
   ]);
-  const paths = [...(slides ?? []).map((s) => s.image_path), ...(spots ?? []).map((s) => s.video_path)].filter(Boolean) as string[];
+  const paths = [...(slides ?? []).map((s) => s.image_path), ...(spots ?? []).flatMap((s) => [s.video_path, ...((s.overlays ?? []) as any[]).map((o) => o.path)])].filter(Boolean) as string[];
   const signed: Record<string, string> = {};
   for (let i = 0; i < paths.length; i += 100) {
     const { data } = await db.storage.from("deck-media").createSignedUrls(paths.slice(i, i + 100), 7200);
@@ -96,7 +96,8 @@ async function content(versionId: string) {
   return {
     slides: (slides ?? []).map((s) => ({ n: s.n, url: signed[s.image_path ?? ""] ?? null, w: s.width, h: s.height })),
     spots: (spots ?? []).filter((s) => s.kind === "link" ? !!s.url : s.status === "ready" && s.video_path)
-      .map((s) => ({ n: s.n, kind: s.kind, url: s.kind === "video" ? signed[s.video_path!] ?? null : s.url, label: s.label, x: +s.x, y: +s.y, w: +s.w, h: +s.h, clip: s.clip ?? null })),
+      .map((s) => ({ n: s.n, kind: s.kind, url: s.kind === "video" ? signed[s.video_path!] ?? null : s.url, label: s.label, x: +s.x, y: +s.y, w: +s.w, h: +s.h, clip: s.clip ?? null,
+        overlays: ((s.overlays ?? []) as any[]).map((o) => ({ url: signed[o.path] ?? null, x: +o.x, y: +o.y, w: +o.w, h: +o.h })).filter((o) => o.url) })),
   };
 }
 

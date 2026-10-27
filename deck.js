@@ -146,6 +146,18 @@ function start(d) {
     send();
   }
 
+  let soundOn = false;
+  const SPEAKER = (on) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/>${on ? '<path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>' : '<path d="m22 9-6 6M16 9l6 6"/>'}</svg>`;
+  function drawSound() {
+    const on = [...stage.querySelectorAll("video")].some((x) => !x.muted);
+    stage.querySelectorAll(".snd").forEach((b) => { b.innerHTML = `${SPEAKER(on)}<span>${on ? "Sound on" : "Tap for sound"}</span>`; b.setAttribute("aria-pressed", String(on)); b.classList.toggle("on", on); });
+  }
+  function setSound(on) {
+    soundOn = on;
+    stage.querySelectorAll("video").forEach((x) => { x.muted = !on; if (on) x.play().catch(() => {}); });
+    drawSound();
+  }
+
   function show(i) {
     if (i < 0 || i >= total) return;
     flushSegment();
@@ -164,12 +176,12 @@ function start(d) {
       const pos = `left:${sp.x}%;top:${sp.y}%;width:${sp.w}%;height:${sp.h}%`;
       if (sp.kind === "video" && sp.url) {
         const v = document.createElement("video");
-        Object.assign(v, { src: sp.url, muted: true, loop: true, autoplay: true, playsInline: true, preload: "auto" });
-        v.setAttribute("playsinline", ""); v.setAttribute("muted", "");
-        v.addEventListener("click", () => { v.muted = !v.muted; });
-        v.title = "Tap for sound";
-        const c = sp.clip;
-        if (c?.w > 0 && c?.h > 0) {
+        Object.assign(v, { src: sp.url, muted: !soundOn, loop: true, autoplay: true, playsInline: true, preload: "auto" });
+        v.setAttribute("playsinline", "");
+        if (!soundOn) v.setAttribute("muted", "");
+        v.addEventListener("click", () => setSound(v.muted));
+        const c = sp.clip?.w > 0 && sp.clip?.h > 0 ? sp.clip : null;
+        if (c) {
           // A parent frame (e.g. a phone mockup) shows only part of the video: clip to that area, rounded like the frame.
           const box = document.createElement("div");
           box.className = "spot vclip";
@@ -181,7 +193,20 @@ function start(d) {
           v.className = "spot"; v.style.cssText = pos;
           stage.append(v);
         }
-        v.play().catch(() => {});
+        // Layers that sit above the video in Figma (a phone's frame, a caption) go back on top of it.
+        for (const o of sp.overlays ?? []) {
+          const im = document.createElement("img");
+          im.className = "over"; im.alt = ""; im.src = o.url; im.draggable = false;
+          im.style.cssText = `left:${o.x}%;top:${o.y}%;width:${o.w}%;height:${o.h}%`;
+          stage.append(im);
+        }
+        // Browsers start videos muted; this button turns sound on (and keeps it on for the next videos).
+        const a = c ?? sp, btn = document.createElement("button");
+        btn.type = "button"; btn.className = "snd";
+        btn.style.cssText = `left:calc(${a.x + a.w}% - 12px);top:calc(${a.y + a.h}% - 12px)`;
+        btn.addEventListener("click", (e) => { e.stopPropagation(); setSound(!soundOn); });
+        stage.append(btn);
+        v.play().catch(() => { v.muted = true; v.play().catch(() => {}); drawSound(); });
       } else if (sp.kind === "link") {
         const a = document.createElement("a");
         a.className = "spot"; a.style.cssText = pos; a.href = sp.url; a.target = "_blank"; a.rel = "noopener noreferrer";
@@ -195,6 +220,7 @@ function start(d) {
         stage.append(a);
       }
     }
+    drawSound();
     prev.disabled = i === 0; next.disabled = i === total - 1;
     count.textContent = `${i + 1} / ${total}`;
     bar.style.width = `${((i + 1) / total) * 100}%`;
@@ -221,7 +247,7 @@ function start(d) {
     tx = null;
   }, { passive: true });
   stage.addEventListener("click", (e) => {
-    if (e.target.closest("a,video")) return;
+    if (e.target.closest("a,video,button")) return;
     const r = stage.getBoundingClientRect(), x = (e.clientX - r.left) / r.width;
     if (x > 0.66) show(cur + 1); else if (x < 0.33) show(cur - 1);
   });

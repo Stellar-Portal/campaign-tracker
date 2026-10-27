@@ -33,6 +33,18 @@ function visible(node, slide) {
   return v;
 }
 
+// Layers drawn above a video (e.g. a phone bezel or a caption) that overlap it, so the viewer can put them back on top.
+function above(node, slide, clip) {
+  const out = [];
+  const hit = (b) => b && clip && b.x < slide.absoluteTransform[0][2] + clip.x + clip.w && b.x + b.width > slide.absoluteTransform[0][2] + clip.x
+    && b.y < slide.absoluteTransform[1][2] + clip.y + clip.h && b.y + b.height > slide.absoluteTransform[1][2] + clip.y;
+  for (let c = node; c.parent && c.type !== "SLIDE"; c = c.parent) {
+    const kids = c.parent.children, i = kids.indexOf(c);
+    for (const k of kids.slice(i + 1)) if (k.visible !== false && hit(k.absoluteBoundingBox)) out.push(Object.assign({ node: k.id }, rel(slide, k.absoluteBoundingBox)));
+  }
+  return out.slice(0, 8);
+}
+
 function isShown(n, slide) {
   for (let p = n; p && p !== slide; p = p.parent) if (p.visible === false) return false;
   return true;
@@ -60,6 +72,8 @@ function collect() {
           const v = Object.assign({ name: n.name }, rel(slide, n.absoluteBoundingBox));
           const clip = visible(n, slide);
           if (clip && (clip.x !== v.x || clip.y !== v.y || clip.w !== v.w || clip.h !== v.h || clip.r)) v.clip = clip;
+          const over = above(n, slide, clip || v);
+          if (over.length) v.overlays = over;
           videos.push(v);
         }
       } catch (e) { /* skip anything unreadable */ }
