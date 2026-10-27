@@ -1,6 +1,7 @@
 // deck-view: the public side of tracked deck links. No login; everything is checked here.
 //   { action: "status", token }                      is this link live? (gate shows or "not active")
-//   { action: "open", token, email?, pass?, tz? }   start a viewing session → slides, links, videos
+//   { action: "code", token, email }                 email a 6-digit code (links with "check their email" on)
+//   { action: "open", token, email?, code?, pass?, tz? } start a viewing session → slides, links, videos
 //   { action: "track", session, sig, slides, clicks } merge time per slide (running totals) and link clicks
 // Slides and videos live in the private deck-media bucket and are handed out as links that expire in
 // 2 hours. Viewer passes (so returning viewers skip the gate) and session ids are signed with a secret
@@ -39,15 +40,40 @@ async function checkSig(text: string, sig: string) { return typeof sig === "stri
 async function sha(text: string) { return b64u(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))).slice(0, 22); }
 
 // A pass remembers the email for this deck so a returning viewer skips the gate.
-async function makePass(deckId: string, email: string) {
-  const body = b64u(new TextEncoder().encode(JSON.stringify({ d: deckId, e: email, x: Date.now() + PASS_DAYS * 86400_000 })));
+async function makePass(deckId: string, email: string, verified: boolean) {
+  const body = b64u(new TextEncoder().encode(JSON.stringify({ d: deckId, e: email, v: verified ? 1 : 0, x: Date.now() + PASS_DAYS * 86400_000 })));
   return `${body}.${await sign("pass:" + body)}`;
 }
-async function readPass(pass: unknown, deckId: string): Promise<string | null> {
+async function readPass(pass: unknown, deckId: string): Promise<{ email: string; verified: boolean } | null> {
   if (typeof pass !== "string" || !pass.includes(".")) return null;
   const [body, sig] = pass.split(".");
   if (!(await checkSig("pass:" + body, sig))) return null;
-  try { const p = JSON.parse(fromB64u(body)); return p.d === deckId && p.x > Date.now() && EMAIL.test(p.e) ? p.e : null; } catch { return null; }
+  try { const p = JSON.parse(fromB64u(body)); return p.d === deckId && p.x > Date.now() && EMAIL.test(p.e) ? { email: p.e, verified: p.v === 1 } : null; } catch { return null; }
+}
+
+// One-time email codes (needs the RESEND_API_KEY secret; without it, links fall back to a plain email gate).
+const RESEND = Deno.env.get("RESEND_API_KEY") ?? "";
+const FROM = Deno.env.get("DECK_EMAIL_FROM") ?? "Stellar <decks@stellarmusic.dk>";
+const codesOn = () => !!RESEND;
+async function sendCode(linkId: string, email: string, title: string) {
+  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0");
+  await db.from("deck_email_codes").insert({ link_id: linkId, email, code_hash: await sha(`code:${linkId}:${email}:${code}`) });
+  const r = await fetch("https://api.resend.com/emails", {
+    method: "POST", headers: { Authorization: `Bearer ${RESEND}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: FROM, to: [email], subject: `${code} is your code for ${title}`,
+      text: `Your code to view "${title}" from Stellar is ${code}.\n\nIt works for 15 minutes. If you didn't ask for it, you can ignore this email.\n\nStellar Marketing ApS · Studiestræde 14A, 4., 1455 København K, Denmark`,
+      html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:15px;color:#1d1d1f;max-width:440px"><p>Your code to view <b>${title.replace(/[<>&"]/g, "")}</b> from Stellar:</p><p style="font-size:32px;font-weight:700;letter-spacing:6px;color:#0626c7;margin:16px 0">${code}</p><p style="color:#6e6e73">It works for 15 minutes. If you didn't ask for it, you can ignore this email.</p><p style="color:#6e6e73;font-size:12px;margin-top:28px">Stellar Marketing ApS · Studiestræde 14A, 4., 1455 København K, Denmark</p></div>` }),
+  });
+  if (!r.ok) { console.error("deck-view resend", r.status, (await r.text()).slice(0, 200)); throw new Error("send"); }
+}
+async function checkCode(linkId: string, email: string, code: unknown): Promise<boolean> {
+  if (typeof code !== "string" || !/^\d{6}$/.test(code.trim())) return false;
+  const { data: row } = await db.from("deck_email_codes").select("id,code_hash,attempts,expires_at,used_at").eq("link_id", linkId).eq("email", email)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (!row || row.used_at || row.attempts >= 5 || new Date(row.expires_at) < new Date()) return false;
+  if (row.code_hash !== (await sha(`code:${linkId}:${email}:${code.trim()}`))) { await db.from("deck_email_codes").update({ attempts: row.attempts + 1 }).eq("id", row.id); return false; }
+  await db.from("deck_email_codes").update({ used_at: new Date().toISOString() }).eq("id", row.id);
+  return true;
 }
 
 async function isTeam(req: Request): Promise<boolean> {
@@ -74,7 +100,7 @@ const ipKey = async (req: Request) => sha("ip:" + ((req.headers.get("x-forwarded
 
 async function liveLink(token: unknown) {
   if (typeof token !== "string" || !/^[a-f0-9]{24,64}$/.test(token)) return { error: "This link isn't valid." };
-  const { data: link } = await db.from("deck_links").select("id,deck_id,enabled,expires_at,require_email,allow_download,recipient_email").eq("token", token).maybeSingle();
+  const { data: link } = await db.from("deck_links").select("id,deck_id,enabled,expires_at,require_email,verify_email,allow_download,recipient_email").eq("token", token).maybeSingle();
   if (!link || !link.enabled) return { error: "This link isn't active." };
   if (link.expires_at && new Date(link.expires_at) < new Date()) return { error: "This link has expired." };
   const { data: deck } = await db.from("decks").select("id,title,current_version_id").eq("id", link.deck_id).maybeSingle();
@@ -122,7 +148,20 @@ Deno.serve(async (req) => {
     if (body.action === "status") {
       const r = await liveLink(body.token);
       if ("error" in r) return json({ live: false, message: r.error });
-      return json({ live: true, require_email: r.link.require_email && !r.link.recipient_email });
+      return json({ live: true, require_email: (r.link.require_email || r.link.verify_email) && !r.link.recipient_email, verify: r.link.verify_email && codesOn() });
+    }
+
+    if (body.action === "code") {
+      const r = await liveLink(body.token);
+      if ("error" in r) return json({ error: r.error }, 404);
+      const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+      if (!EMAIL.test(email)) return json({ error: "Enter a valid email address." }, 400);
+      if (!r.link.verify_email || !codesOn()) return json({ error: "This link doesn't use codes." }, 400);
+      const okIp = (await db.rpc("deck_rate_ok", { p_key: "c:" + (await ipKey(req)), p_limit: 8, p_seconds: 900 })).data;
+      const okMail = (await db.rpc("deck_rate_ok", { p_key: "ce:" + (await sha(email)), p_limit: 4, p_seconds: 900 })).data;
+      if (!okIp || !okMail) return json({ error: "Too many codes asked for. Please wait a few minutes." }, 429);
+      try { await sendCode(r.link.id, email, r.deck.title); } catch { return json({ error: "We couldn't send the code. Check the address and try again." }, 502); }
+      return json({ ok: true });
     }
 
     if (body.action === "open") {
@@ -131,15 +170,25 @@ Deno.serve(async (req) => {
       if ("error" in r) return json({ error: r.error }, 404);
       const { link, deck } = r;
       const team = await isTeam(req);
-      let email: string | null = link.recipient_email ?? (await readPass(body.pass, deck.id));
-      if (!email && typeof body.email === "string" && EMAIL.test(body.email.trim())) email = body.email.trim().toLowerCase();
-      if (!email && link.require_email && !team) return json({ error: "Enter a valid email address to view the deck.", gate: true }, 400);
+      const needCode = link.verify_email && codesOn() && !link.recipient_email && !team;
+      const pass = await readPass(body.pass, deck.id);
+      let email: string | null = link.recipient_email ?? (pass && (!needCode || pass.verified) ? pass.email : null);
+      let verified = !!(pass?.verified && email === pass.email);
+      if (!email && typeof body.email === "string" && EMAIL.test(body.email.trim())) {
+        const typed = body.email.trim().toLowerCase();
+        if (needCode) {
+          if (!(await checkCode(link.id, typed, body.code))) return json({ error: "That code isn't right, or it has expired. Check the email or ask for a new code.", gate: true, code: true }, 400);
+          verified = true;
+        }
+        email = typed;
+      }
+      if (!email && (link.require_email || needCode) && !team) return json({ error: "Enter a valid email address to view the deck.", gate: true }, 400);
       const c = await content(deck.current_version_id);
-      const base = { title: deck.title, ...c, pass: email && !link.recipient_email ? await makePass(deck.id, email) : null };
+      const base = { title: deck.title, ...c, pass: email && !link.recipient_email ? await makePass(deck.id, email, verified) : null };
       if (team) return json({ ...base, session: null, team: true });
       const ua = req.headers.get("user-agent") ?? "";
       const { data: s, error } = await db.from("deck_sessions").insert({
-        deck_id: deck.id, link_id: link.id, version_id: deck.current_version_id, email,
+        deck_id: deck.id, link_id: link.id, version_id: deck.current_version_id, email, verified,
         slide_count: c.slides.length, ...device(ua), country: countryOf(req),
         timezone: typeof body.tz === "string" ? body.tz.slice(0, 64) : null,
       }).select("id").single();

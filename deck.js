@@ -46,17 +46,19 @@ function renderMessage(msg) {
     <p class="sub">Ask your Stellar contact for a new link.</p></section>`;
 }
 
+let verify = false;   // this link checks the viewer's email with a one-time code
+
 function renderGate(errMsg = "") {
   document.body.className = "";
   app.innerHTML = `<section class="gate">
     <img class="wm" src="assets/stellar-white.png" alt="Stellar" width="150" height="41">
     <h1>You've been sent a deck</h1>
-    <p class="sub">Enter your work email to view it.</p>
+    <p class="sub">${verify ? "Enter your work email and we'll send you a code to open it." : "Enter your work email to view it."}</p>
     <form novalidate>
       <label for="em" style="position:absolute;left:-9999px">Work email</label>
       <input id="em" type="email" inputmode="email" autocomplete="email" placeholder="name@company.com" required>
       <p class="err" role="alert">${esc(errMsg)}</p>
-      <button type="submit">View deck</button>
+      <button type="submit">${verify ? "Send me a code" : "View deck"}</button>
     </form>
     <p class="legal">Stellar records your email, which slides you view and for how long, and the links you open, to follow up on this deck. <a href="privacy.html" target="_blank" rel="noopener">Privacy policy</a></p>
   </section>`;
@@ -66,10 +68,42 @@ function renderGate(errMsg = "") {
     e.preventDefault();
     const email = input.value.trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { err.textContent = "Enter a valid email address."; input.focus(); return; }
-    btn.disabled = true; btn.textContent = "Opening…"; err.textContent = "";
-    try { start(await call({ action: "open", email, tz: tz() })); }
-    catch (x) { btn.disabled = false; btn.textContent = "View deck"; err.textContent = x.data?.error || "We couldn't open the deck. Check your connection and try again."; }
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = verify ? "Sending…" : "Opening…"; err.textContent = "";
+    try {
+      if (verify) { await call({ action: "code", email }); renderCode(email); }
+      else start(await call({ action: "open", email, tz: tz() }));
+    } catch (x) { btn.disabled = false; btn.textContent = label; err.textContent = x.data?.error || "Something went wrong. Check your connection and try again."; }
   });
+}
+
+function renderCode(email, errMsg = "") {
+  app.innerHTML = `<section class="gate">
+    <img class="wm" src="assets/stellar-white.png" alt="Stellar" width="150" height="41">
+    <h1>Check your email</h1>
+    <p class="sub">We sent a 6-digit code to <b>${esc(email)}</b>. It works for 15 minutes.</p>
+    <form novalidate>
+      <label for="code" style="position:absolute;left:-9999px">Code</label>
+      <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*" placeholder="••••••" class="code">
+      <p class="err" role="alert">${esc(errMsg)}</p>
+      <button type="submit">View deck</button>
+    </form>
+    <p class="legal"><button type="button" class="lnk" id="again">Send a new code</button> · <button type="button" class="lnk" id="other">Use a different email</button></p>
+  </section>`;
+  const form = app.querySelector("form"), input = form.querySelector("input"), btn = form.querySelector("button"), err = form.querySelector(".err");
+  setTimeout(() => input.focus(), 50);
+  input.addEventListener("input", () => { input.value = input.value.replace(/\D/g, "").slice(0, 6); if (input.value.length === 6) form.requestSubmit(); });
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!/^\d{6}$/.test(input.value)) { err.textContent = "Enter the 6-digit code from the email."; return; }
+    btn.disabled = true; btn.textContent = "Opening…"; err.textContent = "";
+    try { start(await call({ action: "open", email, code: input.value, tz: tz() })); }
+    catch (x) { btn.disabled = false; btn.textContent = "View deck"; input.value = ""; err.textContent = x.data?.error || "Something went wrong. Check your connection and try again."; }
+  });
+  app.querySelector("#again").onclick = async () => {
+    try { await call({ action: "code", email }); err.textContent = "New code sent."; } catch (x) { err.textContent = x.data?.error || "Couldn't send a new code."; }
+  };
+  app.querySelector("#other").onclick = () => renderGate();
 }
 
 const tz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return null; } };
@@ -80,6 +114,7 @@ async function boot() {
   try {
     const st = await call({ action: "status" });
     if (!st.live) return renderMessage(st.message || "This link isn't active.");
+    verify = !!st.verify;
     const pass = store.get(PASS_KEY);
     if (st.require_email && !pass && !auth) return renderGate();
     start(await call({ action: "open", pass, tz: tz() }, auth));

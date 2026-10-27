@@ -174,8 +174,8 @@ async function renderDeck(app, sb, ctx, id) {
     sb.from("deck_versions").select("id,version,slide_count,note,created_at,created_by").eq("id", deck.current_version_id).maybeSingle(),
     sb.from("deck_slides").select("n,image_path").eq("version_id", deck.current_version_id).order("n"),
     sb.from("deck_spots").select("id,n,kind,label,layer_name,status,note,video_path").eq("version_id", deck.current_version_id).order("n"),
-    sb.from("deck_links").select("id,token,label,enabled,expires_at,require_email,created_at,created_by").eq("deck_id", id).order("created_at", { ascending: false }),
-    sb.from("deck_sessions").select("id,link_id,email,started_at,last_seen_at,total_ms,furthest_slide,slide_count,device,browser,os,country,timezone").eq("deck_id", id).order("started_at", { ascending: false }).limit(1000),
+    sb.from("deck_links").select("id,token,label,enabled,expires_at,require_email,verify_email,created_at,created_by").eq("deck_id", id).order("created_at", { ascending: false }),
+    sb.from("deck_sessions").select("id,link_id,email,verified,started_at,last_seen_at,total_ms,furthest_slide,slide_count,device,browser,os,country,timezone").eq("deck_id", id).order("started_at", { ascending: false }).limit(1000),
   ]);
   const sessIds = (sess.data ?? []).map((s) => s.id);
   const [per, clicks] = sessIds.length ? await Promise.all([
@@ -226,7 +226,7 @@ async function renderDeck(app, sb, ctx, id) {
         ${!L.length ? `<p class="muted" style="margin:0">No links yet. <button type="button" class="linkish" id="dk-new2">Make the first link</button></p>` : `
         <div class="table-wrap dk-tbl"><table><thead><tr><th>Name</th><th>Views</th><th>Email asked</th><th>Expires</th><th>On</th><th></th></tr></thead><tbody>
           ${L.map((l) => `<tr class="${l.enabled ? "" : "dk-off"}"><td><b>${esc(l.label || "Link")}</b><br><span class="muted small">made ${esc(day(l.created_at))}</span></td>
-            <td>${viewsBy[l.id] ?? 0}</td><td>${l.require_email ? "Yes" : "No"}</td>
+            <td>${viewsBy[l.id] ?? 0}</td><td>${l.verify_email ? "Yes, with a code" : l.require_email ? "Yes" : "No"}</td>
             <td><input type="date" value="${esc(l.expires_at ? l.expires_at.slice(0, 10) : "")}" data-exp="${l.id}" aria-label="Expiry date"></td>
             <td><label class="switch"><input type="checkbox" data-on="${l.id}" ${l.enabled ? "checked" : ""} aria-label="Link on"><span></span></label></td>
             <td class="dk-acts"><button type="button" data-link="${esc(l.token)}">Copy link</button></td></tr>`).join("")}
@@ -242,7 +242,7 @@ async function renderDeck(app, sb, ctx, id) {
         <div class="dk-views">${V.slice(0, 200).map((s) => {
           const c = clicksBy[s.id] ?? [], seen = Object.keys(bySess[s.id] ?? {}).length;
           return `<div class="dk-view${open === s.id ? " on" : ""}"><button type="button" class="dk-vrow" data-view="${s.id}" aria-expanded="${open === s.id}">
-            <span><b>${esc(s.email || "No email")}</b><br><span class="muted small">${esc(ago(s.started_at))} · ${esc(linkName[s.link_id] ?? "Link")}</span></span>
+            <span><b>${esc(s.email || "No email")}</b>${s.verified ? ` <span class="dk-ok" title="Email checked with a code">✓ checked</span>` : ""}<br><span class="muted small">${esc(ago(s.started_at))} · ${esc(linkName[s.link_id] ?? "Link")}</span></span>
             <span class="small">${dur(s.total_ms)}</span><span class="small">${seen}/${s.slide_count || S.length} slides</span>
             <span class="small muted">${[s.device, s.browser, place(s.timezone) || s.country].filter(Boolean).map(esc).join(" · ")}</span>
             <span class="small">${c.length ? `${c.length} click${c.length === 1 ? "" : "s"}` : ""}</span></button>
@@ -290,6 +290,7 @@ async function renderDeck(app, sb, ctx, id) {
       <p class="muted small">One link per company or person tells you exactly who's viewing.</p>
       <label>Who is it for? <input name="label" placeholder="e.g. Universal Music · A&amp;R team" required maxlength="120"></label>
       <label class="check"><input type="checkbox" name="email" checked> <span>Ask for an email before showing the deck</span></label>
+      <label class="check"><input type="checkbox" name="verify"> <span>Check the email with a code <span class="muted small" style="font-weight:400">(viewers get a 6-digit code by email, so the address is real)</span></span></label>
       <label>Expires <input type="date" name="exp"> <span class="muted small">Leave empty to keep it open.</span></label>
       <div class="actions"><button type="submit" value="ok" class="primary">Make link</button><button type="submit" value="cancel" formnovalidate>Cancel</button></div></form>`;
     document.body.append(d);
@@ -297,7 +298,7 @@ async function renderDeck(app, sb, ctx, id) {
       if (d.returnValue === "ok") {
         const f = d.querySelector("form");
         const exp = f.exp.value ? new Date(`${f.exp.value}T23:59:59`).toISOString() : null;
-        const { data, error } = await sb.from("deck_links").insert({ deck_id: id, label: f.label.value.trim(), require_email: f.email.checked, expires_at: exp, created_by: await myEmail(sb) }).select("token").single();
+        const { data, error } = await sb.from("deck_links").insert({ deck_id: id, label: f.label.value.trim(), require_email: f.email.checked || f.verify.checked, verify_email: f.verify.checked, expires_at: exp, created_by: await myEmail(sb) }).select("token").single();
         if (error) ctx.toast?.(error.message);
         else { await copy(deckUrl(data.token), ctx.toast, "Link made and copied"); reload(); }
       }
