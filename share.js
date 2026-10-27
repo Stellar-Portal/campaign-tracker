@@ -1,8 +1,8 @@
 // Client report: the page behind a "Share with client" link (share.html#t=<token>).
 // No login. The token in the link is checked by the `share` function, which returns only
 // what the link's settings allow, and never budgets or costs.
-import { SUPABASE_URL } from "./config.js?v=20261027h";
-import { mountReport, esc } from "./report.js?v=20261027h";
+import { SUPABASE_URL } from "./config.js?v=20261027m";
+import { mountReport, esc } from "./report.js?v=20261027m";
 
 const app = document.getElementById("app");
 const FN = `${SUPABASE_URL}/functions/v1/share`;
