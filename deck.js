@@ -164,7 +164,10 @@ function start(d) {
         const iw = w - 2 * p, ih = h - 2 * p;
         Object.assign(img.style, { inset: "auto", width: `${(w / iw) * 100}%`, height: `${(h / ih) * 100}%`, left: `${(-p / iw) * 100}%`, top: `${(-p / ih) * 100}%`, objectFit: "fill" });
       };
-      img.complete ? trim() : img.addEventListener("load", trim, { once: true });
+      const done = () => { trim(); img.classList.add("in"); stage.classList.add("ready"); };
+      stage.classList.remove("ready");
+      img.complete && img.naturalWidth ? done() : img.addEventListener("load", done, { once: true });
+      img.addEventListener("error", () => stage.classList.add("ready"), { once: true });
     }
     for (const sp of spotsBy[s.n] ?? []) {
       const pos = `left:${sp.x}%;top:${sp.y}%;width:${sp.w}%;height:${sp.h}%`;
