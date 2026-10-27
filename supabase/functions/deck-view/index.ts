@@ -53,7 +53,7 @@ async function readPass(pass: unknown, deckId: string): Promise<{ email: string;
 
 // One-time email codes (needs the RESEND_API_KEY secret; without it, links fall back to a plain email gate).
 const RESEND = Deno.env.get("RESEND_API_KEY") ?? "";
-const FROM = Deno.env.get("DECK_EMAIL_FROM") ?? "Stellar <decks@stellarmusic.dk>";
+const FROM = Deno.env.get("DECK_EMAIL_FROM") ?? "Stellar <noreply@decks.stellarmusic.dk>";
 const codesOn = () => !!RESEND;
 async function sendCode(linkId: string, email: string, title: string) {
   const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, "0");
