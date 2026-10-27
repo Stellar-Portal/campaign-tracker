@@ -154,6 +154,18 @@ function start(d) {
     const s = slides[i];
     stage.querySelectorAll("video").forEach((v) => v.pause());
     stage.innerHTML = s.url ? `<img class="slide" src="${esc(s.url)}" alt="Slide ${i + 1} of ${total}" draggable="false">` : "";
+    const img = stage.querySelector("img");
+    if (img) {
+      // Figma renders slides with a thin frame around them; trim it so the slide fills the stage.
+      const trim = () => {
+        const w = img.naturalWidth, h = img.naturalHeight, A = (s.w || 16) / (s.h || 9);
+        const p = (A * h - w) / (2 * (A - 1));
+        if (!(p > 0.5 && p < w * 0.05)) return;
+        const iw = w - 2 * p, ih = h - 2 * p;
+        Object.assign(img.style, { inset: "auto", width: `${(w / iw) * 100}%`, height: `${(h / ih) * 100}%`, left: `${(-p / iw) * 100}%`, top: `${(-p / ih) * 100}%`, objectFit: "fill" });
+      };
+      img.complete ? trim() : img.addEventListener("load", trim, { once: true });
+    }
     for (const sp of spotsBy[s.n] ?? []) {
       const pos = `left:${sp.x}%;top:${sp.y}%;width:${sp.w}%;height:${sp.h}%`;
       if (sp.kind === "video" && sp.url) {
