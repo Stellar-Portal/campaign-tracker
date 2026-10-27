@@ -19,6 +19,22 @@ const slack = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").repl
 Deno.serve(async (req) => {
   const { data: secret } = await db.rpc("deck_secret");
   if (req.headers.get("x-deck-secret") !== secret) return json({ error: "Not allowed" }, 403);
+  const body = await req.json().catch(() => ({}));
+  if (body.action === "check") {
+    // Setup check: one test message to Slack, and a read-only look at the Resend domains (no email is sent).
+    const out: Record<string, unknown> = { slack: HOOK ? "set" : "missing", resend: Deno.env.get("RESEND_API_KEY") ? "set" : "missing" };
+    if (HOOK) {
+      const r = await fetch(HOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "✅ Stellar OS is connected. Deck view alerts will appear in this channel." }) });
+      out.slack_post = `${r.status} ${(await r.text()).slice(0, 80)}`;
+    }
+    const rk = Deno.env.get("RESEND_API_KEY");
+    if (rk) {
+      const r = await fetch("https://api.resend.com/domains", { headers: { Authorization: `Bearer ${rk}` } });
+      const j = await r.json().catch(() => null);
+      out.resend_domains = r.ok ? (j?.data ?? []).map((d: any) => `${d.name}: ${d.status}`) : `${r.status} ${JSON.stringify(j).slice(0, 120)}`;
+    }
+    return json(out);
+  }
   if (!HOOK) return json({ skipped: "SLACK_DECKS_WEBHOOK isn't set" });
   const cutoff = new Date(Date.now() - 3 * 60_000).toISOString();
   const { data: sess } = await db.from("deck_sessions")
