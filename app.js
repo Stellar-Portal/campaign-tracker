@@ -1,14 +1,15 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261027h";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261027h";
-import { renderRoster } from "./roster.js?v=20261027h";
-import { renderDiscover } from "./discover.js?v=20261027h";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261027h";
-import { renderTrending } from "./trending.js?v=20261027h";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261027h";
-import { confirmDialog } from "./dialog.js?v=20261027h";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261027h";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261027h";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261027m";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261027m";
+import { renderRoster } from "./roster.js?v=20261027m";
+import { renderDiscover } from "./discover.js?v=20261027m";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261027m";
+import { renderTrending } from "./trending.js?v=20261027m";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261027m";
+import { renderDecks, figmaReminder } from "./decks.js?v=20261027m";
+import { confirmDialog } from "./dialog.js?v=20261027m";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261027m";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261027m";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -56,8 +57,8 @@ const go = (hash) => { location.hash = hash; };
 // ---------- Back, Home, back to top ----------
 // Each sidebar section keeps its own trail of pages. Back walks up that trail and stops at the section's
 // first page (it never jumps to another section); Home goes straight to the section's first page.
-const SECTION_HOME = { overview: "#/", campaigns: "#/campaigns", roster: "#/roster", discover: "#/discover", analytics: "#/analytics", trending: "#/trending", payouts: "#/payouts", payments: "#/payments", invoices: "#/invoices" };
-const SECTION_NAME = { overview: "Campaign overview", campaigns: "Tracker", roster: "Roster", discover: "Discover", analytics: "Analytics", trending: "Trending", payouts: "Payouts", payments: "Creator payments", invoices: "Invoices" };
+const SECTION_HOME = { overview: "#/", campaigns: "#/campaigns", roster: "#/roster", discover: "#/discover", analytics: "#/analytics", trending: "#/trending", payouts: "#/payouts", payments: "#/payments", invoices: "#/invoices", decks: "#/decks" };
+const SECTION_NAME = { overview: "Campaign overview", campaigns: "Tracker", roster: "Roster", discover: "Discover", analytics: "Analytics", trending: "Trending", payouts: "Payouts", payments: "Creator payments", invoices: "Invoices", decks: "Decks" };
 const normHash = (h) => (!h || h === "#" || h === "#/overview" ? "#/" : h);
 function sectionOf(hash) {
   const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
@@ -81,6 +82,7 @@ function depthOf(hash) {
   if (p[0] === "new" || p[0] === "report") return 1;
   if (p[0] === "trending") return p[1] === "artist" ? 1 : 0;
   if (p[0] === "analytics") return Math.floor((p.length - 1) / 2);
+  if (p[0] === "decks") return p[1] ? 1 : 0;
   return 0;
 }
 function trackHistory() {
@@ -110,6 +112,7 @@ function parentOf(hash) {
   }
   if (p[0] === "trending" && p.length > 1) return p[1] === "artist" ? "#/trending/artists" : "#/trending";
   if (p[0] === "analytics" && p.length > 2) return `#/${p.slice(0, -2).join("/")}`;
+  if (p[0] === "decks" && p[1]) return "#/decks";
   return null;
 }
 function pageName(hash) {
@@ -123,6 +126,7 @@ function pageName(hash) {
   if (p[0] === "roster") return p[p.length - 2] === "c" ? "Creator" : p[1] === "list" ? (p[3] === "compare" ? "Comparison" : "List") : "Roster";
   if (p[0] === "analytics" && p.length > 2) return drillTitle(p[p.length - 2], decodeURIComponent(p[p.length - 1]));
   if (p[0] === "trending") return p[1] === "artist" ? "Artist" : p[1] === "artists" ? "Trending artists" : "Trending";
+  if (p[0] === "decks") return p[1] ? "Deck" : "Decks";
   return { analytics: "Analytics", discover: "Discover", payouts: "Payouts", payments: "Creator payments", invoices: "Invoices" }[p[0]] ?? "Previous page";
 }
 // Page titles as they were shown ("Football clubs", a campaign's song), so Back can name the page it returns to.
@@ -255,6 +259,7 @@ const NAV_ICON = {
   roster: '<path d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.8l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>',
   discover: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5M10.5 7.5v6M7.5 10.5h6"/>',
   trending: '<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+  decks: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M12 16v4M8 20h8M7 8h6M7 11h4"/>',
 };
 const NAV = [
   ["Campaigns", [
@@ -270,6 +275,9 @@ const NAV = [
   ["Insights", [
     { key: "analytics", href: "#/analytics", label: "Analytics", icon: "analytics" },
     { key: "trending", href: "#/trending", label: "Trending", icon: "trending" },
+  ]],
+  ["Pitching", [
+    { key: "decks", href: "#/decks", label: "Decks", icon: "decks" },
   ]],
 ];
 // Menu: icons only on desktop. Hovering for a moment opens it over the page; it closes again
@@ -2283,7 +2291,7 @@ async function renderJob(token, c, jobId, title) {
 // The main pages are kept for a few minutes after you leave them (their live DOM, scroll position and token),
 // so going back to one shows it instantly. Any write anywhere drops them, so nothing shown is out of date.
 const KEEP_MS = 3 * 60 * 1000;
-const KEEPABLE = new Set(["#/", "#/campaigns", "#/roster", "#/discover", "#/analytics", "#/trending", "#/trending/artists", "#/payouts", "#/invoices"]);
+const KEEPABLE = new Set(["#/", "#/campaigns", "#/roster", "#/discover", "#/analytics", "#/trending", "#/trending/artists", "#/payouts", "#/invoices", "#/decks"]);
 const pageCache = new Map();   // hash → { frag, token, at, scroll, cls }
 let shown = { hash: null, token: 0 };
 function keepShownPage(nextHash) {
@@ -2336,6 +2344,7 @@ async function route() {
   }
   document.body.classList.remove("signin");
   app.classList.remove("camp-on-payouts");
+  figmaReminder(sb).catch(() => {});
   renderWho(user);
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   trackHistory(); updateBack(); rememberTitle(normHash(location.hash));
@@ -2344,7 +2353,7 @@ async function route() {
   const restoring = KEEPABLE.has(target) && pageCache.has(target);
   if (pageKey !== lastPageKey && !restoring) window.scrollTo(0, 0);
   lastPageKey = pageKey;
-  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover", "payouts", "invoices"].includes(parts[0]) ? parts[0] : "campaigns";
+  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover", "payouts", "invoices", "decks"].includes(parts[0]) ? parts[0] : "campaigns";
   renderNav(section);
   if (KEEPABLE.has(target) && restorePage(target, prevShown)) { lastPageKey = pageKey; return; }
   shown = { hash: target, token };
@@ -2354,6 +2363,7 @@ async function route() {
   if (section === "roster") return renderRoster(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (section === "invoices") return renderInvoices(app, sb, { isCurrent: () => token === routeToken, go, toast });
   if (section === "payouts") return renderPayoutsHome(app, sb, { isCurrent: () => token === routeToken, go });
+  if (section === "decks") return renderDecks(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (section === "discover") return renderDiscover(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (SOON[parts[0]]) return renderSoon(parts[0]);
   if (parts[0] === "campaigns") return renderList(token);

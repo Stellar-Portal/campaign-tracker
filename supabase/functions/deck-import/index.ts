@@ -1,5 +1,5 @@
 // deck-import (team only): reads a Figma Slides file and builds a deck version.
-//   { action: "build", url, deck_id?, title?, width, height, slides: [{ node, links: [{url,label,x,y,w,h}], videos: [{name,x,y,w,h,clip?:{x,y,w,h,r}}] }] }
+//   { action: "build", url | file_key, deck_id?, new_deck?, title?, width, height, slides: [{ node, links: [{url,label,x,y,w,h}], videos: [{name,x,y,w,h,clip?:{x,y,w,h,r}}] }] }
 //       Boxes are in slide pixels. A video's clip is the part a parent frame (e.g. a phone mockup) leaves visible.
 //       creates a new deck version: Figma renders each slide as an image (REST /images), links and video
 //       boxes become %-positioned spots, and TikTok videos (ID read from the Snaptik layer name) are
@@ -16,12 +16,15 @@ function serviceKey(): string {
   return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 }
 const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey(), { auth: { persistSession: false } });
-const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-deck-secret", "Access-Control-Allow-Methods": "POST, OPTIONS" };
+const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-deck-secret, x-plugin-key", "Access-Control-Allow-Methods": "POST, OPTIONS" };
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { ...cors, "Content-Type": "application/json" } });
 const FIGMA = "https://api.figma.com/v1";
 const figmaToken = () => Deno.env.get("FIGMA_TOKEN") ?? "";
 
 async function who(req: Request): Promise<string | null> {
+  // The "Send to Stellar OS" Figma button sends the team member's personal key.
+  const pk = req.headers.get("x-plugin-key");
+  if (pk) { if (!/^sos_[0-9a-f]{48}$/.test(pk)) return null; const { data } = await db.rpc("deck_plugin_user", { p_key: pk }); return data ?? null; }
   const sec = req.headers.get("x-deck-secret");
   if (sec) { const { data } = await db.rpc("deck_secret"); return sec === data ? "system" : null; }
   const jwt = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
@@ -62,19 +65,28 @@ async function tiktokMp4(id: string): Promise<ArrayBuffer> {
 }
 
 async function build(body: any, user: string) {
-  const key = fileKey(String(body.url ?? ""));
+  const key = /^[0-9a-zA-Z]{10,128}$/.test(String(body.file_key ?? "")) ? String(body.file_key) : fileKey(String(body.url ?? ""));
   if (!key) throw Object.assign(new Error("That doesn't look like a Figma link."), { status: 422 });
+  const url = fileKey(String(body.url ?? "")) === key ? String(body.url) : `https://www.figma.com/deck/${key}`;
   const W = num(body.width, 1, 20000) || 1920, H = num(body.height, 1, 20000) || 1080;
   const input = (Array.isArray(body.slides) ? body.slides : []).filter((s: any) => /^[\d:;I-]+$/.test(String(s?.node ?? ""))).slice(0, 200);
   if (!input.length) throw Object.assign(new Error("No slides to import."), { status: 422 });
   const meta = (await figma(`/files/${key}/meta`)).file;
 
   let deckId = body.deck_id as string | undefined;
+  if (!deckId && !body.new_deck) {
+    // Sending the same Figma file again updates its deck (a new version) instead of making a second deck.
+    const { data } = await db.from("deck_versions").select("deck_id").eq("figma_file_key", key).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    deckId = data?.deck_id;
+  }
+  let deckTitle = "";
   if (deckId) {
-    const { data } = await db.from("decks").select("id").eq("id", deckId).maybeSingle();
+    const { data } = await db.from("decks").select("id,title").eq("id", deckId).maybeSingle();
     if (!data) throw Object.assign(new Error("Deck not found."), { status: 422 });
+    deckTitle = data.title;
   } else {
-    const { data, error } = await db.from("decks").insert({ title: String(body.title || meta.name).slice(0, 200), figma_url: String(body.url).slice(0, 500), created_by: user }).select("id").single();
+    deckTitle = String(body.title || meta.name).slice(0, 200);
+    const { data, error } = await db.from("decks").insert({ title: deckTitle, figma_url: url.slice(0, 500), created_by: user }).select("id").single();
     if (error) throw error;
     deckId = data.id;
   }
@@ -86,6 +98,12 @@ async function build(body: any, user: string) {
   if (verr) throw verr;
   const base = `${deckId}/${ver.id}`;
   const problems: string[] = [];
+  // Videos already saved for this deck (downloaded before, or uploaded by hand) are reused, not fetched again.
+  const { data: olderVersions } = await db.from("deck_versions").select("id").eq("deck_id", deckId).neq("id", ver.id);
+  const { data: saved } = olderVersions?.length
+    ? await db.from("deck_spots").select("tiktok_id,layer_name,video_path").in("version_id", olderVersions.map((v) => v.id)).eq("kind", "video").eq("status", "ready").not("video_path", "is", null)
+    : { data: [] as any[] };
+  const reuse = (tiktok: string | null, name: string) => (saved ?? []).find((v) => (tiktok && v.tiktok_id === tiktok) || (!tiktok && v.layer_name === name))?.video_path ?? null;
   try {
     // 1. Slide images, rendered by Figma, 10 per request.
     const urls: Record<string, string> = {};
@@ -120,7 +138,9 @@ async function build(body: any, user: string) {
           x: pct(num(v.x, -W, W), W), y: pct(num(v.y, -H, H), H), w: pct(num(v.w, 0, W), W), h: pct(num(v.h, 0, H), H), status: "missing" };
         const c = v.clip;
         if (c && typeof c === "object") row.clip = { x: pct(num(c.x, -W, W), W), y: pct(num(c.y, -H, H), H), w: pct(num(c.w, 0, W), W), h: pct(num(c.h, 0, H), H), r: pct(num(c.r, 0, W), W) };
-        if (!tiktok) row.note = "No TikTok ID in the video's layer name. Add the video file or its TikTok link.";
+        const again = reuse(tiktok, name);
+        if (again) { row.video_path = again; row.status = "ready"; }
+        else if (!tiktok) row.note = "No TikTok ID in the video's layer name. Add the video file or its TikTok link.";
         else {
           try {
             const mp4 = await tiktokMp4(tiktok);
@@ -138,8 +158,8 @@ async function build(body: any, user: string) {
     if (e1) throw e1;
     if (spotRows.length) { const { error: e2 } = await db.from("deck_spots").insert(spotRows); if (e2) throw e2; }
     await db.from("deck_versions").update({ status: "ready", note: problems.join("\n") || null }).eq("id", ver.id);
-    await db.from("decks").update({ current_version_id: ver.id, figma_url: String(body.url).slice(0, 500), updated_at: new Date().toISOString() }).eq("id", deckId);
-    return { deck_id: deckId, version_id: ver.id, version: ver.version, slides: slideRows.length, links: spotRows.filter((r) => r.kind === "link").length, videos: spotRows.filter((r) => r.kind === "video").length, problems };
+    await db.from("decks").update({ current_version_id: ver.id, figma_url: url.slice(0, 500), updated_at: new Date().toISOString() }).eq("id", deckId);
+    return { deck_id: deckId, title: deckTitle, version_id: ver.id, version: ver.version, slides: slideRows.length, links: spotRows.filter((r) => r.kind === "link").length, videos: spotRows.filter((r) => r.kind === "video").length, problems };
   } catch (e) {
     await db.from("deck_versions").update({ status: "failed", note: String((e as Error).message).slice(0, 500) }).eq("id", ver.id);
     throw e;

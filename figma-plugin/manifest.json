@@ -1,0 +1,14 @@
+{
+  "name": "Send to Stellar OS",
+  "id": "stellar-os-send-deck",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["slides"],
+  "documentAccess": "dynamic-page",
+  "enablePrivatePluginApi": true,
+  "networkAccess": {
+    "allowedDomains": ["https://vmzbpuootzchpdnvtfhb.supabase.co"],
+    "reasoning": "Sends the deck's slide list, links and video positions to Stellar OS so it can build a tracked link."
+  }
+}

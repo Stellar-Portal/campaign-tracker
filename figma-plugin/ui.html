@@ -1,0 +1,110 @@
+<style>
+  :root { --blue: #0626c7; --ink: var(--figma-color-text, #1d1d1f); --muted: var(--figma-color-text-secondary, #6e6e73); --line: var(--figma-color-border, #e0e0e0); --bg: var(--figma-color-bg, #fff); --soft: var(--figma-color-bg-secondary, #f5f5f7); }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.45 -apple-system, BlinkMacSystemFont, Inter, system-ui, sans-serif; color: var(--ink); background: var(--bg); }
+  main { padding: 20px; display: flex; flex-direction: column; gap: 14px; min-height: 100vh; }
+  header { display: flex; align-items: center; gap: 10px; }
+  .mark { width: 28px; height: 28px; border-radius: 8px; background: var(--blue); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 15px; }
+  h1 { font-size: 15px; margin: 0; letter-spacing: -0.01em; }
+  .card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--soft); }
+  .deck { font-weight: 600; font-size: 14px; word-break: break-word; }
+  .muted { color: var(--muted); }
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  input[type=text], input[type=password] { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: var(--bg); color: var(--ink); }
+  input:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
+  .check { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; }
+  button { appearance: none; border: 0; border-radius: 999px; padding: 11px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  .primary { background: var(--blue); color: #fff; width: 100%; }
+  .primary:disabled { opacity: .55; cursor: default; }
+  .link { background: none; color: var(--blue); padding: 0; font-weight: 500; }
+  .msg { padding: 10px 12px; border-radius: 10px; }
+  .msg.ok { background: rgba(26,127,55,.1); color: #1a7f37; }
+  .msg.err { background: rgba(196,30,58,.1); color: #c41e3a; }
+  .msg.info { background: var(--soft); color: var(--ink); }
+  .msg ul { margin: 6px 0 0; padding-left: 18px; }
+  .foot { margin-top: auto; font-size: 12px; }
+  a { color: var(--blue); }
+  [hidden] { display: none !important; }
+</style>
+<main>
+  <header><div class="mark">S</div><h1>Send to Stellar OS</h1></header>
+
+  <section id="setup" hidden>
+    <p class="muted" style="margin-top:0">One-time setup: paste your personal key. Get it in Stellar OS → Decks → "Figma button".</p>
+    <label for="key">Your key</label>
+    <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="sos_…">
+    <p id="keyerr" class="msg err" hidden></p>
+    <p><button class="primary" id="savekey" type="button">Save key</button></p>
+  </section>
+
+  <section id="main" hidden>
+    <div class="card">
+      <div class="deck" id="title"></div>
+      <div class="muted" id="counts"></div>
+    </div>
+    <div id="nokey" hidden>
+      <label for="link">Figma link to this deck</label>
+      <input id="link" type="text" placeholder="https://www.figma.com/deck/…">
+      <p class="muted" style="margin:6px 0 0">Share → Copy link. Needed once per deck.</p>
+    </div>
+    <label class="check"><input type="checkbox" id="newdeck"> <span>Send as a new deck<br><span class="muted">Leave off to update this deck's existing tracked links.</span></span></label>
+    <button class="primary" id="send" type="button">Send to Stellar OS</button>
+    <div id="status" class="msg" hidden></div>
+  </section>
+
+  <p class="foot muted">Nothing in your deck changes. <button class="link" id="changekey" type="button" hidden>Change key</button></p>
+</main>
+<script>
+  const FN = "https://vmzbpuootzchpdnvtfhb.supabase.co/functions/v1/deck-import";
+  const OS = "https://stellar-portal.github.io/campaign-tracker/#/decks/";
+  const $ = (id) => document.getElementById(id);
+  let state = { key: "", fileKey: null };
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const status = (cls, html) => { const s = $("status"); s.className = "msg " + cls; s.innerHTML = html; s.hidden = false; };
+  const show = () => { $("setup").hidden = !!state.key; $("main").hidden = !state.key; $("changekey").hidden = !state.key; };
+
+  onmessage = async (e) => {
+    const m = e.data.pluginMessage;
+    if (!m) return;
+    if (m.type === "init") {
+      state.key = m.key; state.fileKey = m.fileKey;
+      $("title").textContent = "This deck";
+      $("counts").textContent = `${m.slides} slide${m.slides === 1 ? "" : "s"}${m.videos ? ` · ${m.videos} video${m.videos === 1 ? "" : "s"}` : ""}`;
+      $("nokey").hidden = !!m.fileKey;
+      show();
+    }
+    if (m.type === "payload") send(m.payload);
+  };
+  parent.postMessage({ pluginMessage: { type: "ready" } }, "*");
+
+  $("savekey").onclick = () => {
+    const k = $("key").value.trim();
+    if (!/^sos_[0-9a-f]{48}$/.test(k)) { $("keyerr").textContent = "That doesn't look like a Stellar OS key. Copy it again from Decks → Figma button."; $("keyerr").hidden = false; return; }
+    state.key = k; parent.postMessage({ pluginMessage: { type: "save-key", key: k } }, "*"); show();
+  };
+  $("changekey").onclick = () => { state.key = ""; $("key").value = ""; show(); };
+
+  $("send").onclick = () => {
+    if (!state.fileKey && !/figma\.com\/(deck|slides|design|file)\/[0-9a-zA-Z]{10,}/.test($("link").value)) { status("err", "Paste this deck's Figma link first."); return; }
+    $("send").disabled = true; $("send").textContent = "Sending…";
+    status("info", "Figma is preparing the slides and the videos are being saved. This can take a minute for a big deck.");
+    parent.postMessage({ pluginMessage: { type: "collect" } }, "*");
+  };
+
+  async function send(payload) {
+    const body = Object.assign({ action: "build", new_deck: $("newdeck").checked }, payload);
+    if (!body.file_key) body.url = $("link").value.trim();
+    try {
+      const r = await fetch(FN, { method: "POST", headers: { "Content-Type": "application/json", "x-plugin-key": state.key }, body: JSON.stringify(body) });
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 401) { status("err", "Stellar OS didn't accept your key. It may have been switched off: make a new one in Decks → Figma button."); return; }
+      if (!r.ok) { status("err", esc(d.error || "Something went wrong. Try again in a minute.")); return; }
+      const probs = (d.problems || []).length ? `<ul>${d.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : "";
+      status(probs ? "info" : "ok", `<strong>Sent: ${esc(d.title)}.</strong> ${d.slides} slides, ${d.links} link${d.links === 1 ? "" : "s"}, ${d.videos} video${d.videos === 1 ? "" : "s"}${d.version > 1 ? ` (version ${d.version}; existing links now show it)` : ""}.${probs ? "<br>Needs attention:" + probs : ""}<br><a href="${OS}${encodeURIComponent(d.deck_id)}" target="_blank">Open in Stellar OS</a>`);
+    } catch (err) {
+      status("err", "Couldn't reach Stellar OS. Check your connection and try again.");
+    } finally {
+      $("send").disabled = false; $("send").textContent = "Send to Stellar OS";
+    }
+  }
+</script>
