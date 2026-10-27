@@ -2,7 +2,7 @@
 // No login. The `deck-view` function checks the link, hands out slide images and videos as
 // short-lived links, and records time per slide. Time only counts while this tab is visible;
 // totals are running sums, so resending them (heartbeat, page close, retry) never double-counts.
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261027m";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261027p";
 
 const FN = `${SUPABASE_URL}/functions/v1/deck-view`;
 const app = document.getElementById("app");

@@ -2,7 +2,7 @@
 // Decks come in from Figma Slides through the "Send to Stellar OS" Figma button (figma-plugin/), which
 // calls the deck-import function. Here the team makes links, switches them off, sees who viewed what,
 // adds videos the import couldn't fetch, and keeps an eye on the Figma connection's expiry date.
-import { confirmDialog } from "./dialog.js?v=20261027m";
+import { confirmDialog } from "./dialog.js?v=20261027p";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const day = (d) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "");
@@ -92,7 +92,7 @@ async function figmaButtonDialog(sb, toast) {
         <li><b>Download the button</b> and unzip it. <a class="dk-dl" href="${PLUGIN_ZIP}" download>Download (zip)</a></li>
         <li>In the Figma desktop app, open any deck, then <b>Plugins → Development → Import plugin from manifest…</b> and pick <b>manifest.json</b> from the unzipped folder.</li>
         <li><b>Make your key</b> and paste it into the button the first time you open it.
-          ${newKey ? `<div class="dk-key"><code>${esc(newKey)}</code><button type="button" data-copy>Copy</button></div><p class="small dk-once">Copy it now: it won't be shown again.</p>`
+          ${newKey ? `<div class="dk-key"><code>${esc(newKey)}</code><button type="button" data-copykey>Copy</button></div><p class="small dk-once">Copy it now: it won't be shown again.</p>`
           : `<div style="margin-top:8px"><button type="button" class="primary" data-make>Make my key</button></div>`}</li>
         <li>From then on: open a deck → <b>Plugins → Development → Send to Stellar OS</b> → <b>Send</b>. Sending the same deck again updates it, and its links show the new version.</li>
       </ol>
@@ -103,7 +103,7 @@ async function figmaButtonDialog(sb, toast) {
       if (error) { toast?.(error.message); return; }
       draw(data);
     });
-    d.querySelector("[data-copy]")?.addEventListener("click", () => copy(newKey, toast, "Key copied"));
+    d.querySelector("[data-copykey]")?.addEventListener("click", () => copy(newKey, toast, "Key copied"));
     d.querySelectorAll("[data-revoke]").forEach((b) => (b.onclick = async () => {
       const ok = await confirmDialog({ title: "Switch off this key?", body: "The Figma button stops working with it. You can make a new one any time.", confirm: "Switch off" });
       if (!ok) return;
@@ -229,7 +229,7 @@ async function renderDeck(app, sb, ctx, id) {
             <td>${viewsBy[l.id] ?? 0}</td><td>${l.require_email ? "Yes" : "No"}</td>
             <td><input type="date" value="${esc(l.expires_at ? l.expires_at.slice(0, 10) : "")}" data-exp="${l.id}" aria-label="Expiry date"></td>
             <td><label class="switch"><input type="checkbox" data-on="${l.id}" ${l.enabled ? "checked" : ""} aria-label="Link on"><span></span></label></td>
-            <td class="dk-acts"><button type="button" data-copy="${esc(l.token)}">Copy link</button></td></tr>`).join("")}
+            <td class="dk-acts"><button type="button" data-link="${esc(l.token)}">Copy link</button></td></tr>`).join("")}
         </tbody></table></div>`}</div>
 
       ${S.length ? `<div class="panel dk-panel"><div class="dk-head"><h2>Slides</h2><span class="muted small">Average time on each slide, and how many views reached it.</span></div>
@@ -263,7 +263,7 @@ async function renderDeck(app, sb, ctx, id) {
   const reload = () => renderDeck(app, sb, ctx, id);
   function bind() {
     app.querySelectorAll("[data-view]").forEach((b) => (b.onclick = () => { open = open === b.dataset.view ? null : b.dataset.view; draw(); }));
-    app.querySelectorAll("[data-copy]").forEach((b) => (b.onclick = () => copy(deckUrl(b.dataset.copy), ctx.toast)));
+    app.querySelectorAll("[data-link]").forEach((b) => (b.onclick = () => copy(deckUrl(b.dataset.link), ctx.toast)));
     app.querySelectorAll("[data-on]").forEach((i) => (i.onchange = async () => {
       const { error } = await sb.from("deck_links").update({ enabled: i.checked }).eq("id", i.dataset.on);
       if (error) { ctx.toast?.(error.message); i.checked = !i.checked; return; }
