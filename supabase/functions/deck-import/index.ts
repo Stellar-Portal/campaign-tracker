@@ -1,5 +1,6 @@
 // deck-import (team only): reads a Figma Slides file and builds a deck version.
-//   { action: "build", url, deck_id?, title?, width, height, slides: [{ node, links: [{url,label,x,y,w,h}], videos: [{name,x,y,w,h}] }] }
+//   { action: "build", url, deck_id?, title?, width, height, slides: [{ node, links: [{url,label,x,y,w,h}], videos: [{name,x,y,w,h,clip?:{x,y,w,h,r}}] }] }
+//       Boxes are in slide pixels. A video's clip is the part a parent frame (e.g. a phone mockup) leaves visible.
 //       creates a new deck version: Figma renders each slide as an image (REST /images), links and video
 //       boxes become %-positioned spots, and TikTok videos (ID read from the Snaptik layer name) are
 //       downloaded once through ScrapeCreators (about 1 credit each) into the private deck-media bucket.
@@ -90,7 +91,7 @@ async function build(body: any, user: string) {
     const urls: Record<string, string> = {};
     for (let i = 0; i < input.length; i += 10) {
       const ids = input.slice(i, i + 10).map((s: any) => s.node).join(",");
-      const r = await figma(`/images/${key}?ids=${encodeURIComponent(ids)}&format=jpg&scale=1.5`);
+      const r = await figma(`/images/${key}?ids=${encodeURIComponent(ids)}&format=jpg&scale=1.5&use_absolute_bounds=true`);
       Object.assign(urls, r.images ?? {});
     }
     const slideRows: any[] = [], spotRows: any[] = [];
@@ -117,6 +118,8 @@ async function build(body: any, user: string) {
         const tiktok = name.match(/(\d{15,20})/)?.[1] ?? null;
         const row: any = { version_id: ver.id, n, kind: "video", layer_name: name, tiktok_id: tiktok,
           x: pct(num(v.x, -W, W), W), y: pct(num(v.y, -H, H), H), w: pct(num(v.w, 0, W), W), h: pct(num(v.h, 0, H), H), status: "missing" };
+        const c = v.clip;
+        if (c && typeof c === "object") row.clip = { x: pct(num(c.x, -W, W), W), y: pct(num(c.y, -H, H), H), w: pct(num(c.w, 0, W), W), h: pct(num(c.h, 0, H), H), r: pct(num(c.r, 0, W), W) };
         if (!tiktok) row.note = "No TikTok ID in the video's layer name. Add the video file or its TikTok link.";
         else {
           try {

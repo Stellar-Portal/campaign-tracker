@@ -155,15 +155,7 @@ function start(d) {
     stage.innerHTML = s.url ? `<img class="slide" src="${esc(s.url)}" alt="Slide ${i + 1} of ${total}" draggable="false">` : "";
     const img = stage.querySelector("img");
     if (img) {
-      // Figma renders slides with a thin frame around them; trim it so the slide fills the stage.
-      const trim = () => {
-        const w = img.naturalWidth, h = img.naturalHeight, A = (s.w || 16) / (s.h || 9);
-        const p = (A * h - w) / (2 * (A - 1));
-        if (!(p > 0.5 && p < w * 0.05)) return;
-        const iw = w - 2 * p, ih = h - 2 * p;
-        Object.assign(img.style, { inset: "auto", width: `${(w / iw) * 100}%`, height: `${(h / ih) * 100}%`, left: `${(-p / iw) * 100}%`, top: `${(-p / ih) * 100}%`, objectFit: "fill" });
-      };
-      const done = () => { trim(); img.classList.add("in"); stage.classList.add("ready"); };
+      const done = () => { img.classList.add("in"); stage.classList.add("ready"); };
       stage.classList.remove("ready");
       img.complete && img.naturalWidth ? done() : img.addEventListener("load", done, { once: true });
       img.addEventListener("error", () => stage.classList.add("ready"), { once: true });
@@ -173,10 +165,22 @@ function start(d) {
       if (sp.kind === "video" && sp.url) {
         const v = document.createElement("video");
         Object.assign(v, { src: sp.url, muted: true, loop: true, autoplay: true, playsInline: true, preload: "auto" });
-        v.className = "spot"; v.style.cssText = pos; v.setAttribute("playsinline", ""); v.setAttribute("muted", "");
+        v.setAttribute("playsinline", ""); v.setAttribute("muted", "");
         v.addEventListener("click", () => { v.muted = !v.muted; });
         v.title = "Tap for sound";
-        stage.append(v);
+        const c = sp.clip;
+        if (c?.w > 0 && c?.h > 0) {
+          // A parent frame (e.g. a phone mockup) shows only part of the video: clip to that area, rounded like the frame.
+          const box = document.createElement("div");
+          box.className = "spot vclip";
+          box.style.cssText = `left:${c.x}%;top:${c.y}%;width:${c.w}%;height:${c.h}%;border-radius:${c.r || 0}cqw`;
+          v.style.cssText = `left:${((sp.x - c.x) / c.w) * 100}%;top:${((sp.y - c.y) / c.h) * 100}%;width:${(sp.w / c.w) * 100}%;height:${(sp.h / c.h) * 100}%`;
+          box.append(v);
+          stage.append(box);
+        } else {
+          v.className = "spot"; v.style.cssText = pos;
+          stage.append(v);
+        }
         v.play().catch(() => {});
       } else if (sp.kind === "link") {
         const a = document.createElement("a");

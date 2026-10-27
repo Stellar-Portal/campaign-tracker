@@ -85,7 +85,7 @@ async function liveLink(token: unknown) {
 async function content(versionId: string) {
   const [{ data: slides }, { data: spots }] = await Promise.all([
     db.from("deck_slides").select("n,image_path,width,height,title").eq("version_id", versionId).order("n"),
-    db.from("deck_spots").select("id,n,kind,url,label,x,y,w,h,video_path,status").eq("version_id", versionId).order("n"),
+    db.from("deck_spots").select("id,n,kind,url,label,x,y,w,h,clip,video_path,status").eq("version_id", versionId).order("n"),
   ]);
   const paths = [...(slides ?? []).map((s) => s.image_path), ...(spots ?? []).map((s) => s.video_path)].filter(Boolean) as string[];
   const signed: Record<string, string> = {};
@@ -96,7 +96,7 @@ async function content(versionId: string) {
   return {
     slides: (slides ?? []).map((s) => ({ n: s.n, url: signed[s.image_path ?? ""] ?? null, w: s.width, h: s.height })),
     spots: (spots ?? []).filter((s) => s.kind === "link" ? !!s.url : s.status === "ready" && s.video_path)
-      .map((s) => ({ n: s.n, kind: s.kind, url: s.kind === "video" ? signed[s.video_path!] ?? null : s.url, label: s.label, x: +s.x, y: +s.y, w: +s.w, h: +s.h })),
+      .map((s) => ({ n: s.n, kind: s.kind, url: s.kind === "video" ? signed[s.video_path!] ?? null : s.url, label: s.label, x: +s.x, y: +s.y, w: +s.w, h: +s.h, clip: s.clip ?? null })),
   };
 }
 
