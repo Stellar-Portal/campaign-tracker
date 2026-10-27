@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Stellar</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#0626c7">
+  <link rel="icon" type="image/png" href="assets/favicon.png?v=4">
+  <!-- No outside fonts or scripts on this page: nothing about the viewer is sent anywhere but Stellar's own backend. -->
+  <style>
+    :root { --blue: #0626c7; --ink: #1d1d1f; --stage-bg: #0d0d10; color-scheme: light; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, "Segoe UI", Roboto, sans-serif; background: var(--blue); color: #fff; -webkit-font-smoothing: antialiased; overflow: hidden; }
+    body.viewing { background: var(--stage-bg); }
+    [hidden] { display: none !important; }
+
+    /* Gate */
+    .gate { min-height: 100%; height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 24px calc(32px + env(safe-area-inset-bottom)); text-align: center; }
+    .gate .wm { width: 150px; height: auto; margin-bottom: 56px; }
+    .gate h1 { font-size: clamp(28px, 5vw, 44px); font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; margin: 0 0 12px; max-width: 18ch; }
+    .gate p.sub { margin: 0 0 40px; opacity: .78; font-size: 16px; line-height: 1.45; max-width: 36ch; }
+    .gate form { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 22px; }
+    .gate input { width: 100%; background: transparent; border: 0; border-bottom: 1.5px solid rgba(255,255,255,.55); color: #fff; font: inherit; font-size: 18px; padding: 10px 2px; outline: none; border-radius: 0; text-align: center; }
+    .gate input::placeholder { color: rgba(255,255,255,.6); }
+    .gate input:focus { border-bottom-color: #fff; }
+    .gate button { appearance: none; border: 0; border-radius: 999px; background: #fff; color: var(--blue); font: inherit; font-size: 16px; font-weight: 600; padding: 14px 24px; cursor: pointer; }
+    .gate button:disabled { opacity: .6; cursor: default; }
+    .gate button:focus-visible, .gate a:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+    .gate .err { min-height: 1.3em; margin: 0; font-size: 14px; color: #ffd9d9; }
+    .gate .legal { margin-top: 36px; font-size: 12.5px; line-height: 1.5; opacity: .7; max-width: 42ch; }
+    .gate .legal a { color: #fff; }
+
+    /* Viewer */
+    .viewer { position: fixed; inset: 0; display: flex; flex-direction: column; }
+    .stage-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 20px 76px; position: relative; touch-action: pan-y; }
+    .stage { position: relative; aspect-ratio: 16 / 9; width: min(100%, calc((100dvh - 96px) * 16 / 9)); background: #000; border-radius: 10px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.45); user-select: none; -webkit-user-select: none; }
+    .stage img.slide { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; -webkit-user-drag: none; }
+    .stage .spot { position: absolute; display: block; }
+    .stage a.spot { cursor: pointer; border-radius: 4px; }
+    .stage a.spot:hover { background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.35); }
+    .stage a.spot:focus-visible { outline: 2px solid #8aa0ff; outline-offset: 2px; }
+    .stage video.spot { object-fit: cover; background: #000; }
+    .nav { position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 48px; border-radius: 50%; border: 0; background: rgba(255,255,255,.1); color: #fff; display: grid; place-items: center; cursor: pointer; transition: background .15s, opacity .15s; }
+    .nav:hover { background: rgba(255,255,255,.2); }
+    .nav:disabled { opacity: .25; cursor: default; }
+    .nav:focus-visible { outline: 2px solid #8aa0ff; outline-offset: 2px; }
+    .nav.prev { left: 16px; } .nav.next { right: 16px; }
+    .bar { height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px calc(env(safe-area-inset-bottom)); gap: 16px; font-size: 13px; color: rgba(255,255,255,.7); }
+    .bar img { height: 18px; width: auto; opacity: .9; }
+    .bar .count { font-variant-numeric: tabular-nums; }
+    .progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(255,255,255,.08); }
+    .progress i { display: block; height: 100%; background: var(--blue); transition: width .25s; }
+    .turn { display: none; position: absolute; left: 0; right: 0; bottom: 18px; text-align: center; font-size: 13px; color: rgba(255,255,255,.5); }
+    @media (max-width: 700px) and (orientation: portrait) { .turn { display: block; } }
+    .loading { position: fixed; inset: 0; display: grid; place-items: center; font-size: 15px; opacity: .8; }
+
+    @media (max-width: 700px) {
+      .stage-wrap { padding: 12px; }
+      .stage { width: 100%; border-radius: 6px; }
+      .nav { display: none; }
+      .bar { padding: 0 16px env(safe-area-inset-bottom); }
+    }
+    @media (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+      .stage-wrap { padding: 6px 56px; }
+      .stage { width: min(100%, calc((100dvh - 50px) * 16 / 9)); }
+      .bar { height: 38px; }
+      .nav { width: 40px; height: 40px; } .nav.prev { left: 8px; } .nav.next { right: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <main id="app"><div class="loading">Loading…</div></main>
+  <script type="module" src="deck.js?v=20261027h"></script>
+</body>
+</html>

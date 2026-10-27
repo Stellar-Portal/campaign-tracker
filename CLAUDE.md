@@ -40,6 +40,7 @@ Sam asked: keep these until he asks to solve them, and **list them every time he
 ## On-demand functions
 - `process-links`: pasted TikTok/YouTube links → posts (ScrapeCreators).
 - `share`: token-checked client report data.
+- `deck-view`: public side of tracked deck links (`deck.html#t=<token>`): `status`, `open` (email gate, signed 180-day viewer pass, slide/video links signed for 2h from the private `deck-media` bucket, signed-in team not tracked), `track` (signed session id → `deck_merge`, running totals so resends never double-count). Rate-limited via `deck_rate_ok` on a hashed IP; the IP is never stored. `deck.html` loads no outside fonts or scripts. `privacy.html` is the public privacy policy (Stellar Marketing ApS).
 - `artist-search`: Chartmetric (1 credit per search), falls back to Deezer.
 - `creator-insights`: creator audience (Chartmetric/ScrapeCreators, cached 30 days).
 - `discover`: Influencers.club. That account currently has no credits.
