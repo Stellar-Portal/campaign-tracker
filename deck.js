@@ -111,7 +111,11 @@ function start(d) {
   const stage = app.querySelector(".stage"), prev = app.querySelector(".prev"), next = app.querySelector(".next");
   const count = app.querySelector(".count"), bar = app.querySelector(".progress i");
   const cache = {};
-  const preload = (i) => { const s = slides[i]; if (s?.url && !cache[i]) { cache[i] = new Image(); cache[i].src = s.url; } };
+  const preload = (i) => {
+    const s = slides[i];
+    if (!s || cache[i]) return;
+    cache[i] = [s.url, ...(spotsBy[s.n] ?? []).flatMap((sp) => (sp.overlays ?? []).map((o) => o.url))].filter(Boolean).map((u) => { const im = new Image(); im.src = u; return im; });
+  };
 
   // ---- Tracking (skipped entirely for signed-in team) ----
   const session = d.session;
@@ -194,12 +198,21 @@ function start(d) {
           stage.append(v);
         }
         // Layers that sit above the video in Figma (a phone's frame, a caption) go back on top of it.
+        const parts = [stage.lastElementChild];
         for (const o of sp.overlays ?? []) {
           const im = document.createElement("img");
           im.className = "over"; im.alt = ""; im.src = o.url; im.draggable = false;
           im.style.cssText = `left:${o.x}%;top:${o.y}%;width:${o.w}%;height:${o.h}%`;
           stage.append(im);
+          parts.push(im);
         }
+        // Until the video is playing and the layers above it have loaded, the slide image (which already shows
+        // the phone and the video's first frame) stays visible on its own, so nothing jumps.
+        parts.forEach((el) => el.classList.add("wait"));
+        const imgs = parts.filter((el) => el.tagName === "IMG");
+        const reveal = () => { if (v.readyState >= 3 && imgs.every((im) => im.complete)) parts.forEach((el) => el.classList.remove("wait")); };
+        v.addEventListener("playing", reveal);
+        imgs.forEach((im) => { im.addEventListener("load", reveal, { once: true }); im.addEventListener("error", () => { im.remove(); imgs.splice(imgs.indexOf(im), 1); reveal(); }, { once: true }); });
         // Browsers start videos muted; this button turns sound on (and keeps it on for the next videos).
         const a = c ?? sp, btn = document.createElement("button");
         btn.type = "button"; btn.className = "snd";

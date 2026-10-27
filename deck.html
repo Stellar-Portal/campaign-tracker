@@ -54,6 +54,8 @@
     .stage .vclip { overflow: hidden; }
     .stage .vclip video { position: absolute; display: block; cursor: pointer; }
     .stage img.over { position: absolute; pointer-events: none; user-select: none; }
+    .stage .vclip, .stage video.spot, .stage img.over { transition: opacity .2s; }
+    .stage .wait { opacity: 0; }
     .stage .snd { position: absolute; transform: translate(-100%, -100%); display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; padding: 7px 12px 7px 10px; background: rgba(0,0,0,.62); color: #fff; font: 600 12px/1 inherit; font-family: inherit; cursor: pointer; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); white-space: nowrap; z-index: 2; }
     .stage .snd:hover { background: rgba(0,0,0,.8); }
     .stage .snd.on span { display: none; }
@@ -90,6 +92,6 @@
 </head>
 <body>
   <main id="app"><div class="loading">Loading…</div></main>
-  <script type="module" src="deck.js?v=20261027n"></script>
+  <script type="module" src="deck.js?v=20261027o"></script>
 </body>
 </html>
