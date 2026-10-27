@@ -138,7 +138,6 @@ function start(d) {
     try { if (!navigator.sendBeacon(FN, new Blob([payload()], { type: "text/plain" }))) send(); } catch { send(); }
   }
   if (session) {
-    segStart = Date.now();
     setInterval(() => { if (document.visibilityState === "visible") send(); }, HEARTBEAT);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") beacon(); else { lastInput = Date.now(); flushSegment(); } });
     window.addEventListener("pagehide", beacon);
