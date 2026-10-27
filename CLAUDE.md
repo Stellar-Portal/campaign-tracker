@@ -20,7 +20,7 @@ Sam asked: keep these until he asks to solve them, and **list them every time he
 - Front end: static ES modules on GitHub Pages (https://stellar-portal.github.io/campaign-tracker/), no build step.
   - Cache-busting `?v=YYYYMMDDx` on every import. Bump it everywhere with `grep -rl OLD --include=*.js --include=*.html . | xargs sed -i 's/OLD/NEW/g'`.
 - Back end: Supabase project `vmzbpuootzchpdnvtfhb` (StellarCRM, eu-west-1).
-- Brand colour is cobalt `#0f25bf` (`--accent`). Design rules are in DESIGN.md.
+- Brand colour is cobalt `#0626c7` (`--accent`). Design rules are in DESIGN.md.
 - Git: `git pull --rebase` before every push.
 
 ## Scheduled jobs (pg_cron → Edge Functions, times in UTC)

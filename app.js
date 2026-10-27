@@ -1,14 +1,14 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261027g";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261027g";
-import { renderRoster } from "./roster.js?v=20261027g";
-import { renderDiscover } from "./discover.js?v=20261027g";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261027g";
-import { renderTrending } from "./trending.js?v=20261027g";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261027g";
-import { confirmDialog } from "./dialog.js?v=20261027g";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261027g";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261027g";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261027h";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261027h";
+import { renderRoster } from "./roster.js?v=20261027h";
+import { renderDiscover } from "./discover.js?v=20261027h";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261027h";
+import { renderTrending } from "./trending.js?v=20261027h";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261027h";
+import { confirmDialog } from "./dialog.js?v=20261027h";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261027h";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261027h";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -660,7 +660,7 @@ async function renderOverview(token) {
     const amt = (x) => (x == null ? "" : `${Math.round(x).toLocaleString("en-GB")} <span class="muted">${esc(cur)}</span>`);
     const allocs = ALLOC_COLUMNS.map((m, i) => ({ m, x: sheetNumber(v(r, m)) })).filter((a) => a.x);
     const allocTotal = allocs.reduce((t, a) => t + a.x, 0);
-    const COL = ["#0f25bf", "#3a4fd0", "#6577dd", "#8b9cec", "#b4c0f4", "#4a9d6e"];
+    const COL = ["#0626c7", "#3a4fd0", "#6577dd", "#8b9cec", "#b4c0f4", "#4a9d6e"];
     return `<div class="ov2-all">
       <section><h4>Campaign</h4>
         ${line("Starts", v(r, "Start Date") ? `${longDate(v(r, "Start Date"))}${v(r, "Duration") ? ` <span class="muted">· ${esc(v(r, "Duration"))}</span>` : ""}` : "")}
@@ -1676,9 +1676,9 @@ function drawChart(el, rows) {
   const last = rows.at(-1);
   el.innerHTML = `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Total plays per day, from ${esc(date(rows[0].stat_date))} to ${esc(date(last.stat_date))}">
     <line x1="${P}" x2="${W - P}" y1="${H - P}" y2="${H - P}" stroke="#e3e5eb"/>
-    <polygon points="${x(0).toFixed(1)},${H - P} ${pts} ${x(rows.length - 1).toFixed(1)},${H - P}" fill="#0f25bf" fill-opacity="0.08"/>
-    <polyline points="${pts}" fill="none" stroke="#0f25bf" stroke-width="2.5" stroke-linejoin="round"/>
-    ${rows.map((r, i) => `<circle cx="${x(i)}" cy="${y(r.plays)}" r="3.5" fill="#0f25bf"><title>${esc(date(r.stat_date))}: ${n(r.plays)} plays</title></circle>`).join("")}
+    <polygon points="${x(0).toFixed(1)},${H - P} ${pts} ${x(rows.length - 1).toFixed(1)},${H - P}" fill="#0626c7" fill-opacity="0.08"/>
+    <polyline points="${pts}" fill="none" stroke="#0626c7" stroke-width="2.5" stroke-linejoin="round"/>
+    ${rows.map((r, i) => `<circle cx="${x(i)}" cy="${y(r.plays)}" r="3.5" fill="#0626c7"><title>${esc(date(r.stat_date))}: ${n(r.plays)} plays</title></circle>`).join("")}
     <text x="${P}" y="${H - 8}" font-size="12" fill="#6b6f7a">${esc(date(rows[0].stat_date))}</text>
     <text x="${W - P}" y="${H - 8}" font-size="12" fill="#6b6f7a" text-anchor="end">${esc(date(last.stat_date))}</text>
     <text x="${W - P}" y="${y(last.plays) - 10}" font-size="13" font-weight="700" fill="#282828" text-anchor="end">${compact(last.plays)}</text>

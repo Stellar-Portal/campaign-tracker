@@ -1,13 +1,13 @@
 // Analytics: charts across every campaign in the Campaign Overview sheet, plus tracker performance.
 // Money is shown in USD (ECB rates, refreshed daily in fx_rates). Every chart says how many
 // campaigns it is based on, has a hover read-out and a "Show as table" view.
-import { chart, esc } from "./report.js?v=20261027g";
+import { chart, esc } from "./report.js?v=20261027h";
 
 // Validated categorical slots (dataviz palette); cobalt only for single-series charts.
 const SLOT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
-const ONE = "#0f25bf";
+const ONE = "#0626c7";
 const GREY = "#a1a1a6";
-const BRAND = "#0f25bf", BRAND_LIGHT = "#8b9cec", GREEN = "#4a9d6e", NOTSET = "#c7c7cc";
+const BRAND = "#0626c7", BRAND_LIGHT = "#8b9cec", GREEN = "#4a9d6e", NOTSET = "#c7c7cc";
 const REGIONS = [["Stellar West", "West", BRAND], ["Stellar Central", "Central", BRAND_LIGHT], ["Stellar East", "East", GREEN]];
 const ALLOC = ["US", "Brazil", "Mexico", "All LATAM", "Canada", "UK", "Germany", "France", "Africa", "Other", "Japan", "Korea", "China", "India", "SEA", "Global"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -108,7 +108,7 @@ function hbars(items, { fmt = usd, key = "hb", color = ONE } = {}) {
 
 const clip = (t, n) => (String(t).length > n ? `${String(t).slice(0, Math.max(1, n - 1)).trim()}…` : String(t));
 // Brand ramp for pies: cobalt shades, then greens, then greys.
-const RAMP = ["#0f25bf", "#3a4fd0", "#6577dd", "#8b9cec", "#b4c0f4", "#2f7d52", "#4a9d6e", "#7cbd96", "#a9d5bb", "#c7c7cc", "#dedee3"];
+const RAMP = ["#0626c7", "#3a4fd0", "#6577dd", "#8b9cec", "#b4c0f4", "#2f7d52", "#4a9d6e", "#7cbd96", "#a9d5bb", "#c7c7cc", "#dedee3"];
 
 // Donut with a legend beside it; hovering a slice or its legend row highlights it.
 function donut(items, { key = "pie", fmt = usd, center = "" } = {}) {

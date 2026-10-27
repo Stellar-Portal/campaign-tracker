@@ -1,4 +1,4 @@
-import { confirmDialog } from "./dialog.js?v=20261027g";
+import { confirmDialog } from "./dialog.js?v=20261027h";
 // The report: one module used in two places.
 // - share.html (a client with a link): what the link's settings allow.
 // - the team dashboard (#/report/<artist>): the same view with everything on, plus "remove".
@@ -48,7 +48,7 @@ const engagement = (p) => (p.plays ? ((p.likes ?? 0) + (p.comments ?? 0) + (p.sh
 
 // Validated categorical palette (dataviz reference order). Stellar cobalt stays for single-series charts.
 const SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
-const BRAND = "#0f25bf";
+const BRAND = "#0626c7";
 const METRICS = [
   { key: "plays", label: "Views" },
   { key: "likes", label: "Likes" },

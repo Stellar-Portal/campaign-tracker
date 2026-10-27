@@ -4,12 +4,12 @@
 // Function and scored in the database (trend_compute_scores).
 //
 // Routes: #/trending (tracks) · #/trending/artists · #/trending/artist/<chartmetric artist id>
-import { esc, flag, ago, compact } from "./report.js?v=20261027g";
+import { esc, flag, ago, compact } from "./report.js?v=20261027h";
 
 const REGIONS = ["Asia", "LATAM", "US"];
 const PLATFORM = { spotify: "Spotify", shazam: "Shazam", tiktok: "TikTok", applemusic: "Apple Music", youtube: "YouTube" };
 const SOURCE_PLATFORM = { spotify: "spotify", shazam: "shazam", tiktok_breakout: "tiktok", tiktok_popular: "tiktok", applemusic: "applemusic", youtube: "youtube" };
-const ONE = "#0f25bf";
+const ONE = "#0626c7";
 const st = { region: "", country: "", breakoutOnly: false, q: "" }; // kept while moving between tabs
 
 async function fetchAll(build, pageSize = 1000) {
