@@ -2,7 +2,8 @@
 // Decks come in from Figma Slides through the "Send to Stellar OS" Figma button (figma-plugin/), which
 // calls the deck-import function. Here the team makes links, switches them off, sees who viewed what,
 // adds videos the import couldn't fetch, and keeps an eye on the Figma connection's expiry date.
-import { confirmDialog } from "./dialog.js?v=20261029b";
+import { confirmDialog } from "./dialog.js?v=20261029c";
+import { loadClients } from "./clients.js?v=20261029c";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const day = (d) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "");
@@ -170,13 +171,20 @@ async function renderDeck(app, sb, ctx, id) {
   const { data: deck, error } = await sb.from("decks").select("id,title,figma_url,current_version_id,updated_at").eq("id", id).maybeSingle();
   if (!ctx.isCurrent()) return;
   if (error || !deck) { app.innerHTML = `<div class="panel"><p class="muted" style="margin:0">This deck doesn't exist any more.</p></div>`; return; }
-  const [ver, slides, spots, links, sess] = await Promise.all([
+  const [ver, slides, spots, links, sess, cl] = await Promise.all([
     sb.from("deck_versions").select("id,version,slide_count,note,created_at,created_by").eq("id", deck.current_version_id).maybeSingle(),
     sb.from("deck_slides").select("n,image_path").eq("version_id", deck.current_version_id).order("n"),
     sb.from("deck_spots").select("id,n,kind,label,layer_name,status,note,video_path").eq("version_id", deck.current_version_id).order("n"),
     sb.from("deck_links").select("id,token,label,enabled,expires_at,require_email,verify_email,created_at,created_by").eq("deck_id", id).order("created_at", { ascending: false }),
     sb.from("deck_sessions").select("id,link_id,email,verified,started_at,last_seen_at,total_ms,furthest_slide,slide_count,device,browser,os,country,timezone").eq("deck_id", id).order("started_at", { ascending: false }).limit(1000),
+    loadClients(sb).catch(() => null),
   ]);
+  // Which client company each viewer belongs to (matched by email, see clients.js).
+  const company = (email) => {
+    const m = email ? cl?.matchEmail(email) : null;
+    if (!m) return "";
+    return `<span class="dk-co">${esc(m.client?.name ?? m.group.name)}</span>`;   // plain text: the row is a button
+  };
   const sessIds = (sess.data ?? []).map((s) => s.id);
   const [per, clicks] = sessIds.length ? await Promise.all([
     sb.from("deck_session_slides").select("session_id,n,ms").in("session_id", sessIds.slice(0, 300)),
@@ -242,7 +250,7 @@ async function renderDeck(app, sb, ctx, id) {
         <div class="dk-views">${V.slice(0, 200).map((s) => {
           const c = clicksBy[s.id] ?? [], seen = Object.keys(bySess[s.id] ?? {}).length;
           return `<div class="dk-view${open === s.id ? " on" : ""}"><button type="button" class="dk-vrow" data-view="${s.id}" aria-expanded="${open === s.id}">
-            <span><b>${esc(s.email || "No email")}</b>${s.verified ? ` <span class="dk-ok" title="Email checked with a code">✓ checked</span>` : ""}<br><span class="muted small">${esc(ago(s.started_at))} · ${esc(linkName[s.link_id] ?? "Link")}</span></span>
+            <span><b>${esc(s.email || "No email")}</b>${company(s.email)}${s.verified ? ` <span class="dk-ok" title="Email checked with a code">✓ checked</span>` : ""}<br><span class="muted small">${esc(ago(s.started_at))} · ${esc(linkName[s.link_id] ?? "Link")}</span></span>
             <span class="small">${dur(s.total_ms)}</span><span class="small">${seen}/${s.slide_count || S.length} slides</span>
             <span class="small muted">${[s.device, s.browser, place(s.timezone) || s.country].filter(Boolean).map(esc).join(" · ")}</span>
             <span class="small">${c.length ? `${c.length} click${c.length === 1 ? "" : "s"}` : ""}</span></button>

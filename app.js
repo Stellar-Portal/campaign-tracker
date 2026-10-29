@@ -1,15 +1,16 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261029b";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261029b";
-import { renderRoster } from "./roster.js?v=20261029b";
-import { renderDiscover } from "./discover.js?v=20261029b";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261029b";
-import { renderTrending } from "./trending.js?v=20261029b";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261029b";
-import { renderDecks, figmaReminder } from "./decks.js?v=20261029b";
-import { confirmDialog } from "./dialog.js?v=20261029b";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261029b";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261029b";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261029c";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261029c";
+import { renderRoster } from "./roster.js?v=20261029c";
+import { renderDiscover } from "./discover.js?v=20261029c";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261029c";
+import { renderTrending } from "./trending.js?v=20261029c";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261029c";
+import { renderDecks, figmaReminder } from "./decks.js?v=20261029c";
+import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261029c";
+import { confirmDialog } from "./dialog.js?v=20261029c";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261029c";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261029c";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -57,8 +58,8 @@ const go = (hash) => { location.hash = hash; };
 // ---------- Back, Home, back to top ----------
 // Each sidebar section keeps its own trail of pages. Back walks up that trail and stops at the section's
 // first page (it never jumps to another section); Home goes straight to the section's first page.
-const SECTION_HOME = { overview: "#/", campaigns: "#/campaigns", roster: "#/roster", discover: "#/discover", analytics: "#/analytics", trending: "#/trending", payouts: "#/payouts", payments: "#/payments", invoices: "#/invoices", decks: "#/decks" };
-const SECTION_NAME = { overview: "Campaign overview", campaigns: "Tracker", roster: "Roster", discover: "Discover", analytics: "Analytics", trending: "Trending", payouts: "Payouts", payments: "Creator payments", invoices: "Invoices", decks: "Decks" };
+const SECTION_HOME = { overview: "#/", campaigns: "#/campaigns", roster: "#/roster", discover: "#/discover", analytics: "#/analytics", trending: "#/trending", payouts: "#/payouts", payments: "#/payments", invoices: "#/invoices", decks: "#/decks", clients: "#/clients" };
+const SECTION_NAME = { overview: "Campaign overview", campaigns: "Tracker", roster: "Roster", discover: "Discover", analytics: "Analytics", trending: "Trending", payouts: "Payouts", payments: "Creator payments", invoices: "Invoices", decks: "Decks", clients: "Clients" };
 const normHash = (h) => (!h || h === "#" || h === "#/overview" ? "#/" : h);
 function sectionOf(hash) {
   const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
@@ -113,6 +114,7 @@ function parentOf(hash) {
   if (p[0] === "trending" && p.length > 1) return p[1] === "artist" ? "#/trending/artists" : "#/trending";
   if (p[0] === "analytics" && p.length > 2) return `#/${p.slice(0, -2).join("/")}`;
   if (p[0] === "decks" && p[1]) return "#/decks";
+  if (p[0] === "clients" && p[1]) return "#/clients";
   return null;
 }
 function pageName(hash) {
@@ -127,6 +129,7 @@ function pageName(hash) {
   if (p[0] === "analytics" && p.length > 2) return drillTitle(p[p.length - 2], decodeURIComponent(p[p.length - 1]));
   if (p[0] === "trending") return p[1] === "artist" ? "Artist" : p[1] === "artists" ? "Trending artists" : "Trending";
   if (p[0] === "decks") return p[1] ? "Deck" : "Decks";
+  if (p[0] === "clients") return p[1] ? "Client" : "Clients";
   return { analytics: "Analytics", discover: "Discover", payouts: "Payouts", payments: "Creator payments", invoices: "Invoices" }[p[0]] ?? "Previous page";
 }
 // Page titles as they were shown ("Football clubs", a campaign's song), so Back can name the page it returns to.
@@ -162,7 +165,7 @@ function updateBack() {
   if (!show) return;
   const generic = pageName(target);
   const named = pageTitles[target];
-  document.getElementById("back-label").textContent = target === home ? `Back to ${SECTION_NAME[sec]}` : `Back to ${named && ["List", "Campaign", "Artist", "Comparison", "Creator"].includes(generic) ? named : generic}`;
+  document.getElementById("back-label").textContent = target === home ? `Back to ${SECTION_NAME[sec]}` : `Back to ${named && ["List", "Campaign", "Artist", "Comparison", "Creator", "Client"].includes(generic) ? named : generic}`;
   document.getElementById("back-btn").onclick = () => { if (prevHash === target) history.back(); else go(target); };
   const homeBtn = document.getElementById("home-btn");
   homeBtn.hidden = target === home;   // Back already goes there
@@ -259,6 +262,7 @@ const NAV_ICON = {
   roster: '<path d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.8l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>',
   discover: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5M10.5 7.5v6M7.5 10.5h6"/>',
   trending: '<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+  clients: '<path d="M3 21V7l7-3v17M10 21V10l11 3v8M1.5 21h21M6 9h1.5M6 13h1.5M6 17h1.5M14 15h1.5M17.5 15H19M14 18.5h1.5M17.5 18.5H19"/>',
   decks: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M12 16v4M8 20h8M7 8h6M7 11h4"/>',
 };
 const NAV = [
@@ -276,7 +280,8 @@ const NAV = [
     { key: "analytics", href: "#/analytics", label: "Analytics", icon: "analytics" },
     { key: "trending", href: "#/trending", label: "Trending", icon: "trending" },
   ]],
-  ["Pitching", [
+  ["Clients", [
+    { key: "clients", href: "#/clients", label: "Clients", icon: "clients" },
     { key: "decks", href: "#/decks", label: "Decks", icon: "decks" },
   ]],
 ];
@@ -991,6 +996,7 @@ async function renderForm(token, id) {
   }
   const allMarkets = await marketList();
   const teamNames = ((await sb.from("team_members").select("name")).data ?? []).map((t) => t.name).filter((x) => x && x !== "Admin").sort();
+  const cdata = await loadClients(sb).catch(() => null);   // the Clients list, to pick from
   if (id) {
     const [{ data, error }, m, s] = await Promise.all([
       sb.from("campaigns").select("*").eq("id", id).single(),
@@ -1043,11 +1049,12 @@ async function renderForm(token, id) {
 
       <h2>Client</h2>
       <div class="form-grid">
-        <div><label for="client">Client</label><input id="client" placeholder="Label or brand" value="${v("client")}"></div>
+        <div><label for="client">Client</label><input id="client" list="client-names" placeholder="Start typing a client" autocomplete="off" value="${v("client")}">${list("client-names", cdata?.clients.map((x) => x.name) ?? [])}
+          <div class="hint" id="client-hint"></div></div>
         <div><label for="invoicing_entity">Invoicing entity</label><input id="invoicing_entity" list="entities" value="${v("invoicing_entity")}">${list("entities", INVOICING_ENTITIES)}</div>
         <div><label for="client_country">Client location</label><input id="client_country" list="ccountries" value="${v("client_country")}" placeholder="US">${list("ccountries", CLIENT_COUNTRIES)}</div>
         <div><label for="client_market">Client market</label><select id="client_market">${opt(CLIENT_MARKETS, c.client_market)}</select></div>
-        <div><label for="client_contact_name">Contact name</label><input id="client_contact_name" value="${v("client_contact_name")}"></div>
+        <div><label for="client_contact_name">Contact name</label><input id="client_contact_name" list="client-people" autocomplete="off" value="${v("client_contact_name")}"><datalist id="client-people"></datalist></div>
         <div><label for="client_contact_email">Contact email</label><input id="client_contact_email" type="email" value="${v("client_contact_email")}"></div>
         <div><label for="label_type">Major, indie or other</label><select id="label_type">${opt(LABEL_TYPES, c.label_type)}</select></div>
         <div><label for="under_nda">Under NDA</label><select id="under_nda">${opt([["yes", "Yes"], ["no", "No"]], c.under_nda === true ? "yes" : c.under_nda === false ? "no" : "")}</select></div>
@@ -1169,6 +1176,41 @@ async function renderForm(token, id) {
     $("campaign_runner").value = [...document.querySelectorAll('#runner-pick [aria-pressed="true"]')].map((x) => x.dataset.pp).join(", ");
   }));
 
+  // Client: picking one from the Clients list fills in its invoicing company, location, market, type and contact.
+  let clientId = c.client_id ?? null;
+  const toISO = (x) => { const k = String(x ?? "").trim().toUpperCase(); const back = Object.entries(SHEET_COUNTRY).find(([, sv]) => sv.toUpperCase() === k); return back ? back[0] : /^[A-Z]{2}$/.test(k) ? k : null; };
+  const showClient = () => {
+    const k = clientId && cdata ? cdata.byId.get(clientId) : null, typed = $("client").value.trim();
+    $("client-people").innerHTML = (k?.people ?? []).filter((p) => p.name).map((p) => `<option value="${esc(p.name)}">${esc(p.email ?? "")}</option>`).join("");
+    $("entities").innerHTML = [...new Set([...(k?.entities ?? []).map((e) => e.legal_name), ...INVOICING_ENTITIES])].map((x) => `<option value="${esc(x)}">`).join("");
+    $("client-hint").innerHTML = k ? `From <a href="#/clients/${esc(k.id)}">Clients</a>${k.group ? ` · ${esc(k.group.name)}` : ""}`
+      : typed && cdata ? `<label class="check client-add"><input type="checkbox" id="client-add" checked> <span>Add “${esc(typed)}” to Clients when saving</span></label>`
+      : "Pick from the Clients list, or type a new name.";
+  };
+  const fillFromClient = (k) => {
+    const e = k.entities.length === 1 || !k.entities.some((x) => x.legal_name === $("invoicing_entity").value) ? k.entities[0] : null;
+    if (e) $("invoicing_entity").value = e.legal_name;
+    if (k.country) $("client_country").value = SHEET_COUNTRY[k.country] ?? k.country;
+    if (k.market && CLIENT_MARKETS.includes(sheetMarket(k.market))) $("client_market").value = sheetMarket(k.market);
+    if (k.label_type) $("label_type").value = k.label_type;
+    const p = k.people.find((x) => x.name === $("client_contact_name").value) ?? k.people.find((x) => x.email) ?? k.people[0];
+    if (p) { $("client_contact_name").value = p.name ?? ""; $("client_contact_email").value = p.email ?? ""; }
+  };
+  $("client").addEventListener("change", () => {
+    const k = cdata?.findByName($("client").value);
+    const changed = (k?.id ?? null) !== clientId;
+    clientId = k?.id ?? null;
+    if (k) { $("client").value = k.name; if (changed) fillFromClient(k); }
+    showClient();
+  });
+  $("client").addEventListener("input", () => { if (!cdata?.findByName($("client").value)) { clientId = null; showClient(); } });
+  $("client_contact_name").addEventListener("change", () => {
+    const p = (clientId ? cdata.byId.get(clientId)?.people : [])?.find((x) => x.name === $("client_contact_name").value);
+    if (p?.email) $("client_contact_email").value = p.email;
+  });
+  if (!clientId && c.client && cdata?.findByName(c.client)) clientId = cdata.findByName(c.client).id;
+  showClient();
+
   $("cf").addEventListener("submit", async (e) => {
     e.preventDefault();
     const msg = $("form-msg");
@@ -1199,6 +1241,18 @@ async function renderForm(token, id) {
       invoiced: $("invoiced").checked, notes: val("notes") || null,
     };
     const btn = e.submitter ?? document.querySelector("#cf button[type=submit]"); btn.disabled = true;
+    record.client_id = clientId;
+    if (!clientId && record.client && $("client-add")?.checked) {
+      // A new client: add it to Clients with what the form says, so the next campaign can pick it.
+      const mk = (record.client_market ?? "").replace(/^Stellar /, "");
+      const { data: nc, error: ce } = await sb.from("clients").insert({ name: record.client, market: ["West", "Central", "East"].includes(mk) ? mk : null,
+        country: toISO(record.client_country), label_type: record.label_type, created_by: (await sb.auth.getUser()).data.user?.email ?? null }).select("id").single();
+      if (!ce) {
+        record.client_id = nc.id;
+        if (record.invoicing_entity) await sb.from("client_entities").insert({ client_id: nc.id, legal_name: record.invoicing_entity, country: toISO(record.client_country) });
+        if (record.client_contact_name || record.client_contact_email) await sb.from("client_contacts").insert({ client_id: nc.id, name: record.client_contact_name, email: record.client_contact_email?.toLowerCase() ?? null, market: ["West", "Central", "East"].includes(mk) ? mk : null });
+      }
+    }
     const failWith = (err) => {
       btn.disabled = false;
       msg.innerHTML = fail(err?.code === "23505" ? "Another campaign already has this artist, song and PO number." : err);
@@ -2291,7 +2345,7 @@ async function renderJob(token, c, jobId, title) {
 // The main pages are kept for a few minutes after you leave them (their live DOM, scroll position and token),
 // so going back to one shows it instantly. Any write anywhere drops them, so nothing shown is out of date.
 const KEEP_MS = 3 * 60 * 1000;
-const KEEPABLE = new Set(["#/", "#/campaigns", "#/roster", "#/discover", "#/analytics", "#/trending", "#/trending/artists", "#/payouts", "#/invoices", "#/decks"]);
+const KEEPABLE = new Set(["#/", "#/campaigns", "#/roster", "#/discover", "#/analytics", "#/trending", "#/trending/artists", "#/payouts", "#/invoices", "#/decks", "#/clients"]);
 const pageCache = new Map();   // hash → { frag, token, at, scroll, cls }
 let shown = { hash: null, token: 0 };
 function keepShownPage(nextHash) {
@@ -2353,7 +2407,7 @@ async function route() {
   const restoring = KEEPABLE.has(target) && pageCache.has(target);
   if (pageKey !== lastPageKey && !restoring) window.scrollTo(0, 0);
   lastPageKey = pageKey;
-  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover", "payouts", "invoices", "decks"].includes(parts[0]) ? parts[0] : "campaigns";
+  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover", "payouts", "invoices", "decks", "clients"].includes(parts[0]) ? parts[0] : "campaigns";
   renderNav(section);
   if (KEEPABLE.has(target) && restorePage(target, prevShown)) { lastPageKey = pageKey; return; }
   shown = { hash: target, token };
@@ -2363,6 +2417,7 @@ async function route() {
   if (section === "roster") return renderRoster(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (section === "invoices") return renderInvoices(app, sb, { isCurrent: () => token === routeToken, go, toast });
   if (section === "payouts") return renderPayoutsHome(app, sb, { isCurrent: () => token === routeToken, go });
+  if (section === "clients") return renderClients(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (section === "decks") return renderDecks(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (section === "discover") return renderDiscover(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (SOON[parts[0]]) return renderSoon(parts[0]);

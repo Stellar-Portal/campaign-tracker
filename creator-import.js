@@ -2,7 +2,7 @@
 // Each row needs a handle or a profile link; platform, name, country, email, notes and followers are optional.
 // Rows are added through the import_creators database function: no credits are used. Their numbers are
 // fetched by the nightly roster refresh, or straight away if the person ticks "Fetch their numbers now".
-import { PLATFORMS, PLATFORM_ORDER } from "./platforms.js?v=20261029b";
+import { PLATFORMS, PLATFORM_ORDER } from "./platforms.js?v=20261029c";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const CREDITS = { tiktok: 3, instagram: 1, twitter: 1, twitch: 1, youtube: 0 };   // per creator, when fetched now
