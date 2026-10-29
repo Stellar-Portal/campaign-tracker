@@ -24,6 +24,7 @@ Sam asked: keep these until he asks to solve them, and **list them every time he
 10. **Gmail and Google Calendar per team member:** an optional personal connector each team member can switch on in Stellar OS.
 11. **Personal to-do list (opt-in, per team member):** built from the campaigns they're DRI on or running, and from the payout sheets they're assigned to (creators they're reaching out to / collecting content from). Weekly recap every Friday 17:00 Copenhagen time: what was completed (crossed off) and double-checks on things that should be done. AI reads emails and turns them into actions (e.g. "proposal for campaign X with 3 options by EOW / EOD / a set day", "start campaign X", "set up a call for this thread on day X"). Helpful, not overly specific.
 12. **Proposals and pitched campaigns:** a proposal builder with a database, tied to each campaign Stellar pitches and sells; plus a "Pitched" section for campaigns that aren't in the Campaign Overview yet.
+13. **Refine the Clients section (major):** the first version (2026-10-29, filled from the sheet) works but needs a big pass: Sam to say what's missing or wrong.
 
 ## Stack
 - Front end: static ES modules on GitHub Pages (https://stellar-portal.github.io/campaign-tracker/), no build step.
