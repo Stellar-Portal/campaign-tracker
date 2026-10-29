@@ -1,15 +1,15 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261027p";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261027p";
-import { renderRoster } from "./roster.js?v=20261027p";
-import { renderDiscover } from "./discover.js?v=20261027p";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261027p";
-import { renderTrending } from "./trending.js?v=20261027p";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261027p";
-import { renderDecks, figmaReminder } from "./decks.js?v=20261027p";
-import { confirmDialog } from "./dialog.js?v=20261027p";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261027p";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261027p";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261029a";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261029a";
+import { renderRoster } from "./roster.js?v=20261029a";
+import { renderDiscover } from "./discover.js?v=20261029a";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261029a";
+import { renderTrending } from "./trending.js?v=20261029a";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261029a";
+import { renderDecks, figmaReminder } from "./decks.js?v=20261029a";
+import { confirmDialog } from "./dialog.js?v=20261029a";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261029a";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261029a";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -1414,7 +1414,7 @@ async function renderCampaign(token, id, tab = "report") {
       toast(code ? "Boost code saved" : "Boost code removed");
       return true;
     },
-    header: "",
+    header: `<a class="camp-crumb" href="#/campaigns"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5"/></svg>All campaigns</a>`,
     heroMeta: `<span class="key-chip status-chip s-${esc(c.status)}">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span class="key-chip po"><span class="key-sub">PO</span><span class="key-text">${esc(c.po_number)}</span>${copyBtn(c.po_number)}</span>` : ""}`,
     heroActions: `
       <button type="button" id="share-btn">Share with client</button>

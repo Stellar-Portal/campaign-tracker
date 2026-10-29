@@ -2176,3 +2176,9 @@ tr:hover .po-manual, .po-manual:focus { opacity: 1; }
   .dk-hero .an-hero-card .n { font-size: 26px; }
   .dk-hero .an-hero-card .d { display: none; }
 }
+
+/* Campaign page: a clear way back to the list of campaigns, on the banner itself. */
+.art-band a.camp-crumb { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 14px; padding: 6px 12px 6px 8px; border-radius: var(--pill); background: rgba(255,255,255,0.16); color: #fff; font-size: 13px; font-weight: 600; text-decoration: none; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.art-band a.camp-crumb:hover { background: rgba(255,255,255,0.28); }
+.art-band a.camp-crumb:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.camp-crumb svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }

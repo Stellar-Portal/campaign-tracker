@@ -2,7 +2,7 @@
 // Decks come in from Figma Slides through the "Send to Stellar OS" Figma button (figma-plugin/), which
 // calls the deck-import function. Here the team makes links, switches them off, sees who viewed what,
 // adds videos the import couldn't fetch, and keeps an eye on the Figma connection's expiry date.
-import { confirmDialog } from "./dialog.js?v=20261027p";
+import { confirmDialog } from "./dialog.js?v=20261029a";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const day = (d) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "");
@@ -14,7 +14,7 @@ const ago = (iso) => {
 const dur = (ms) => { const s = Math.round((ms || 0) / 1000); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`; };
 const place = (tz) => (tz ? tz.split("/").pop().replace(/_/g, " ") : "");
 const deckUrl = (token) => `${new URL("deck.html", location.href.split("#")[0]).href}#t=${token}`;
-const daysLeft = (d) => (d ? Math.ceil((Date.parse(`${d}T00:00:00`) - Date.now()) / 86400000) : null);
+const daysLeft = (d) => (d && !isNaN(Date.parse(`${d}T00:00:00`)) ? Math.ceil((Date.parse(`${d}T00:00:00`) - Date.now()) / 86400000) : null);
 const PLUGIN_ZIP = "figma-plugin/send-to-stellar-os.zip";
 
 async function signed(sb, paths) {
