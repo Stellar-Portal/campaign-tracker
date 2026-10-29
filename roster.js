@@ -1,11 +1,12 @@
-import { confirmDialog } from "./dialog.js?v=20261029a";
+import { confirmDialog } from "./dialog.js?v=20261029b";
 // Creator roster: the creators Stellar works with, each with topline numbers from their recent
 // TikTok videos (ScrapeCreators, refreshed weekly by the roster Edge Function) and, on request,
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261029a";
-import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261029a";
+import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261029b";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261029b";
+import { openCreatorImport } from "./creator-import.js?v=20261029b";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
@@ -119,6 +120,7 @@ async function renderList(app, sb, ctx, { listId, mode, base }) {
       <label class="ov-pill ro-pf"><span class="ro-pf-ico" id="ro-pf-ico">${PLATFORMS[st.addPlatform].icon}</span><select id="ro-platform" aria-label="Platform">${PLATFORM_ORDER.map((p) => `<option value="${p}"${p === st.addPlatform ? " selected" : ""}>${PLATFORMS[p].name}</option>`).join("")}</select></label>
       <input id="ro-input" type="text" autocomplete="off" placeholder="Paste a profile link, a video link or @handle" aria-label="Profile link, video link or handle">
       <button type="submit" class="primary">Add to roster</button>
+      <button type="button" id="ro-import" title="Add many creators at once from a CSV file">Import CSV</button>
       <span class="small muted ro-add-msg" id="ro-msg" role="status"></span>
     </form>`}
     ${mode === "compare" ? `<div id="ro-compare"></div>` : creators.length ? `
@@ -166,6 +168,8 @@ async function renderList(app, sb, ctx, { listId, mode, base }) {
     const pfSel = document.getElementById("ro-platform"), pfIco = document.getElementById("ro-pf-ico"), inputEl = document.getElementById("ro-input");
     const setPf = (p) => { st.addPlatform = p; pfSel.value = p; pfIco.innerHTML = PLATFORMS[p].icon; };
     pfSel.onchange = () => setPf(pfSel.value);
+    document.getElementById("ro-import").onclick = () => openCreatorImport(sb, { lists, existing: all, toast, invoke,
+      onDone: (listId) => { view.base = null; if (listId) go(`#/roster/list/${listId}`); else renderRoster(app, sb, cur()); } });
     inputEl.oninput = () => { const p = detectPlatform(inputEl.value); if (p && p !== st.addPlatform) setPf(p); };
     form.onsubmit = async (e) => {
       e.preventDefault();

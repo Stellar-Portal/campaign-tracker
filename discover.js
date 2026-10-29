@@ -4,8 +4,8 @@
 // and the same search again within 24 hours is free.
 //
 // Route: #/discover
-import { esc, big } from "./report.js?v=20261029a";
-import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261029a";
+import { esc, big } from "./report.js?v=20261029b";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261029b";
 
 const PAGE = 25;
 const STORE = "discover:v1";

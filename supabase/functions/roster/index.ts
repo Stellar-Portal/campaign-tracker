@@ -368,8 +368,9 @@ async function refreshCreator(platform: Platform, handle: string, opts: { addedB
 }
 
 // The handle to refresh an existing row with: YouTube rows use their channel id (handles can change).
-const refreshHandle = (c: { platform: string; username: string; tiktok_user_id: string }) =>
-  c.platform === "youtube" ? c.tiktok_user_id.replace(/^yt:/, "") : c.username;
+// Creators imported from a CSV have no platform id yet: their handle is used until the first refresh fills it in.
+const refreshHandle = (c: { platform: string; username: string; tiktok_user_id: string | null }) =>
+  c.platform === "youtube" && c.tiktok_user_id ? c.tiktok_user_id.replace(/^yt:/, "") : c.username;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });

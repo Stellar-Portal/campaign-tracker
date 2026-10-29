@@ -2,7 +2,7 @@
 // Decks come in from Figma Slides through the "Send to Stellar OS" Figma button (figma-plugin/), which
 // calls the deck-import function. Here the team makes links, switches them off, sees who viewed what,
 // adds videos the import couldn't fetch, and keeps an eye on the Figma connection's expiry date.
-import { confirmDialog } from "./dialog.js?v=20261029a";
+import { confirmDialog } from "./dialog.js?v=20261029b";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const day = (d) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "");

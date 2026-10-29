@@ -24,6 +24,7 @@ Sam asked: keep these until he asks to solve them, and **list them every time he
 10. **Campaign chat rooms via Slack:** one chat room per campaign between the people on it (runners + DRI), connected to Slack and shown in the campaign dashboard.
 11. **Gmail and Google Calendar per team member:** an optional personal connector each team member can switch on in Stellar OS.
 12. **Personal to-do list (opt-in, per team member):** built from the campaigns they're DRI on or running, and from the payout sheets they're assigned to (creators they're reaching out to / collecting content from). Weekly recap every Friday 17:00 Copenhagen time: what was completed (crossed off) and double-checks on things that should be done. AI reads emails and turns them into actions (e.g. "proposal for campaign X with 3 options by EOW / EOD / a set day", "start campaign X", "set up a call for this thread on day X"). Helpful, not overly specific.
+13. **Proposals and pitched campaigns:** a proposal builder with a database, tied to each campaign Stellar pitches and sells; plus a "Pitched" section for campaigns that aren't in the Campaign Overview yet.
 
 ## Stack
 - Front end: static ES modules on GitHub Pages (https://stellar-portal.github.io/campaign-tracker/), no build step.
@@ -38,7 +39,7 @@ Sam asked: keep these until he asks to solve them, and **list them every time he
 | sheet-sync | every minute | `sheet-sync` | Pushes queued campaign changes (`campaign_sheet_sync`) to the Campaign Overview sheet via the Apps Script web app. |
 | overview-pull | every 5 min | `sheet-sync` `{action:pull_overview}` | Reads the whole sheet tab into `overview_snapshot`, then `pullEdits` copies sheet edits into linked campaigns. |
 | daily-stats-refresh | */5, 02:00–04:55 | `refresh-stats` | ScrapeCreators (TikTok) and the YouTube API, in batches. One fetch per video per day; skips campaigns ended more than 30 days ago. |
-| roster-refresh | 03:40 | `roster` | Refreshes roster creators' stats. |
+| roster-refresh | */10, 01:00–03:50 | `roster` | Refreshes roster creators' stats (25 due creators per run, so CSV imports fill in within a night or two). |
 | trending-charts | */5, 04:00–05:55 | `chartmetric-sync` | Spotify Top 200 and Shazam per `trend_countries` row → `trend_chart_rows` → `trend_scores`, momentum and signals. |
 | deck-notify | every 2 min | `deck-notify` | Slack summary for each finished deck view. |
 | fx-rates | 05:20 | `fx-rates` | ECB rates → `fx_rates`. All totals are converted to USD. |
@@ -81,6 +82,7 @@ Sam asked: keep these until he asks to solve them, and **list them every time he
 - Share links: `share_links`, with settings per category; folders can be hidden.
 - Folders show creators, not uploads: creators with videos in the folder plus `campaign_folder_creators` (added by profile link via the `roster` function's `lookup` action (TikTok: profile only, 1 ScrapeCreators credit; never puts them on the roster)).
 - `posts.boost_code` (+ `_updated_at`, `_by`): TikTok Spark Ads code per video, team only; the `share` function selects explicit columns and never sends it.
+- CSV import (`creator-import.js`, "Import CSV" on the roster): RPC `import_creators(p_rows, p_list)` (team only, max 5,000 rows) adds creators by platform + handle with no credits used; `creators.contact_email` holds the email. Imported rows have no `tiktok_user_id` until their first refresh; the AFTER INSERT trigger `creators_merge_import` folds a placeholder into the real row if `add` inserts it again (lists, folders, payouts, costs, posts move over). "Fetch their numbers now" calls `roster` `add` per new creator.
 - Creator avatars are copied to the `avatars` bucket by both `roster` and `process-links` (TikTok's own links expire).
 
 ## Front-end map
