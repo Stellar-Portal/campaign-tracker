@@ -7,7 +7,8 @@ import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261029c"
 const FN = `${SUPABASE_URL}/functions/v1/deck-view`;
 const app = document.getElementById("app");
 const token = (new URLSearchParams(location.hash.slice(1)).get("t") || new URLSearchParams(location.search).get("t") || "").trim().toLowerCase();
-const PASS_KEY = `stellar-deck-pass:${token}`;
+// One pass per device for every Stellar deck, so a viewer types their email once (older passes were per link).
+const PASS_KEY = "stellar-deck-pass", OLD_PASS_KEY = `stellar-deck-pass:${token}`;
 const HEARTBEAT = 15000, IDLE_LIMIT = 5 * 60 * 1000;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const store = {
@@ -48,6 +49,10 @@ function renderMessage(msg) {
 
 let verify = false;   // this link checks the viewer's email with a one-time code
 
+// The email inside the saved pass (readable, but only the server can make or check one), to fill in the gate.
+function passEmail() {
+  try { const b = (store.get(PASS_KEY) ?? "").split(".")[0].replace(/-/g, "+").replace(/_/g, "/"); return JSON.parse(decodeURIComponent(escape(atob(b)))).e ?? ""; } catch { return ""; }
+}
 function renderGate(errMsg = "") {
   document.body.className = "";
   app.innerHTML = `<section class="gate">
@@ -56,7 +61,7 @@ function renderGate(errMsg = "") {
     <p class="sub">${verify ? "Enter your work email and we'll send you a code to open it." : "Enter your work email to view it."}</p>
     <form novalidate>
       <label for="em" style="position:absolute;left:-9999px">Work email</label>
-      <input id="em" type="email" inputmode="email" autocomplete="email" placeholder="name@company.com" required>
+      <input id="em" type="email" inputmode="email" autocomplete="email" placeholder="name@company.com" value="${esc(passEmail())}" required>
       <p class="err" role="alert">${esc(errMsg)}</p>
       <button type="submit">${verify ? "Send me a code" : "View deck"}</button>
     </form>
@@ -115,18 +120,18 @@ async function boot() {
     const st = await call({ action: "status" });
     if (!st.live) return renderMessage(st.message || "This link isn't active.");
     verify = !!st.verify;
-    const pass = store.get(PASS_KEY);
+    const pass = store.get(PASS_KEY) ?? store.get(OLD_PASS_KEY);
     if (st.require_email && !pass && !auth) return renderGate();
     start(await call({ action: "open", pass, tz: tz() }, auth));
   } catch (e) {
-    if (e.data?.gate) { store.del(PASS_KEY); return renderGate(); }
+    if (e.data?.gate) return renderGate();   // e.g. this link needs a code and the saved email isn't checked yet
     if (e.status === 404) return renderMessage(e.data?.error || "This link isn't active.");
     renderMessage(e.data?.error || "We couldn't load this deck. Check your connection and try again.");
   }
 }
 
 function start(d) {
-  if (d.pass) store.set(PASS_KEY, d.pass);
+  if (d.pass) { store.set(PASS_KEY, d.pass); store.del(OLD_PASS_KEY); }
   if (!d.slides?.length) return renderMessage("This deck isn't ready yet.");
   document.title = d.title ? `${d.title} · Stellar` : "Stellar";
   document.body.className = "viewing";

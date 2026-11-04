@@ -39,16 +39,17 @@ async function sign(text: string) { return b64u(await crypto.subtle.sign("HMAC",
 async function checkSig(text: string, sig: string) { return typeof sig === "string" && sig.length > 20 && (await sign(text)) === sig; }
 async function sha(text: string) { return b64u(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))).slice(0, 22); }
 
-// A pass remembers the email for this deck so a returning viewer skips the gate.
+// A pass remembers the viewer's email on their device so they only type it once: it works for every
+// Stellar deck and link (and a code-checked email stays checked), until it expires or they clear the browser.
 async function makePass(deckId: string, email: string, verified: boolean) {
   const body = b64u(new TextEncoder().encode(JSON.stringify({ d: deckId, e: email, v: verified ? 1 : 0, x: Date.now() + PASS_DAYS * 86400_000 })));
   return `${body}.${await sign("pass:" + body)}`;
 }
-async function readPass(pass: unknown, deckId: string): Promise<{ email: string; verified: boolean } | null> {
+async function readPass(pass: unknown, _deckId: string): Promise<{ email: string; verified: boolean } | null> {
   if (typeof pass !== "string" || !pass.includes(".")) return null;
   const [body, sig] = pass.split(".");
   if (!(await checkSig("pass:" + body, sig))) return null;
-  try { const p = JSON.parse(fromB64u(body)); return p.d === deckId && p.x > Date.now() && EMAIL.test(p.e) ? { email: p.e, verified: p.v === 1 } : null; } catch { return null; }
+  try { const p = JSON.parse(fromB64u(body)); return p.x > Date.now() && EMAIL.test(p.e) ? { email: p.e, verified: p.v === 1 } : null; } catch { return null; }
 }
 
 // One-time email codes (needs the RESEND_API_KEY secret; without it, links fall back to a plain email gate).
