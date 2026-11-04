@@ -39,17 +39,18 @@ async function sign(text: string) { return b64u(await crypto.subtle.sign("HMAC",
 async function checkSig(text: string, sig: string) { return typeof sig === "string" && sig.length > 20 && (await sign(text)) === sig; }
 async function sha(text: string) { return b64u(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))).slice(0, 22); }
 
-// A pass remembers the viewer's email on their device so they only type it once: it works for every
-// Stellar deck and link (and a code-checked email stays checked), until it expires or they clear the browser.
-async function makePass(deckId: string, email: string, verified: boolean) {
-  const body = b64u(new TextEncoder().encode(JSON.stringify({ d: deckId, e: email, v: verified ? 1 : 0, x: Date.now() + PASS_DAYS * 86400_000 })));
+// A pass remembers the viewer's email for one link on their device, so opening the same link again
+// skips the gate. Every other link asks again (Sam's rule: once per link). Passes made before passes
+// carried the link (no "l") are accepted for their deck.
+async function makePass(deckId: string, linkId: string, email: string, verified: boolean) {
+  const body = b64u(new TextEncoder().encode(JSON.stringify({ d: deckId, l: linkId, e: email, v: verified ? 1 : 0, x: Date.now() + PASS_DAYS * 86400_000 })));
   return `${body}.${await sign("pass:" + body)}`;
 }
-async function readPass(pass: unknown, _deckId: string): Promise<{ email: string; verified: boolean } | null> {
+async function readPass(pass: unknown, deckId: string, linkId: string): Promise<{ email: string; verified: boolean } | null> {
   if (typeof pass !== "string" || !pass.includes(".")) return null;
   const [body, sig] = pass.split(".");
   if (!(await checkSig("pass:" + body, sig))) return null;
-  try { const p = JSON.parse(fromB64u(body)); return p.x > Date.now() && EMAIL.test(p.e) ? { email: p.e, verified: p.v === 1 } : null; } catch { return null; }
+  try { const p = JSON.parse(fromB64u(body)); return (p.l ? p.l === linkId : p.d === deckId) && p.x > Date.now() && EMAIL.test(p.e) ? { email: p.e, verified: p.v === 1 } : null; } catch { return null; }
 }
 
 // One-time email codes (needs the RESEND_API_KEY secret; without it, links fall back to a plain email gate).
@@ -172,7 +173,7 @@ Deno.serve(async (req) => {
       const { link, deck } = r;
       const team = await isTeam(req);
       const needCode = link.verify_email && codesOn() && !link.recipient_email && !team;
-      const pass = await readPass(body.pass, deck.id);
+      const pass = await readPass(body.pass, deck.id, link.id);
       let email: string | null = link.recipient_email ?? (pass && (!needCode || pass.verified) ? pass.email : null);
       let verified = !!(pass?.verified && email === pass.email);
       if (!email && typeof body.email === "string" && EMAIL.test(body.email.trim())) {
@@ -185,7 +186,7 @@ Deno.serve(async (req) => {
       }
       if (!email && (link.require_email || needCode) && !team) return json({ error: "Enter a valid email address to view the deck.", gate: true }, 400);
       const c = await content(deck.current_version_id);
-      const base = { title: deck.title, ...c, pass: email && !link.recipient_email ? await makePass(deck.id, email, verified) : null };
+      const base = { title: deck.title, ...c, pass: email && !link.recipient_email ? await makePass(deck.id, link.id, email, verified) : null };
       if (team) return json({ ...base, session: null, team: true });
       const ua = req.headers.get("user-agent") ?? "";
       const { data: s, error } = await db.from("deck_sessions").insert({
