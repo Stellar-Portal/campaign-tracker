@@ -25,6 +25,7 @@ const cors = {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store", "X-Robots-Tag": "noindex" } });
 const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,24}$/;
 const PASS_DAYS = 180;
+const REOPEN_MINUTES = 30;   // reopening the same link within this time continues the same view
 
 let secretCache: CryptoKey | null = null;
 async function key(): Promise<CryptoKey> {
@@ -188,6 +189,18 @@ Deno.serve(async (req) => {
       const c = await content(deck.current_version_id);
       const base = { title: deck.title, ...c, pass: email && !link.recipient_email ? await makePass(deck.id, link.id, email, verified) : null };
       if (team) return json({ ...base, session: null, team: true });
+      // Reopening the same link within 30 minutes of the last activity (a reload, a sleeping tab woken up,
+      // a second click on the link) continues that visit: no new view and no second Slack message. The page
+      // gets the times already recorded so its running totals carry on from there.
+      if (email) {
+        const { data: prev } = await db.from("deck_sessions").select("id").eq("link_id", link.id).eq("email", email)
+          .gte("last_seen_at", new Date(Date.now() - REOPEN_MINUTES * 60_000).toISOString()).order("last_seen_at", { ascending: false }).limit(1).maybeSingle();
+        if (prev) {
+          const { data: rows } = await db.from("deck_session_slides").select("n,ms").eq("session_id", prev.id);
+          await db.from("deck_sessions").update({ last_seen_at: new Date().toISOString(), ...(verified ? { verified: true } : {}) }).eq("id", prev.id);
+          return json({ ...base, session: { id: prev.id, sig: await sign("session:" + prev.id), base: Object.fromEntries((rows ?? []).map((x) => [x.n, Number(x.ms)])) } });
+        }
+      }
       const ua = req.headers.get("user-agent") ?? "";
       const { data: s, error } = await db.from("deck_sessions").insert({
         deck_id: deck.id, link_id: link.id, version_id: deck.current_version_id, email, verified,

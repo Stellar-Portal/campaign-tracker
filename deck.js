@@ -154,7 +154,8 @@ function start(d) {
 
   // ---- Tracking (skipped entirely for signed-in team) ----
   const session = d.session;
-  const times = {}, pendingClicks = new Map();
+  // A reopened visit (same link within 30 minutes) continues from the times already recorded.
+  const times = Object.fromEntries(Object.entries(session?.base ?? {}).map(([k, v]) => [k, Number(v) || 0])), pendingClicks = new Map();
   let cur = 0, segStart = null, lastInput = Date.now();
   const counting = () => document.visibilityState === "visible" && Date.now() - lastInput < IDLE_LIMIT;
   function flushSegment() {
