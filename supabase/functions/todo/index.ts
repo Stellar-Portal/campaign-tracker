@@ -12,7 +12,8 @@
 //   plan_done {week}               the Monday overview was gone through
 //   snap {image, media_type}       read a photo of handwritten notes into tasks (not stored)
 //   ai {prompt, tasks}             turn "task 1 was done, but I still have to do X" into proposed changes
-//   areas_save {areas}             the person's focus areas and their letters (M = Meetings & calls is always there)
+//   areas_save {areas, m_priority} the person's focus areas, their letters and priorities (M = Meetings & calls is always there)
+// Some areas (private.settings.todo_area_access, e.g. Campaign Central, Sports) can only be picked by the people listed there.
 //   link_create / link_list / link_revoke   private links (signed-in session only)
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
@@ -74,10 +75,21 @@ async function who(req: Request): Promise<{ owner: string; via: "session" | "lin
 // ---------- tasks ----------
 const TIME = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 const KINDS = ["eod", "eow", "week", "day"];
-type Area = { id: string; code: string; name: string; builtin: boolean; position: number };
+type Area = { id: string; code: string; name: string; builtin: boolean; position: number; priority: number | null };
+// Highest priority first (same number = side by side), then the areas without one, M last among those.
 async function areasOf(owner: string): Promise<Area[]> {
-  const { data } = await db.from("todo_areas").select("id,code,name,builtin,position").eq("owner", owner).order("position");
+  const { data } = await db.from("todo_areas").select("id,code,name,builtin,position,priority").eq("owner", owner)
+    .order("priority", { ascending: true, nullsFirst: false }).order("builtin").order("position");
   return (data ?? []) as Area[];
+}
+const prio = (v: unknown) => { const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 9 ? n : null; };
+// Areas only some people may pick: { "Campaign Central": [emails], ... }.
+async function areaAccess(owner: string) {
+  const { data } = await db.rpc("todo_area_access");
+  let map: Record<string, string[]> = {};
+  try { map = JSON.parse(String(data ?? "{}")) ?? {}; } catch { /* none */ }
+  const names = Object.keys(map);
+  return { restricted: names, allowed: names.filter((n) => (map[n] ?? []).map((e) => String(e).toLowerCase()).includes(owner)) };
 }
 const legend = (areas: Area[]) => areas.map((a) => `${a.code} = ${a.name}`).join("; ");
 function tidy(item: any, areas: Area[] = []) {
@@ -226,7 +238,7 @@ Deno.serve(async (req) => {
   try {
     switch (body.action) {
       case "config":
-        return json({ owner, via: me.via, ai: !!AI_KEY, week: mondayOf(), now: cph() });
+        return json({ owner, via: me.via, ai: !!AI_KEY, week: mondayOf(), now: cph(), areas_access: await areaAccess(owner) });
 
       case "load": {
         const since = new Date(Date.now() - 28 * 86400_000).toISOString();
@@ -339,20 +351,26 @@ Deno.serve(async (req) => {
       case "areas_save": {
         // The full list the person wants. M (Meetings & calls) is always kept. Removed areas leave their tasks without one.
         const want = (Array.isArray(body.areas) ? body.areas : []).slice(0, 20)
-          .map((a: any, i: number) => ({ id: typeof a.id === "string" ? a.id : null, code: String(a.code ?? "").trim().toUpperCase(), name: clean(a.name, 60), position: i + 1 }))
+          .map((a: any, i: number) => ({ id: typeof a.id === "string" ? a.id : null, code: String(a.code ?? "").trim().toUpperCase(), name: clean(a.name, 60), position: i + 1, priority: prio(a.priority) }))
           .filter((a: any) => /^[A-Z]{1,3}$/.test(a.code) && a.name && a.code !== "M");
         const codes = want.map((a: any) => a.code);
         if (new Set(codes).size !== codes.length) return json({ error: "Two areas have the same letter. Give each one its own." }, 400);
         const cur = await areasOf(owner);
-        if (!cur.some((a) => a.builtin)) await db.from("todo_areas").insert({ owner, code: "M", name: "Meetings & calls", builtin: true, position: 0 });
+        const acc = await areaAccess(owner);
+        const blocked = want.find((a: any) => acc.restricted.some((r) => r.toLowerCase() === a.name.toLowerCase()) && !acc.allowed.some((r) => r.toLowerCase() === a.name.toLowerCase())
+          && !cur.some((c) => c.id === a.id && c.name.toLowerCase() === a.name.toLowerCase()));
+        if (blocked) return json({ error: `“${blocked.name}” isn't available for your list. Pick another name.` }, 400);
+        const mPrio = "m_priority" in body ? prio(body.m_priority) : undefined;
+        if (!cur.some((a) => a.builtin)) await db.from("todo_areas").insert({ owner, code: "M", name: "Meetings & calls", builtin: true, position: 0, priority: mPrio ?? null });
+        else if (mPrio !== undefined) await db.from("todo_areas").update({ priority: mPrio }).eq("owner", owner).eq("builtin", true);
         const keep = new Set(want.filter((a: any) => a.id).map((a: any) => a.id));
         const gone = cur.filter((a) => !a.builtin && !keep.has(a.id)).map((a) => a.id);
         if (gone.length) await db.from("todo_areas").delete().in("id", gone).eq("owner", owner);
         // Park codes first so swapping letters between two areas doesn't clash.
         for (const a of want.filter((a: any) => a.id && cur.some((c) => c.id === a.id))) await db.from("todo_areas").update({ code: `Z${String(a.position).padStart(2, "0")}`.slice(0, 3).replace(/\d/g, (d) => "ABCDEFGHIJ"[+d]) }).eq("id", a.id).eq("owner", owner);
         for (const a of want) {
-          if (a.id && cur.some((c) => c.id === a.id)) await db.from("todo_areas").update({ code: a.code, name: a.name, position: a.position }).eq("id", a.id).eq("owner", owner);
-          else { const { error } = await db.from("todo_areas").insert({ owner, code: a.code, name: a.name, position: a.position }); if (error) throw error; }
+          if (a.id && cur.some((c) => c.id === a.id)) await db.from("todo_areas").update({ code: a.code, name: a.name, position: a.position, priority: a.priority }).eq("id", a.id).eq("owner", owner);
+          else { const { error } = await db.from("todo_areas").insert({ owner, code: a.code, name: a.name, position: a.position, priority: a.priority }); if (error) throw error; }
         }
         return json({ areas: await areasOf(owner) });
       }

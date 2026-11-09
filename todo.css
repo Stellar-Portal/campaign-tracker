@@ -235,6 +235,7 @@ body.td-page { background: var(--parchment); }
 .td-paper b { color: var(--ink); font: 600 15px var(--font); margin-left: 4px; }
 .td-legend { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 8px; }
 .td-legend li { display: flex; align-items: center; gap: 12px; font-size: 15px; animation: td-rise .35s var(--td-ease) both; }
+.td-legend li em { margin-left: auto; font-style: normal; font-size: 12.5px; color: var(--muted); }
 .td-legend li:nth-child(2) { animation-delay: .05s; } .td-legend li:nth-child(3) { animation-delay: .1s; } .td-legend li:nth-child(4) { animation-delay: .15s; } .td-legend li:nth-child(n+5) { animation-delay: .2s; }
 
 /* ---------- photo ---------- */
@@ -298,6 +299,36 @@ body.td-page { background: var(--parchment); }
 .td-locked { text-align: center; padding: 18vh 12px 0; }
 .td-locked .td-ico { width: 48px; height: 48px; color: var(--accent); }
 .td-locked h1 { font: 600 26px/1.2 var(--font-display); margin: 16px 0 8px; }
+
+/* Priority picker in setup */
+.td-prio-sel { flex: none; width: auto !important; max-width: 128px; height: 34px; padding: 0 28px 0 10px !important; border-radius: 10px !important; font-size: 13px !important; background-color: var(--parchment) !important; border-color: transparent !important; color: var(--ink); }
+.td-letters li.fixed .td-prio-sel { background-color: var(--canvas) !important; }
+
+/* Full page on a laptop: every folder side by side */
+.td-panel.td-wide { max-width: 1720px; padding-left: 32px; padding-right: 32px; }
+.td-wide-top { max-width: 760px; }
+.td-board { display: flex; gap: 18px; align-items: flex-start; overflow-x: auto; margin: 26px -32px 0; padding: 0 32px 14px; scrollbar-width: thin; }
+.td-pgroup { flex: var(--c) 1 0; min-width: calc(var(--c) * 186px + (var(--c) - 1) * 12px); }
+.td-plabel { display: flex; align-items: center; gap: 10px; margin: 0 4px 10px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.td-plabel::after { content: ""; flex: 1; border-top: 1px solid var(--td-line); }
+.td-pgroup.p1 .td-plabel { color: var(--accent); }
+.td-pgroup.p1 .td-plabel::after { border-top-color: rgba(6,38,199,.25); }
+.td-pcols { display: grid; grid-template-columns: repeat(var(--c), minmax(0, 1fr)); gap: 12px; align-items: start; }
+.td-col { background: rgba(0,0,0,.028); border-radius: 18px; padding: 10px; display: grid; gap: 8px; animation: td-rise .4s var(--td-ease) both; }
+.td-pgroup:nth-child(2) .td-col { animation-delay: .05s; } .td-pgroup:nth-child(3) .td-col { animation-delay: .1s; } .td-pgroup:nth-child(n+4) .td-col { animation-delay: .15s; }
+.td-pgroup.p1 .td-col { background: rgba(6,38,199,.045); }
+.td-col-h { display: flex; align-items: center; gap: 8px; padding: 2px 4px 2px 2px; font-size: 14px; font-weight: 600; min-width: 0; }
+.td-col-h span:not(.td-badge) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.td-col-h em { margin-left: auto; font-style: normal; font-weight: 500; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.td-col .td-item { padding: 11px 12px 11px 10px; gap: 10px; }
+.td-col .td-item + .td-item::before { left: 42px; }
+.td-col-empty { margin: 0; padding: 14px 10px; font-size: 13px; color: var(--muted); text-align: center; border: 1px dashed rgba(0,0,0,.1); border-radius: 14px; }
+.td-col-add { display: flex; align-items: center; gap: 8px; padding: 0 10px; height: 38px; border-radius: 12px; color: var(--muted); transition: background .18s, box-shadow .18s; }
+.td-col-add .td-ico { width: 16px; height: 16px; flex: none; }
+.td-col-add input { flex: 1; min-width: 0; border: 0 !important; background: transparent !important; box-shadow: none !important; padding: 0 !important; height: 36px; font-size: 14px; }
+.td-col-add input:focus { outline: none; }
+.td-col-add:hover { background: rgba(255,255,255,.6); }
+.td-col-add:focus-within { background: var(--canvas); box-shadow: 0 0 0 1.5px var(--accent-focus); color: var(--ink); }
 
 @media (max-width: 560px) {
   .td-panel { padding: 0 14px calc(40px + env(safe-area-inset-bottom)); }

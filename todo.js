@@ -10,8 +10,8 @@
 // next to tasks on paper; M = Meetings & calls is there for everyone. Photos, quick add and the AI box use them.
 // Weeks run Monday to Sunday, Copenhagen time. The Friday recap opens from 17:00 on Friday; the week overview
 // from 08:00 on Monday. Both light up the week button (and the OS button) until they're gone through.
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261109d";
-import { confirmDialog } from "./dialog.js?v=20261109d";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261109e";
+import { confirmDialog } from "./dialog.js?v=20261109e";
 
 const FN = `${SUPABASE_URL}/functions/v1/todo`;
 const KEY_STORE = "stellar-todo-key";
@@ -100,6 +100,13 @@ const areaByCode = (code) => S.areas.find((a) => a.code === String(code ?? "").t
 function tint(a) { const i = a?.builtin ? 0 : (S.areas.filter((x) => !x.builtin).indexOf(a) + 1) % TINTS.length; return TINTS[Math.max(0, i)]; }
 const badge = (a, big = false) => a ? `<span class="td-badge${big ? " big" : ""}" style="--bg:${tint(a)[0]};--fg:${tint(a)[1]}" title="${esc(a.name)}">${esc(a.code)}</span>` : "";
 const SUGGESTIONS = ["Campaigns", "Campaign Central", "Proposals", "Sports", "Organizational", "Clients", "Creators", "Pitches", "Finance", "Admin", "Personal"];
+// Some areas (e.g. Campaign Central, Sports) are only offered to the people the server allows.
+function suggestions() {
+  const acc = S.cfg?.areas_access ?? { restricted: ["Campaign Central", "Sports"], allowed: [] };
+  const lc = (x) => x.toLowerCase();
+  return SUGGESTIONS.filter((n) => !acc.restricted.map(lc).includes(lc(n)) || acc.allowed.map(lc).includes(lc(n)));
+}
+const PRIOS = [1, 2, 3, 4, 5];
 function suggestCode(name, taken) {
   const words = name.toUpperCase().replace(/[^A-Z ]/g, "").split(/\s+/).filter(Boolean);
   const tries = [];
@@ -161,7 +168,8 @@ async function act(fn, okMsg) {
 
 // Order: urgent, then by date (and time), then as added. Numbers follow the order on screen (the AI box uses them).
 const dueKey = (t) => `${t.due_date ?? "9999-99-99"} ${t.due_time ?? "99:99"}`;
-function sortOpen(list) { return [...list].sort((a, b) => (b.urgent - a.urgent) || (dueKey(a) < dueKey(b) ? -1 : dueKey(a) > dueKey(b) ? 1 : 0) || (a.position - b.position)); }
+const prioOf = (t) => areaById(t.area_id)?.priority ?? 99;
+function sortOpen(list) { return [...list].sort((a, b) => (b.urgent - a.urgent) || (dueKey(a) < dueKey(b) ? -1 : dueKey(a) > dueKey(b) ? 1 : 0) || (prioOf(a) - prioOf(b)) || (a.position - b.position)); }
 
 // ---------- Friday recap / Monday overview timing ----------
 function recapWeek() {
@@ -186,6 +194,7 @@ function render(dir = "none") {
   const v = S.view;
   const html = v === "setup" ? setupHTML() : v === "task" ? taskHTML() : v === "snap" ? snapHTML() : v === "recap" ? recapHTML()
     : v === "plan" ? planHTML() : v === "link" ? linkHTML() : listHTML();
+  root.classList.toggle("td-wide", v === "list" && isWide());
   root.innerHTML = `<div class="td-view${dir !== "none" ? ` td-in-${dir}` : ""}">${html}</div>`;
   ({ setup: wireSetup, task: wireTask, snap: wireSnap, recap: wireRecap, plan: wirePlan, link: wireLink }[v] ?? wireList)();
   HOST.onPending?.(recapPending() || planPending());
@@ -255,7 +264,7 @@ function rowHTML(t, n, opts = {}) {
       ${meta ? `<div class="td-meta">${meta}</div>` : ""}
       ${opts.qa ? `<div class="td-qa">${opts.qa(t)}</div>` : ""}
     </div>
-    ${a ? `<span class="td-row-badge">${badge(a)}</span>` : ""}
+    ${a && !opts.noBadge ? `<span class="td-row-badge">${badge(a)}</span>` : ""}
   </li>`;
 }
 function wireRows(scope = root) {
@@ -347,7 +356,51 @@ function listGroups(open) {
   }
   return g;
 }
+// Full page on a laptop: every folder side by side, highest priority first (same priority = next to each other).
+const isWide = () => !!HOST.standalone && window.innerWidth >= 1100 && S.areas.length > 0;
+function boardCols() {
+  const open = sortOpen(S.items.filter(isOpen));
+  const cols = S.areas.map((a) => ({ a, items: open.filter((t) => t.area_id === a.id) }));
+  const none = open.filter((t) => !areaById(t.area_id));
+  if (none.length) cols.push({ a: null, items: none });
+  return cols;
+}
+function boardHTML() {
+  const week = mondayOf(), weekStartMs = cphMs(week);
+  const openAll = S.items.filter(isOpen);
+  const done = S.items.filter((t) => t.status === "done" && Date.parse(t.done_at ?? t.updated_at) >= weekStartMs).sort((a, b) => Date.parse(b.done_at) - Date.parse(a.done_at));
+  const groups = [];
+  for (const c of boardCols()) {
+    const p = c.a?.priority ?? null, last = groups.at(-1);
+    if (last && last.p === p) last.cols.push(c); else groups.push({ p, cols: [c] });
+  }
+  let n = 0;
+  const col = ({ a, items }) => `<div class="td-col">
+      <header class="td-col-h">${a ? badge(a) : '<span class="td-badge" style="--bg:#efeff3;--fg:#86868b">–</span>'}<span>${a ? esc(a.name) : "No area"}</span><em>${items.length}</em></header>
+      ${items.length ? `<ul class="td-list">${items.map((t) => rowHTML(t, ++n, { noBadge: !!a })).join("")}</ul>` : `<p class="td-col-empty">Nothing here.</p>`}
+      ${a ? `<form class="td-col-add" data-add="${esc(a.id)}" autocomplete="off">${I.plus}<input placeholder="Add a task" aria-label="Add a task to ${esc(a.name)}" maxlength="300"></form>` : ""}
+    </div>`;
+  return `${headHTML()}
+    <div class="td-wide-top">
+      <p class="td-sub">${weekLabel(week)} · ${openAll.length} open${done.length ? ` · ${done.length} done` : ""}</p>
+      <form class="td-compose" id="td-add" autocomplete="off">
+        <span class="td-compose-ico">${I.plus}</span>
+        <textarea id="td-new" rows="1" placeholder="Add a task" aria-label="New task"></textarea>
+        <button type="submit" class="primary td-compose-go" aria-label="Add">Add</button>
+      </form>
+      <p class="td-hint">Start with a letter to file it, e.g. “${esc(S.areas.find((a) => !a.builtin)?.code ?? "M")}: …”. Add EOD or EOW at the end. Paste several lines to add them all.</p>
+      ${aiHTML("e.g. “1 is done, but I still have to send the invoice”")}
+    </div>
+    <div class="td-board stagger">
+      ${groups.map((g) => `<section class="td-pgroup${g.p === 1 ? " p1" : ""}" style="--c:${g.cols.length}">
+        <h2 class="td-plabel">${g.p ? `Priority ${g.p}` : "Other"}</h2>
+        <div class="td-pcols">${g.cols.map(col).join("")}</div>
+      </section>`).join("")}
+    </div>
+    ${done.length ? `<div class="td-wide-top"><details class="td-done-toggle"><summary>Done this week · ${done.length}</summary><ul class="td-list">${done.map((t) => rowHTML(t, 0)).join("")}</ul></details></div>` : ""}`;
+}
 function listHTML() {
+  if (isWide()) return boardHTML();
   const week = mondayOf(), weekStartMs = cphMs(week);
   const inFilter = (t) => S.filter === "all" || (S.filter === "none" ? !t.area_id : t.area_id === S.filter);
   const openAll = S.items.filter(isOpen);
@@ -385,8 +438,18 @@ let numbered = [];
 function wireList() {
   wireHead(); wireRows();
   const inFilter = (t) => S.filter === "all" || (S.filter === "none" ? !t.area_id : t.area_id === S.filter);
+  const wide = isWide();
   const g = listGroups(sortOpen(S.items.filter(isOpen).filter(inFilter)));
-  numbered = [...g.urgent, ...g.today, ...g.week, ...g.later, ...g.none];
+  numbered = wide ? boardCols().flatMap((c) => c.items) : [...g.urgent, ...g.today, ...g.week, ...g.later, ...g.none];
+  root.querySelectorAll("[data-add]").forEach((f) => (f.onsubmit = async (e) => {
+    e.preventDefault();
+    const inp = f.querySelector("input"), v = inp.value.trim();
+    if (!v) return;
+    const item = parseQuick(v, areaById(f.dataset.add));
+    inp.value = "";
+    const r = await act(() => api("add_many", { source: "manual", items: [item] }));
+    if (r) { upsert(r.items); render(); const again = root.querySelector(`[data-add="${f.dataset.add}"] input`); again?.focus(); root.querySelector(`[data-id="${r.items[0]?.id}"]`)?.classList.add("td-new-row"); }
+  }));
   wireAI(numbered);
   root.querySelectorAll("[data-f]").forEach((b) => (b.onclick = () => { S.filter = b.dataset.f; render("fade"); }));
   root.querySelector(".td-folder.on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -397,13 +460,14 @@ function wireList() {
     e.preventDefault();
     const lines = input.value.split(/\n+/).map((s) => s.replace(/^\s*(?:[-*•]|\d+[.)]|\[ ?\])\s*/, "").trim()).filter(Boolean);
     if (!lines.length) return;
-    const items = lines.map((l) => parseQuick(l));
+    const items = lines.map((l) => parseQuick(l, wide ? null : undefined));
     const r = await act(() => api("add_many", { source: "manual", items }), items.length > 1 ? `${items.length} tasks added` : null);
     if (r) { upsert(r.items); render(); const ni = document.getElementById("td-new"); ni?.focus(); root.querySelector(`[data-id="${r.items[0]?.id}"]`)?.classList.add("td-new-row"); }
   };
 }
 // "S: call Juventus EOW" → area S, due end of week. The active folder is used when no letter is given.
-function parseQuick(line) {
+// fallback: the area to use without a letter (undefined = the folder you're in, null = none).
+function parseQuick(line, fallback) {
   let title = line, area = null, when = null;
   const m = title.match(/^\s*([A-Za-z]{1,3})\s*[:\-–—)]\s+(.+)$/);
   if (m && areaByCode(m[1])) { area = areaByCode(m[1]); title = m[2]; }
@@ -411,7 +475,7 @@ function parseQuick(line) {
   if (w) { title = title.slice(0, w.index); when = { eod: "today", eow: "eow", today: "today", tomorrow: "tomorrow", "this week": "week", "next week": "next" }[w[1].toLowerCase()]; }
   const urgent = /(^|\s)!{1,3}$/.test(title) || /\bASAP\b/i.test(title);
   title = title.replace(/\s*!+$/, "").trim();
-  if (!area && S.filter !== "all" && S.filter !== "none") area = areaById(S.filter);
+  if (!area) area = fallback !== undefined ? fallback : (S.filter !== "all" && S.filter !== "none" ? areaById(S.filter) : null);
   return { title: title.slice(0, 300), urgent, ...(area ? { area_id: area.id } : {}), ...(when ? whenPreset(when) : {}) };
 }
 
@@ -596,7 +660,8 @@ function wireSnap() {
 // ---------- first open: focus areas and letters ----------
 function startSetup(editing = false) {
   const custom = S.areas.filter((a) => !a.builtin);
-  S.setup = { editing, step: editing ? 1 : 0, picked: custom.map((a) => ({ id: a.id, name: a.name, code: a.code })), err: "" };
+  S.setup = { editing, step: editing ? 1 : 0, picked: custom.map((a) => ({ id: a.id, name: a.name, code: a.code, priority: a.priority ?? null })),
+    mPrio: S.areas.find((a) => a.builtin)?.priority ?? null, err: "" };
   S.prev = S.view === "setup" ? S.prev : S.view;
   S.view = "setup"; render("fwd"); toTop();
 }
@@ -612,24 +677,25 @@ function setupHTML() {
       <div class="td-setup-actions"><button type="button" class="primary" id="su-next">Set up my focus areas</button><button type="button" class="td-ghost-text" id="su-skip">Skip for now</button></div></div>`;
   if (step === 1) {
     const names = new Set(st.picked.map((p) => p.name.toLowerCase()));
-    const extra = st.picked.filter((p) => !SUGGESTIONS.some((s) => s.toLowerCase() === p.name.toLowerCase()));
+    const offer = suggestions();
+    const extra = st.picked.filter((p) => !offer.some((s) => s.toLowerCase() === p.name.toLowerCase()));
     return `${top}<div class="td-setup">${dots}
       <h2>What do you focus on?</h2>
       <p>Pick the areas your work falls into, or add your own. Meetings &amp; calls is there for everyone.</p>
       <div class="td-pick">
         <span class="td-pick-chip fixed">${badge({ code: "M", builtin: true })}Meetings &amp; calls</span>
-        ${[...SUGGESTIONS, ...extra.map((e) => e.name)].map((s) => `<button type="button" class="td-pick-chip${names.has(s.toLowerCase()) ? " on" : ""}" data-pick="${esc(s)}"><span class="td-tick">${I.check}</span>${esc(s)}</button>`).join("")}
+        ${[...offer, ...extra.map((e) => e.name)].map((s) => `<button type="button" class="td-pick-chip${names.has(s.toLowerCase()) ? " on" : ""}" data-pick="${esc(s)}"><span class="td-tick">${I.check}</span>${esc(s)}</button>`).join("")}
       </div>
       <form class="td-own" id="su-own"><input id="su-own-in" maxlength="60" placeholder="Add your own, e.g. Live Marketing"><button type="submit" class="td-ghost-text">Add</button></form>
       <div class="td-setup-actions"><button type="button" class="primary" id="su-next"${st.picked.length ? "" : " disabled"}>Next</button>${st.editing ? "" : '<button type="button" class="td-ghost-text" id="su-skip">Skip for now</button>'}</div></div>`;
   }
   if (step === 2) {
     return `${top}<div class="td-setup">${dots}
-      <h2>Give each a letter</h2>
-      <p>One to three letters you'd write next to a task. They need to be different from each other.</p>
+      <h2>Letters and priorities</h2>
+      <p>One to three letters you'd write next to a task, all different. The priority sets the order on the full page: priority 1 comes first, and areas with the same number sit side by side.</p>
       <ul class="td-letters">
-        <li class="fixed">${badge({ code: "M", builtin: true }, true)}<span>Meetings &amp; calls</span><em>Everyone</em></li>
-        ${st.picked.map((p, i) => `<li><input class="td-letter" data-code="${i}" value="${esc(p.code ?? "")}" maxlength="3" aria-label="Letter for ${esc(p.name)}" autocapitalize="characters" spellcheck="false"><span>${esc(p.name)}</span></li>`).join("")}
+        <li class="fixed">${badge({ code: "M", builtin: true }, true)}<span>Meetings &amp; calls</span>${prioSelect("m", st.mPrio, "Meetings & calls")}</li>
+        ${st.picked.map((p, i) => `<li><input class="td-letter" data-code="${i}" value="${esc(p.code ?? "")}" maxlength="3" aria-label="Letter for ${esc(p.name)}" autocapitalize="characters" spellcheck="false"><span>${esc(p.name)}</span>${prioSelect(i, p.priority, p.name)}</li>`).join("")}
       </ul>
       <p class="td-err" id="su-err" aria-live="polite">${esc(st.err)}</p>
       <div class="td-paper"><span>On paper:</span> <b id="su-ex">${esc(st.picked[0]?.code || "S")} – ${esc(st.picked[0] ? `${st.picked[0].name.toLowerCase()} task` : "call Juventus")}</b></div>
@@ -639,10 +705,11 @@ function setupHTML() {
       <div class="td-hero done">${I.check}</div>
       <h2>You're set</h2>
       <p>Your letters:</p>
-      <ul class="td-legend">${S.areas.map((a) => `<li>${badge(a, true)}<span>${esc(a.name)}</span></li>`).join("")}</ul>
+      <ul class="td-legend">${S.areas.map((a) => `<li>${badge(a, true)}<span>${esc(a.name)}</span>${a.priority ? `<em>Priority ${a.priority}</em>` : ""}</li>`).join("")}</ul>
       <p class="muted small">Change them any time from ⋯ → Focus areas &amp; letters.</p>
       <div class="td-setup-actions"><button type="button" class="primary" id="su-next">${st.editing ? "Back to my list" : "Start"}</button></div></div>`;
 }
+const prioSelect = (key, val, name) => `<select class="td-prio-sel" data-prio="${key}" aria-label="Priority for ${esc(name)}"><option value="">No priority</option>${PRIOS.map((n) => `<option value="${n}"${val === n ? " selected" : ""}>Priority ${n}</option>`).join("")}</select>`;
 function validateLetters() {
   const st = S.setup, seen = new Set();
   for (const p of st.picked) {
@@ -697,11 +764,15 @@ function wireSetup() {
       const p = st.picked[0]; ex.textContent = `${p.code || "?"} – ${p.name.toLowerCase()} task`;
       err.textContent = ""; inp.classList.remove("bad");
     }));
+    root.querySelectorAll("[data-prio]").forEach((sel) => (sel.onchange = () => {
+      const v = sel.value ? Number(sel.value) : null;
+      if (sel.dataset.prio === "m") st.mPrio = v; else st.picked[+sel.dataset.prio].priority = v;
+    }));
     next.onclick = async () => {
       const msg = validateLetters();
       if (msg) { err.textContent = msg; root.querySelectorAll("[data-code]").forEach((inp) => inp.classList.toggle("bad", !inp.value || inp.value === "M")); return; }
       next.disabled = true;
-      const r = await act(() => api("areas_save", { areas: st.picked.map((p) => ({ id: p.id, code: p.code, name: p.name })) }));
+      const r = await act(() => api("areas_save", { areas: st.picked.map((p) => ({ id: p.id, code: p.code, name: p.name, priority: p.priority ?? null })), m_priority: st.mPrio }));
       next.disabled = false;
       if (!r) return;
       S.areas = r.areas; step(3, "fwd");
@@ -903,6 +974,8 @@ if (document.body.classList.contains("td-page")) {
   setInterval(() => { if (S.view === "list" && S.cfg && quiet()) render(); }, 5 * 60_000);
   // A private link opened in a tab that already shows this page.
   window.addEventListener("hashchange", () => { if (/[#&]k=/.test(location.hash)) boot(); });
+  let wasWide = null;
+  window.addEventListener("resize", () => { const w = isWide(); if (w !== wasWide && S.view === "list" && S.cfg && quiet()) render(); wasWide = w; });
   boot();
 }
 
