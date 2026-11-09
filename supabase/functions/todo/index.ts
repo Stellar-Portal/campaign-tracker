@@ -112,17 +112,23 @@ async function changeItem(owner: string, id: string, patch: Record<string, unkno
 }
 
 // ---------- AI (Claude) ----------
+// The model answers by calling the one tool it's given (forcing a tool isn't supported by every model,
+// so it's asked to, and asked once more if it answered in plain text).
 async function claude(system: string, content: unknown[], tool: Record<string, unknown>) {
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": AI_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model: AI_MODEL, max_tokens: 4000, system, tools: [tool], tool_choice: { type: "tool", name: tool.name }, messages: [{ role: "user", content }] }),
-  });
-  const j = await r.json().catch(() => null);
-  if (!r.ok) { console.error("todo ai", r.status, JSON.stringify(j).slice(0, 300)); throw new Error("The AI couldn't answer right now. Try again in a minute."); }
-  const use = (j?.content ?? []).find((c: any) => c.type === "tool_use");
-  if (!use) throw new Error("The AI didn't return anything usable. Try again.");
-  return use.input;
+  const sys = `${system}\nAlways answer by calling the ${tool.name} tool exactly once. Never answer in plain text.`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": AI_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model: AI_MODEL, max_tokens: 4000, system: sys, tools: [tool], tool_choice: { type: "auto" }, messages: [{ role: "user", content }] }),
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok) { console.error("todo ai", r.status, JSON.stringify(j).slice(0, 300)); throw new Error("The AI couldn't answer right now. Try again in a minute."); }
+    const use = (j?.content ?? []).find((c: any) => c.type === "tool_use" && c.name === tool.name);
+    if (use) return use.input;
+    console.error("todo ai: no tool call", JSON.stringify(j?.content ?? []).slice(0, 200));
+  }
+  throw new Error("The AI didn't return anything usable. Try again.");
 }
 const today = () => { const c = cph(); return `${c.date} (${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][c.weekday]}), Copenhagen time`; };
 
