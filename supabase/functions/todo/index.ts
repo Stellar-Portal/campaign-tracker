@@ -12,6 +12,7 @@
 //   plan_done {week}               the Monday overview was gone through
 //   snap {image, media_type}       read a photo of handwritten notes into tasks (not stored)
 //   ai {prompt, tasks}             turn "task 1 was done, but I still have to do X" into proposed changes
+//   areas_save {areas}             the person's focus areas and their letters (M = Meetings & calls is always there)
 //   link_create / link_list / link_revoke   private links (signed-in session only)
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
@@ -71,8 +72,15 @@ async function who(req: Request): Promise<{ owner: string; via: "session" | "lin
 }
 
 // ---------- tasks ----------
-const FIELDS = ["title", "notes", "status", "remaining", "urgent", "due_date", "project", "position", "week_start"] as const;
-function tidy(item: any) {
+const TIME = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+const KINDS = ["eod", "eow", "week", "day"];
+type Area = { id: string; code: string; name: string; builtin: boolean; position: number };
+async function areasOf(owner: string): Promise<Area[]> {
+  const { data } = await db.from("todo_areas").select("id,code,name,builtin,position").eq("owner", owner).order("position");
+  return (data ?? []) as Area[];
+}
+const legend = (areas: Area[]) => areas.map((a) => `${a.code} = ${a.name}`).join("; ");
+function tidy(item: any, areas: Area[] = []) {
   const out: Record<string, unknown> = {};
   if ("title" in item) out.title = clean(item.title, 300);
   if ("notes" in item) out.notes = clean(item.notes, 4000);
@@ -83,14 +91,20 @@ function tidy(item: any) {
   if ("due_date" in item) out.due_date = typeof item.due_date === "string" && DATE.test(item.due_date) ? item.due_date : null;
   if ("week_start" in item && typeof item.week_start === "string" && DATE.test(item.week_start)) out.week_start = item.week_start;
   if ("position" in item && Number.isFinite(Number(item.position))) out.position = Number(item.position);
+  if ("due_kind" in item) out.due_kind = KINDS.includes(item.due_kind) ? item.due_kind : null;
+  if ("due_time" in item) out.due_time = typeof item.due_time === "string" && TIME.test(item.due_time) ? item.due_time.slice(0, 5) : null;
+  if ("area_id" in item) out.area_id = areas.some((a) => a.id === item.area_id) ? item.area_id : null;
+  else if ("area" in item) out.area_id = areas.find((a) => a.code === String(item.area ?? "").trim().toUpperCase())?.id ?? null;
+  if (out.due_date === null) { out.due_kind = null; out.due_time = null; }
   return out;
 }
-async function insertItems(owner: string, items: any[], source: string) {
+async function insertItems(owner: string, items: any[], source: string, areas?: Area[]) {
   const week = mondayOf(), now = Date.now();
-  const rows = items.map((it, i) => ({ ...tidy(it), owner, source, week_start: week, position: now / 1000 + i, ...(it.status === "done" ? { done_at: new Date().toISOString() } : {}) }))
+  areas ??= await areasOf(owner);
+  const rows = items.map((it, i) => ({ status: "open", urgent: false, ...tidy(it, areas), owner, source, week_start: week, position: now / 1000 + i, ...(it.status === "done" ? { done_at: new Date().toISOString() } : {}) }))
     .filter((r) => r.title);
   if (!rows.length) return [];
-  const { data, error } = await db.from("todo_items").insert(rows).select("*");
+  const { data, error } = await db.from("todo_items").insert(rows, { defaultToNull: false }).select("*");
   if (error) throw error;
   await db.from("todo_events").insert(data.map((r) => ({ item_id: r.id, owner, kind: "created", detail: { source } })));
   return data;
@@ -144,6 +158,9 @@ const SNAP_TOOL = {
         project: { type: "string", description: "Client, artist or project the task belongs to, if the notes show it (heading, bracket, arrow, margin)." },
         due_date: { type: "string", description: "YYYY-MM-DD if a date or deadline is written (Fri, 12/11, EOD = today, EOW = this Friday, tmrw)." },
         urgent: { type: "boolean", description: "Marked urgent: !, ASAP, urgent, circled, starred, underlined twice." },
+        area: { type: "string", description: "The focus-area letter code from the list, if the task has one written next to it (or is clearly a meeting/call: M)." },
+        due_kind: { type: "string", enum: ["eod", "eow", "week", "day"], description: "eod = end of a day (EOD, today), eow = end of the week (EOW), week = sometime this/that week, day = a specific day." },
+        due_time: { type: "string", description: "HH:MM if a time is written." },
         done: { type: "boolean", description: "Crossed out or ticked off on paper." },
         unsure: { type: "boolean", description: "True if part of it was hard to read and you guessed." },
       }, required: ["title"] } },
@@ -160,7 +177,8 @@ Rules:
 - Items that are crossed out or ticked are done: include them with done = true.
 - Turn written deadlines into dates using today's date. EOD = today, EOW = this Friday, "Mon" = the next Monday.
 - Order the list: urgent first, then by deadline, then in the order written.
-- If something can't be read, don't guess wildly: add it to unreadable.`;
+- If something can't be read, don't guess wildly: add it to unreadable.
+- Focus-area letters: the writer marks tasks with short letter codes (before or after the task, e.g. "S – call Juventus", "CC: brief", "(O)", a circled letter, or a letter in the margin next to a group). Put that code in area, but only codes from the writer's list. A letter that isn't on the list is not an area. A task that is clearly a call or a meeting goes to M even without a letter.`;
 
 const OPS_TOOL = {
   name: "update_tasks",
@@ -175,6 +193,8 @@ const OPS_TOOL = {
         remaining: { type: "string", description: "For partial: what is still left to do." },
         due_date: { type: "string", description: "YYYY-MM-DD" }, urgent: { type: "boolean" }, project: { type: "string" },
         follows_n: { type: "integer", description: "For add: the task this new one follows on from." },
+        area: { type: "string", description: "Focus-area code from the list." },
+        due_kind: { type: "string", enum: ["eod", "eow", "week", "day"] }, due_time: { type: "string", description: "HH:MM" },
       }, required: ["op"] } },
       reply: { type: "string", description: "One short sentence saying what you changed, or a question if it was unclear." },
     },
@@ -189,6 +209,8 @@ How to read common messages:
 - "push 2 to Thursday" → update due_date. "2 is urgent" → update urgent = true.
 - "forget 3 / not needed" → drop.
 - "add: ..." or anything new → add.
+- "push 2 to EOW" → due_kind eow with that Friday's date; "EOD" → eod with today; "this week" → week with this Sunday's date; "Thursday at 3" → day + due_time 15:00.
+- "4 is sports" / "move 4 to CC" → update area with that code.
 Only change what the message is about. Never touch other tasks. If a number or task is unclear, make no change and ask in reply.
 Keep titles short and in the person's language. Dates as YYYY-MM-DD.`;
 
@@ -208,18 +230,19 @@ Deno.serve(async (req) => {
 
       case "load": {
         const since = new Date(Date.now() - 28 * 86400_000).toISOString();
-        const [open, recent, weeks] = await Promise.all([
+        const [open, recent, weeks, areas] = await Promise.all([
           db.from("todo_items").select("*").eq("owner", owner).in("status", ["open", "partial"]).order("position"),
           db.from("todo_items").select("*").eq("owner", owner).in("status", ["done", "dropped"]).gte("updated_at", since).order("updated_at", { ascending: false }).limit(300),
           db.from("todo_weeks").select("*").eq("owner", owner).gte("week_start", addDays(mondayOf(), -28)),
+          areasOf(owner),
         ]);
-        return json({ items: [...(open.data ?? []), ...(recent.data ?? [])], weeks: weeks.data ?? [], week: mondayOf(), now: cph() });
+        return json({ items: [...(open.data ?? []), ...(recent.data ?? [])], weeks: weeks.data ?? [], areas, week: mondayOf(), now: cph() });
       }
 
       case "save": {
         const it = body.item ?? {};
         if (!it.id) return json({ item: (await insertItems(owner, [it], "manual"))[0] ?? null });
-        const patch = tidy(it);
+        const patch = tidy(it, await areasOf(owner));
         delete patch.week_start;
         if ("title" in patch && !patch.title) return json({ error: "A task needs a title." }, 400);
         return json({ item: await changeItem(owner, String(it.id), patch) });
@@ -234,9 +257,10 @@ Deno.serve(async (req) => {
       case "apply": {
         const ops = Array.isArray(body.ops) ? body.ops.slice(0, 50) : [];
         const out: any[] = [];
+        const areas = await areasOf(owner);
         for (const o of ops) {
           if (o.op === "add") {
-            const [row] = await insertItems(owner, [{ title: o.title, notes: o.notes, due_date: o.due_date, urgent: o.urgent, project: o.project }], "ai");
+            const [row] = await insertItems(owner, [{ title: o.title, notes: o.notes, due_date: o.due_date, due_kind: o.due_kind, due_time: o.due_time, urgent: o.urgent, project: o.project, area_id: o.area_id }], "ai", areas);
             if (row && o.follows_id) await db.from("todo_items").update({ follows_id: o.follows_id }).eq("id", row.id).eq("owner", owner);
             if (row) out.push(row);
             continue;
@@ -247,7 +271,7 @@ Deno.serve(async (req) => {
             o.op === "partial" ? { status: "partial", remaining: clean(o.remaining, 1000) } :
             o.op === "reopen" ? { status: "open" } :
             o.op === "drop" ? { status: "dropped" } :
-            o.op === "update" ? tidy(Object.fromEntries(Object.entries(o).filter(([k]) => ["title", "notes", "due_date", "urgent", "project", "remaining"].includes(k)))) : {};
+            o.op === "update" ? tidy(Object.fromEntries(Object.entries(o).filter(([k]) => ["title", "notes", "due_date", "due_kind", "due_time", "urgent", "project", "remaining", "area_id"].includes(k))), areas) : {};
           if (!Object.keys(patch).length) continue;
           out.push(await changeItem(owner, String(o.id), patch));
         }
@@ -278,11 +302,14 @@ Deno.serve(async (req) => {
         const img = typeof body.image === "string" ? body.image.replace(/^data:[^,]+,/, "") : "";
         const type = ["image/jpeg", "image/png", "image/webp"].includes(body.media_type) ? body.media_type : "image/jpeg";
         if (img.length < 200 || img.length > 7_000_000) return json({ error: "That photo couldn't be read. Try another one." }, 400);
-        const r = await claude(SNAP_SYSTEM + `\nToday is ${today()}.`, [
+        const areas = await areasOf(owner);
+        const r = await claude(SNAP_SYSTEM + `\nToday is ${today()}.\nThe writer's focus-area codes: ${legend(areas) || "M = Meetings & calls"}.`, [
           { type: "image", source: { type: "base64", media_type: type, data: img } },
           { type: "text", text: "Read these notes into tasks." },
         ], SNAP_TOOL);
-        return json({ items: (r.items ?? []).slice(0, 100), unreadable: r.unreadable ?? [] });
+        const codes = new Set(areas.map((a) => a.code));
+        const items = (r.items ?? []).slice(0, 100).map((it: any) => ({ ...it, area: codes.has(String(it.area ?? "").toUpperCase()) ? String(it.area).toUpperCase() : null }));
+        return json({ items, unreadable: r.unreadable ?? [] });
       }
 
       case "ai": {
@@ -291,18 +318,43 @@ Deno.serve(async (req) => {
         if (!prompt) return json({ error: "Write what changed." }, 400);
         const shown = (Array.isArray(body.tasks) ? body.tasks : []).slice(0, 150).filter((t: any) => t?.id && Number.isInteger(t.n));
         const ids = shown.map((t: any) => String(t.id));
-        const { data: mine } = ids.length ? await db.from("todo_items").select("id,title,status,remaining,due_date,urgent,project,notes").eq("owner", owner).in("id", ids) : { data: [] };
+        const { data: mine } = ids.length ? await db.from("todo_items").select("id,title,status,remaining,due_date,due_kind,due_time,urgent,project,notes,area_id").eq("owner", owner).in("id", ids) : { data: [] };
         const byId = new Map((mine ?? []).map((r) => [r.id, r]));
         const list = shown.filter((t: any) => byId.has(String(t.id))).map((t: any) => ({ n: t.n, ...byId.get(String(t.id)) }));
-        const lines = list.map((t: any) => `${t.n}. ${t.title}${t.status !== "open" ? ` [${t.status}${t.remaining ? `: left ${t.remaining}` : ""}]` : ""}${t.due_date ? ` (due ${t.due_date})` : ""}${t.urgent ? " (urgent)" : ""}${t.project ? ` · ${t.project}` : ""}`).join("\n");
-        const r = await claude(OPS_SYSTEM + `\nToday is ${today()}.`, [{ type: "text", text: `Tasks:\n${lines || "(none)"}\n\nMessage: ${prompt}` }], OPS_TOOL);
+        const areas = await areasOf(owner);
+        const codeOf = (id: string | null) => areas.find((a) => a.id === id)?.code;
+        const lines = list.map((t: any) => `${t.n}. ${codeOf(t.area_id) ? `[${codeOf(t.area_id)}] ` : ""}${t.title}${t.status !== "open" ? ` [${t.status}${t.remaining ? `: left ${t.remaining}` : ""}]` : ""}${t.due_date ? ` (due ${t.due_kind ?? "day"} ${t.due_date}${t.due_time ? ` ${t.due_time.slice(0, 5)}` : ""})` : ""}${t.urgent ? " (urgent)" : ""}${t.project ? ` · ${t.project}` : ""}`).join("\n");
+        const r = await claude(OPS_SYSTEM + `\nToday is ${today()}.\nFocus-area codes: ${legend(areas) || "M = Meetings & calls"}.`, [{ type: "text", text: `Tasks:\n${lines || "(none)"}\n\nMessage: ${prompt}` }], OPS_TOOL);
         const byN = new Map(list.map((t: any) => [t.n, t]));
         const ops = (r.ops ?? []).slice(0, 50).map((o: any) => {
           const t = o.n != null ? byN.get(o.n) : null;
           const f = o.follows_n != null ? byN.get(o.follows_n) : null;
-          return { ...o, id: t?.id ?? null, current: t ? t.title : null, follows_id: f?.id ?? null, follows_title: f?.title ?? null };
+          const area = o.area ? areas.find((a) => a.code === String(o.area).toUpperCase()) : null;
+          const { area: _a, ...rest } = o;
+          return { ...rest, ...(area ? { area_id: area.id, area_name: area.name, area_code: area.code } : {}), id: t?.id ?? null, current: t ? t.title : null, follows_id: f?.id ?? null, follows_title: f?.title ?? null };
         }).filter((o: any) => o.op === "add" ? !!clean(o.title, 300) : !!o.id);
         return json({ ops, reply: String(r.reply ?? "").slice(0, 400) });
+      }
+
+      case "areas_save": {
+        // The full list the person wants. M (Meetings & calls) is always kept. Removed areas leave their tasks without one.
+        const want = (Array.isArray(body.areas) ? body.areas : []).slice(0, 20)
+          .map((a: any, i: number) => ({ id: typeof a.id === "string" ? a.id : null, code: String(a.code ?? "").trim().toUpperCase(), name: clean(a.name, 60), position: i + 1 }))
+          .filter((a: any) => /^[A-Z]{1,3}$/.test(a.code) && a.name && a.code !== "M");
+        const codes = want.map((a: any) => a.code);
+        if (new Set(codes).size !== codes.length) return json({ error: "Two areas have the same letter. Give each one its own." }, 400);
+        const cur = await areasOf(owner);
+        if (!cur.some((a) => a.builtin)) await db.from("todo_areas").insert({ owner, code: "M", name: "Meetings & calls", builtin: true, position: 0 });
+        const keep = new Set(want.filter((a: any) => a.id).map((a: any) => a.id));
+        const gone = cur.filter((a) => !a.builtin && !keep.has(a.id)).map((a) => a.id);
+        if (gone.length) await db.from("todo_areas").delete().in("id", gone).eq("owner", owner);
+        // Park codes first so swapping letters between two areas doesn't clash.
+        for (const a of want.filter((a: any) => a.id && cur.some((c) => c.id === a.id))) await db.from("todo_areas").update({ code: `Z${String(a.position).padStart(2, "0")}`.slice(0, 3).replace(/\d/g, (d) => "ABCDEFGHIJ"[+d]) }).eq("id", a.id).eq("owner", owner);
+        for (const a of want) {
+          if (a.id && cur.some((c) => c.id === a.id)) await db.from("todo_areas").update({ code: a.code, name: a.name, position: a.position }).eq("id", a.id).eq("owner", owner);
+          else { const { error } = await db.from("todo_areas").insert({ owner, code: a.code, name: a.name, position: a.position }); if (error) throw error; }
+        }
+        return json({ areas: await areasOf(owner) });
       }
 
       case "link_create": {

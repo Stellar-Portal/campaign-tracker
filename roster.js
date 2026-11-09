@@ -1,12 +1,12 @@
-import { confirmDialog } from "./dialog.js?v=20261109b";
+import { confirmDialog } from "./dialog.js?v=20261109c";
 // Creator roster: the creators Stellar works with, each with topline numbers from their recent
 // TikTok videos (ScrapeCreators, refreshed weekly by the roster Edge Function) and, on request,
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261109b";
-import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261109b";
-import { openCreatorImport } from "./creator-import.js?v=20261109b";
+import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261109c";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261109c";
+import { openCreatorImport } from "./creator-import.js?v=20261109c";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
