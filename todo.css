@@ -136,3 +136,32 @@ body.td-page { background: var(--parchment); }
   .td-sum b { font-size: 24px; }
   .td-step span { font-size: 11px; }
 }
+
+/* ---------- Stellar OS: floating to-do button + right-hand sidebar (mountTodoInOS) ---------- */
+.td-fab { position: fixed; right: 24px; bottom: 24px; z-index: 47; width: 54px; height: 54px; padding: 0; border-radius: 50%; display: grid; place-items: center;
+  background: var(--canvas); color: var(--accent); border: none; box-shadow: 0 6px 22px rgba(0,0,0,0.16), 0 0 0 1px rgba(0,0,0,0.05); transition: box-shadow .2s, transform .2s; }
+.td-fab:hover { border: none; box-shadow: 0 10px 28px rgba(0,0,0,0.2), 0 0 0 1px rgba(6,38,199,0.25); transform: translateY(-1px); }
+.td-fab .td-ico { width: 27px; height: 27px; }
+.td-fab .td-dot { display: none; top: 5px; right: 5px; border-color: var(--canvas); }
+.td-fab.pending .td-dot { display: block; }
+.td-fab.pending::before { content: ""; position: absolute; inset: 0; border-radius: 50%; animation: td-ring 2.2s ease-out infinite; pointer-events: none; }
+@keyframes td-ring { 0% { box-shadow: 0 0 0 0 rgba(6,38,199,0.42); } 70%, 100% { box-shadow: 0 0 0 16px rgba(6,38,199,0); } }
+body.has-todo .to-top:not(.in-panel) { bottom: 90px; }
+body.signin .td-fab, body.signin .td-drawer { display: none; }
+.td-drawer[hidden] { display: none; }
+.td-drawer-back { position: fixed; inset: 0; z-index: 62; background: rgba(0,0,0,0); transition: background .2s; }
+.td-drawer.in .td-drawer-back { background: rgba(0,0,0,0.18); }
+.td-drawer-panel { position: fixed; z-index: 63; top: 0; right: 0; bottom: 0; width: min(480px, 100vw); background: var(--parchment); box-shadow: -18px 0 48px rgba(0,0,0,0.18);
+  overflow-y: auto; overscroll-behavior: contain; transform: translateX(100%); transition: transform .22s ease; outline: none; }
+.td-drawer.in .td-drawer-panel { transform: none; }
+.td-panel.td-side { max-width: none; margin: 0; padding: 0 18px calc(28px + env(safe-area-inset-bottom)); }
+.td-side .td-hide-side { display: none; }
+.td-side .td-title { font-size: 21px; }
+.td-side .td-title .td-ico { width: 25px; height: 25px; }
+.td-x { border-color: transparent; }
+@media (max-width: 760px) {
+  .td-fab { right: 16px; bottom: 16px; width: 50px; height: 50px; }
+  body.has-todo .to-top:not(.in-panel) { bottom: 78px; }
+}
+.td-flow-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 38px; }
+.td-side .td-flow-head { padding-top: 14px; }

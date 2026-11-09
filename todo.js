@@ -1,14 +1,19 @@
-// Personal to-do list (beta). A separate page for now (todo.html); later it moves into Stellar OS as the
-// floating to-do button + right-hand sidebar, so everything renders into one panel element.
-// Access: a private link (todo.html#k=<key>, kept in this browser) or the Stellar OS session in this browser.
+// Personal to-do list (beta). Runs in two places from this one file:
+//   - todo.html: a page of its own (opened with a private link, or the Stellar OS session in this browser)
+//   - Stellar OS: a floating to-do button bottom-right on every page that opens a right-hand sidebar
+//     (mountTodoInOS, called from app.js after sign-in; it uses the OS session and only shows for people
+//     the beta is switched on for).
+// Everything renders into one panel element (root).
 // Weeks run Monday to Sunday, Copenhagen time. The Friday recap opens from 17:00 on Friday; the week overview
 // from 08:00 on Monday. Both light up the week button with a pulsing blue dot until they're gone through.
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261109a";
-import { confirmDialog } from "./dialog.js?v=20261109a";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261109b";
+import { confirmDialog } from "./dialog.js?v=20261109b";
 
 const FN = `${SUPABASE_URL}/functions/v1/todo`;
 const KEY_STORE = "stellar-todo-key";
-const root = document.getElementById("todo");
+let root = null;
+// Where it's running: the page (standalone) or the OS sidebar.
+let HOST = { standalone: true, sb: null, scroller: null, onClose: null, onPending: null };
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }, del(k) { try { localStorage.removeItem(k); } catch { /* */ } } };
 
@@ -24,6 +29,7 @@ const I = {
   cal: svg('<rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'),
   reply: svg('<path d="M10 7 5 12l5 5"/><path d="M5.5 12H14a5 5 0 0 1 5 5v1"/>'),
   check: '<svg viewBox="0 0 14 14" aria-hidden="true"><path d="m3 7.3 2.6 2.6L11 4.5"/></svg>',
+  close: svg('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>'),
 };
 
 // ---------- Copenhagen time ----------
@@ -56,6 +62,7 @@ function dueLabel(due) {
 // ---------- talking to the server ----------
 let auth = null;   // { header, value }
 async function setupAuth() {
+  if (HOST.sb) return (auth = { header: "Authorization", fromOS: true });
   const m = location.hash.match(/[#&]k=([A-Za-z0-9_-]{32,100})/);
   if (m) { store.set(KEY_STORE, m[1]); history.replaceState(null, "", location.pathname + location.search); }
   const key = store.get(KEY_STORE);
@@ -69,7 +76,10 @@ async function setupAuth() {
 }
 async function api(action, body = {}) {
   const headers = { "Content-Type": "application/json", apikey: SUPABASE_PUBLISHABLE_KEY };
-  if (auth) headers[auth.header] = auth.value;
+  if (auth?.fromOS) {
+    const { data } = await HOST.sb.auth.getSession();   // always the current token (it refreshes)
+    if (data.session?.access_token) headers.Authorization = `Bearer ${data.session.access_token}`;
+  } else if (auth) headers[auth.header] = auth.value;
   const r = await fetch(FN, { method: "POST", headers, body: JSON.stringify({ action, ...body }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(j.error || "Something went wrong. Please try again."); e.locked = !!j.locked; throw e; }
@@ -90,7 +100,7 @@ function toast(msg) {
 }
 async function act(fn, okMsg) {
   try { const r = await fn(); if (okMsg) toast(okMsg); return r; }
-  catch (e) { toast(e.message); if (e.locked) return boot(); return null; }
+  catch (e) { toast(e.message); if (e.locked && HOST.standalone) return boot(); return null; }
 }
 
 // Order of the main list: urgent, then by due date, then as added. Numbers follow this order (the AI box uses them).
@@ -116,10 +126,15 @@ function planPending() {
 
 // ---------- rendering ----------
 function render() {
-  if (S.view === "recap") return renderRecap();
-  if (S.view === "plan") return renderPlan();
-  renderList();
+  if (!root) return;
+  if (S.view === "recap") renderRecap();
+  else if (S.view === "plan") renderPlan();
+  else renderList();
+  HOST.onPending?.(recapPending() || planPending());
 }
+// Top row of the recap / week overview: back to the list, and (in the OS sidebar) close.
+const flowTop = () => `<div class="td-flow-top"><button type="button" class="link-btn" id="td-back">‹ Back to the list</button>${HOST.onClose ? `<button type="button" class="td-iconbtn td-x" id="td-x" aria-label="Close the to-do list">${I.close}</button>` : ""}</div>`;
+const toTop = () => (HOST.scroller ? (HOST.scroller.scrollTop = 0) : window.scrollTo(0, 0));
 
 function headHTML() {
   const rp = recapPending(), pp = planPending(), pending = rp || pp;
@@ -128,18 +143,21 @@ function headHTML() {
     <h1 class="td-title">${ICON_TODO}To-do <span class="td-beta">Beta</span></h1>
     <span class="td-sp"></span>
     <button type="button" class="td-iconbtn td-week${pending ? " pending" : ""}" id="td-week" aria-label="${pending ? `${label} is ready` : "Week overview"}">${I.week}<span class="td-hide-sm">${label}</span>${pending ? '<i class="td-dot" aria-hidden="true"></i>' : ""}</button>
-    <button type="button" class="td-iconbtn" id="td-snap" title="Turn a photo of your notes into tasks" aria-label="Snap your notes">${I.camera}<span class="td-hide-sm">Snap notes</span></button>
+    <button type="button" class="td-iconbtn" id="td-snap" title="Turn a photo of your notes into tasks" aria-label="Snap your notes">${I.camera}<span class="td-hide-sm td-hide-side">Snap notes</span></button>
     <details class="td-menu"><summary class="btn td-iconbtn" aria-label="More">${I.more}</summary><div class="td-menu-pop">
       <button type="button" data-m="link">Private link for your phone</button>
       <button type="button" data-m="recap">Try the Friday recap now</button>
       <button type="button" data-m="plan">Try the Monday overview now</button>
       ${auth?.header === "x-todo-key" ? '<button type="button" data-m="forget">Forget this device</button>' : ""}
+      ${HOST.standalone ? "" : '<button type="button" data-m="page">Open as a full page</button>'}
     </div></details>
+    ${HOST.onClose ? `<button type="button" class="td-iconbtn td-x" id="td-x" aria-label="Close the to-do list">${I.close}</button>` : ""}
   </header>
   <input type="file" id="td-file" accept="image/*" hidden>`;
 }
 function wireHead() {
   document.getElementById("td-week").onclick = () => openFlow();
+  document.getElementById("td-x")?.addEventListener("click", () => HOST.onClose?.());
   document.getElementById("td-snap").onclick = () => document.getElementById("td-file").click();
   document.getElementById("td-file").onchange = (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) snap(f); };
   const menu = root.querySelector(".td-menu");
@@ -149,6 +167,7 @@ function wireHead() {
     if (m === "link") linkDialog();
     if (m === "recap") openFlow("recap", true);
     if (m === "plan") openFlow("plan", true);
+    if (m === "page") window.open("todo.html", "_blank", "noopener");
     if (m === "forget") confirmDialog({ title: "Forget this device?", body: "This browser stops opening your list. Your tasks stay saved, and your private link still works on other devices.", confirm: "Forget" })
       .then((ok) => { if (ok) { store.del(KEY_STORE); boot(); } });
   }));
@@ -374,7 +393,7 @@ function openFlow(which, preview = false) {
   S.preview = preview; S.step = 0; S.proposal = null;
   S.view = which ?? (recapPending() ? "recap" : planPending() ? "plan" : "plan");
   S.flowWeek = S.view === "recap" ? (preview ? mondayOf() : recapWeek()) : mondayOf();
-  render(); window.scrollTo(0, 0);
+  render(); toTop();
 }
 const RECAP_STEPS = [
   { key: "done", label: "Done", title: "Done and partly done", text: "What you finished this week, and what's partly there. Untick anything that isn't really done." },
@@ -419,16 +438,17 @@ function renderRecap() {
       <div class="td-sum"><div><b>${done}</b><span>done</span></div><div><b>${g.done.filter((t) => t.status === "partial").length}</b><span>partly done</span></div><div><b>${carry}</b><span>carrying over</span></div></div>
       ${removed ? `<p class="small muted">${removed} removed this week.</p>` : ""}`;
   }
-  root.innerHTML = `<div class="td-flow-head"><button type="button" class="link-btn" id="td-back">‹ Back to the list</button>
+  root.innerHTML = `<div class="td-flow-head">${flowTop()}
       <div class="td-kicker" style="margin-top:12px">Friday recap${S.preview ? " · preview" : ""}</div><h2>${weekLabel(week)}</h2>
       <div class="td-steps">${RECAP_STEPS.map((s, i) => `<button type="button" class="td-step${i === S.step ? " on" : i < S.step ? " past" : ""}" data-step="${i}"><i></i><span>${i + 1}. ${s.label} (${g[s.key].length})</span></button>`).join("")}</div></div>
     ${body}
     <div class="td-flow-foot">${S.step > 0 ? '<button type="button" id="td-prev">Back</button>' : "<span></span>"}
       ${last ? `<button type="button" class="primary" id="td-close">${S.preview ? "Finish preview" : "Close the week"}</button>` : `<button type="button" class="primary" id="td-next">${S.step === RECAP_STEPS.length - 1 ? "Finish" : "Next"}</button>`}</div>`;
   document.getElementById("td-back").onclick = () => { S.view = "list"; render(); };
+  document.getElementById("td-x")?.addEventListener("click", () => HOST.onClose?.());
   root.querySelectorAll("[data-step]").forEach((b) => (b.onclick = () => { S.step = Number(b.dataset.step); S.proposal = null; render(); }));
-  document.getElementById("td-prev")?.addEventListener("click", () => { S.step--; S.proposal = null; render(); window.scrollTo(0, 0); });
-  document.getElementById("td-next")?.addEventListener("click", () => { S.step++; S.proposal = null; render(); window.scrollTo(0, 0); });
+  document.getElementById("td-prev")?.addEventListener("click", () => { S.step--; S.proposal = null; render(); toTop(); });
+  document.getElementById("td-next")?.addEventListener("click", () => { S.step++; S.proposal = null; render(); toTop(); });
   document.getElementById("td-close")?.addEventListener("click", async () => {
     if (S.preview) { S.view = "list"; toast("Preview finished. Nothing was carried over."); return render(); }
     const r = await act(() => api("close_week", { week }));
@@ -448,7 +468,7 @@ function renderPlan() {
   const all = [...carried, ...added];
   let n = 0;
   const qa = () => '<button type="button" data-qa="done">Done</button><button type="button" data-qa="urgent">Urgent</button><button type="button" data-qa="drop">Remove</button>';
-  root.innerHTML = `<div class="td-flow-head"><button type="button" class="link-btn" id="td-back">‹ Back to the list</button>
+  root.innerHTML = `<div class="td-flow-head">${flowTop()}
       <div class="td-kicker" style="margin-top:12px">Your week${S.preview ? " · preview" : ""}</div><h2>${weekLabel(week)}</h2>
       <p class="muted" style="margin:0">${carried.length ? `${carried.length} task${carried.length === 1 ? "" : "s"} carried over from last week.` : "Nothing carried over from last week."}</p></div>
     <h3 class="td-sec">Carried over <span class="n">${carried.length}</span></h3>
@@ -466,6 +486,7 @@ function renderPlan() {
     ${aiHTML("e.g. “2 is urgent, push 4 to Thursday”")}
     <div class="td-flow-foot"><span></span><button type="button" class="primary" id="td-start">${S.preview ? "Finish preview" : "Start the week"}</button></div>`;
   document.getElementById("td-back").onclick = () => { S.view = "list"; render(); };
+  document.getElementById("td-x")?.addEventListener("click", () => HOST.onClose?.());
   document.getElementById("td-plan-snap").onclick = () => { const f = Object.assign(document.createElement("input"), { type: "file", accept: "image/*" }); f.onchange = () => f.files?.[0] && snap(f.files[0]); f.click(); };
   document.getElementById("td-start").onclick = async () => {
     if (!S.preview) { const r = await act(() => api("plan_done", { week })); if (!r) return; S.weeks = S.weeks.filter((w) => w.week_start !== week).concat({ ...weekRow(week), week_start: week, plan_done_at: new Date().toISOString() }); }
@@ -517,6 +538,7 @@ async function load() {
   S.items = r.items; S.weeks = r.weeks;
 }
 function locked(msg) {
+  if (!HOST.standalone) { root.innerHTML = `<p class="muted td-pad">${esc(msg || "The to-do list isn't available right now.")}</p>`; return; }
   root.innerHTML = `<div class="td-locked">${ICON_TODO}<h1>Your to-do list</h1>
     <p class="muted">${esc(msg || "Open your private link, or sign in to Stellar OS in this browser.")}</p>
     <p><a class="btn" href="./">Open Stellar OS</a></p></div>`;
@@ -536,10 +558,86 @@ async function boot() {
   render();
 }
 // Close the "more" menu on a click outside it or Escape.
-document.addEventListener("click", (e) => { const m = root.querySelector(".td-menu[open]"); if (m && !m.contains(e.target)) m.open = false; });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") root.querySelector(".td-menu[open]")?.removeAttribute("open"); });
-// Keep the week button honest if the page stays open across Friday 17:00 or Monday 08:00.
-setInterval(() => { if (S.view === "list" && S.cfg && !document.querySelector("dialog[open]") && document.activeElement?.tagName !== "TEXTAREA") render(); }, 5 * 60_000);
-// A private link opened in a tab that already shows this page.
-window.addEventListener("hashchange", () => { if (/[#&]k=/.test(location.hash)) boot(); });
-boot();
+document.addEventListener("click", (e) => { const m = root?.querySelector(".td-menu[open]"); if (m && !m.contains(e.target)) m.open = false; });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") root?.querySelector(".td-menu[open]")?.removeAttribute("open"); });
+const quiet = () => !document.querySelector("dialog[open]") && document.activeElement?.tagName !== "TEXTAREA";
+
+// ---------- todo.html: the page of its own ----------
+if (document.body.classList.contains("td-page")) {
+  root = document.getElementById("todo");
+  // Keep the week button honest if the page stays open across Friday 17:00 or Monday 08:00.
+  setInterval(() => { if (S.view === "list" && S.cfg && quiet()) render(); }, 5 * 60_000);
+  // A private link opened in a tab that already shows this page.
+  window.addEventListener("hashchange", () => { if (/[#&]k=/.test(location.hash)) boot(); });
+  boot();
+}
+
+// ---------- Stellar OS: floating button + right-hand sidebar ----------
+let os = null;   // { user, fab, drawer, close }
+export async function mountTodoInOS(sb, user) {
+  if (os?.user === user.id) return;
+  unmountTodoInOS();
+  const mine = { user: user.id };
+  os = mine;
+  HOST = { standalone: false, sb, scroller: null, onClose: null, onPending: null };
+  await setupAuth();
+  try { S.cfg = await api("config"); await load(); }
+  catch { if (os === mine) os = { user: user.id, off: true }; return; }   // not in the beta (or offline): no button
+  if (os !== mine) return;
+
+  const fab = document.createElement("button");
+  fab.type = "button"; fab.className = "td-fab"; fab.title = "To-do";
+  fab.setAttribute("aria-label", "To-do list"); fab.setAttribute("aria-haspopup", "dialog");
+  fab.innerHTML = `${ICON_TODO}<i class="td-dot" aria-hidden="true"></i>`;
+  const drawer = document.createElement("div");
+  drawer.className = "td-drawer"; drawer.hidden = true;
+  drawer.innerHTML = `<div class="td-drawer-back"></div><aside class="td-drawer-panel" role="dialog" aria-modal="false" aria-label="To-do list" tabindex="-1"><div class="td-panel td-side"></div></aside>`;
+  document.body.append(fab, drawer);
+  document.body.classList.add("has-todo");
+  const panel = drawer.querySelector(".td-drawer-panel");
+  root = drawer.querySelector(".td-panel");
+
+  let closing;
+  const isOpenNow = () => !drawer.hidden && drawer.classList.contains("in");
+  const close = () => {
+    if (drawer.hidden) return;
+    drawer.classList.remove("in"); fab.setAttribute("aria-expanded", "false");
+    clearTimeout(closing); closing = setTimeout(() => { drawer.hidden = true; }, 230);
+    fab.focus({ preventScroll: true });
+  };
+  const open = async () => {
+    clearTimeout(closing);
+    drawer.hidden = false; fab.setAttribute("aria-expanded", "true");
+    requestAnimationFrame(() => drawer.classList.add("in"));
+    try { await load(); } catch { /* show what we have */ }
+    // A waiting Friday recap or Monday overview opens first.
+    if (recapPending()) openFlow("recap"); else if (planPending()) openFlow("plan"); else { S.view = "list"; render(); }
+    panel.focus({ preventScroll: true });
+  };
+  HOST.scroller = panel;
+  HOST.onClose = close;
+  HOST.onPending = (p) => {
+    fab.classList.toggle("pending", p);
+    fab.setAttribute("aria-label", p ? (recapPending() ? "To-do list: your Friday recap is ready" : "To-do list: your week overview is ready") : "To-do list");
+  };
+  fab.onclick = () => (isOpenNow() ? close() : open());
+  drawer.querySelector(".td-drawer-back").onclick = close;
+  const onKey = (e) => { if (e.key === "Escape" && isOpenNow() && !document.querySelector("dialog[open], .dlg-back") && !root.querySelector(".td-menu[open]")) close(); };
+  document.addEventListener("keydown", onKey);
+  // The dot appears by itself at Friday 17:00 / Monday 08:00 even if nobody opens the list.
+  const tick = setInterval(async () => {
+    if (isOpenNow()) { if (S.view === "list" && quiet()) render(); return; }
+    try { await load(); } catch { /* keep the last state */ }
+    HOST.onPending?.(recapPending() || planPending());
+  }, 10 * 60_000);
+  HOST.onPending(recapPending() || planPending());
+  os = { user: user.id, fab, drawer, close, open, cleanup: () => { document.removeEventListener("keydown", onKey); clearInterval(tick); } };
+}
+export function unmountTodoInOS() {
+  if (!os) return;
+  os.cleanup?.(); os.fab?.remove(); os.drawer?.remove();
+  document.body.classList.remove("has-todo");
+  os = null; root = null; S.items = []; S.weeks = []; S.view = "list"; auth = null;
+}
+// Lets other parts of the OS open the list (e.g. a link to the Friday recap later).
+export const openTodo = () => os?.open?.();
