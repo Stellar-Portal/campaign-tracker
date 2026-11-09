@@ -209,7 +209,7 @@ body.td-page { background: var(--parchment); }
 .td-hero.done svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 @keyframes td-hero { from { opacity: 0; transform: scale(.8) rotate(-6deg); } to { opacity: 1; transform: none; } }
 .td-example { display: grid; gap: 8px; margin: 0 0 22px; }
-.td-example span { display: flex; align-items: center; gap: 10px; background: var(--canvas); border-radius: 12px; padding: 11px 14px; font: 500 15px/1.3 "Marker Felt", "Bradley Hand", "Segoe Print", var(--font); color: var(--ink-80); box-shadow: 0 0 0 1px var(--td-line); }
+.td-example span { display: flex; align-items: center; gap: 10px; background: var(--canvas); border-radius: 12px; padding: 11px 14px; font: 500 15px/1.3 var(--font); color: var(--ink-80); box-shadow: 0 0 0 1px var(--td-line); }
 .td-setup-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 18px; }
 .td-setup-actions .primary { height: 44px; padding: 0 22px; border-radius: 14px; font-weight: 600; }
 .td-pick { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -232,7 +232,7 @@ body.td-page { background: var(--parchment); }
 .td-letter.bad { box-shadow: 0 0 0 2px var(--bad) !important; }
 .td-err { min-height: 18px; margin: 8px 2px 0; font-size: 13px; color: var(--bad); font-weight: 500; }
 .td-paper { margin-top: 6px; padding: 12px 14px; border-radius: 12px; background: #fffdf3; box-shadow: inset 0 0 0 1px #f0e8c8; font-size: 13px; color: var(--muted); }
-.td-paper b { color: var(--ink); font: 500 16px "Marker Felt", "Bradley Hand", "Segoe Print", var(--font); margin-left: 4px; }
+.td-paper b { color: var(--ink); font: 600 15px var(--font); margin-left: 4px; }
 .td-legend { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 8px; }
 .td-legend li { display: flex; align-items: center; gap: 12px; font-size: 15px; animation: td-rise .35s var(--td-ease) both; }
 .td-legend li:nth-child(2) { animation-delay: .05s; } .td-legend li:nth-child(3) { animation-delay: .1s; } .td-legend li:nth-child(4) { animation-delay: .15s; } .td-legend li:nth-child(n+5) { animation-delay: .2s; }
