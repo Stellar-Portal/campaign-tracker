@@ -300,6 +300,29 @@ body.td-page { background: var(--parchment); }
 .td-locked .td-ico { width: 48px; height: 48px; color: var(--accent); }
 .td-locked h1 { font: 600 26px/1.2 var(--font-display); margin: 16px 0 8px; }
 
+/* Select several tasks: remove or tick them off together */
+.td-subrow { display: flex; align-items: center; gap: 8px; margin: -4px 0 8px; }
+.td-subrow .td-sub { flex: 1; min-width: 0; margin: 0; }
+.td-sel-toggle { padding: 5px 12px; font-size: 13px; color: var(--accent); margin-right: -8px; }
+.td-sel-toggle:hover { background: var(--accent-tint); }
+.td-check.sq { border-radius: 7px; }
+.td-item.sel { background: var(--accent-tint); }
+.td-item.sel:hover { background: var(--accent-tint); }
+.td-selbar { position: sticky; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 5; display: flex; align-items: center; gap: 4px; margin: 18px auto 0; max-width: 560px; padding: 6px 6px 6px 16px; border-radius: var(--pill); background: rgba(29,29,31,.94); color: #fff; box-shadow: 0 10px 30px rgba(0,0,0,.22); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); animation: td-rise .3s var(--td-ease) both; }
+.td-selbar-n { font-size: 14px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.td-selbar .td-ghost-text { color: #fff; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.td-selbar .td-ghost-text:hover { background: rgba(255,255,255,.12); }
+.td-selbar .td-ghost-text svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.td-selbar button:disabled { opacity: .4; cursor: default; background: none; }
+.td-danger { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--pill); background: #e5484d; color: #fff; font-size: 13.5px; font-weight: 600; white-space: nowrap; transition: background .18s; }
+.td-danger:hover:not(:disabled) { background: #d13438; }
+.td-danger .td-ico, .td-clear-done .td-ico { width: 16px; height: 16px; }
+.td-danger:focus-visible, .td-selbar .td-ghost-text:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.td-clear-done { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 13px; color: var(--muted); }
+.td-clear-done:hover { background: rgba(0,0,0,.05); color: var(--ink); }
+.td-wide .td-selbar { position: fixed; left: 50%; transform: translateX(-50%); width: min(560px, calc(100vw - 32px)); margin: 0; animation: none; }
+@media (max-width: 420px) { .td-selbar { padding-left: 14px; gap: 0; } .td-selbar .td-ghost-text { padding: 8px 9px; } .td-danger { padding: 8px 12px; } }
+
 /* Priority picker in setup */
 .td-prio-sel { flex: none; width: auto !important; max-width: 128px; height: 34px; padding: 0 28px 0 10px !important; border-radius: 10px !important; font-size: 13px !important; background-color: var(--parchment) !important; border-color: transparent !important; color: var(--ink); }
 .td-letters li.fixed .td-prio-sel { background-color: var(--canvas) !important; }

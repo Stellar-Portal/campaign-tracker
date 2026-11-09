@@ -10,8 +10,8 @@
 // next to tasks on paper; M = Meetings & calls is there for everyone. Photos, quick add and the AI box use them.
 // Weeks run Monday to Sunday, Copenhagen time. The Friday recap opens from 17:00 on Friday; the week overview
 // from 08:00 on Monday. Both light up the week button (and the OS button) until they're gone through.
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261109e";
-import { confirmDialog } from "./dialog.js?v=20261109e";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261109f";
+import { confirmDialog } from "./dialog.js?v=20261109f";
 
 const FN = `${SUPABASE_URL}/functions/v1/todo`;
 const KEY_STORE = "stellar-todo-key";
@@ -36,6 +36,7 @@ const I = {
   back: svg('<path d="M14.5 5.5 8 12l6.5 6.5"/>'),
   chev: svg('<path d="m9.5 5.5 6.5 6.5-6.5 6.5"/>'),
   close: svg('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>'),
+  trash: svg('<path d="M5 7h14M10 7V5.2c0-.7.5-1.2 1.2-1.2h1.6c.7 0 1.2.5 1.2 1.2V7M7 7l.8 11.3c.1 1 .9 1.7 1.9 1.7h4.6c1 0 1.8-.7 1.9-1.7L17 7"/>'),
   flag: svg('<path d="M6 20.5V4.5M6 5h10.5l-2 3.8 2 3.7H6"/>'),
   clock: svg('<circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/>'),
   check: '<svg viewBox="0 0 14 14" aria-hidden="true"><path d="m3 7.3 2.6 2.6L11 4.5"/></svg>',
@@ -146,7 +147,7 @@ async function api(action, body = {}) {
 
 // ---------- state ----------
 const S = { items: [], weeks: [], areas: [], cfg: null, view: "list", prev: "list", taskId: null, filter: "all", step: 0, preview: false,
-  flowWeek: null, proposal: null, aiBusy: false, aiOpen: false, setup: null, snap: null, linkFresh: null, links: null, skipSetup: false };
+  flowWeek: null, proposal: null, aiBusy: false, aiOpen: false, setup: null, snap: null, linkFresh: null, links: null, skipSetup: false, select: null };
 const byId = (id) => S.items.find((x) => x.id === id);
 const weekRow = (w) => S.weeks.find((x) => x.week_start === w) ?? {};
 const isOpen = (t) => t.status === "open" || t.status === "partial";
@@ -199,7 +200,7 @@ function render(dir = "none") {
   ({ setup: wireSetup, task: wireTask, snap: wireSnap, recap: wireRecap, plan: wirePlan, link: wireLink }[v] ?? wireList)();
   HOST.onPending?.(recapPending() || planPending());
 }
-function go(view, dir = "fwd") { S.prev = S.view === "task" ? S.prev : S.view; S.view = view; S.proposal = null; render(dir); toTop(); }
+function go(view, dir = "fwd") { S.select = null; S.prev = S.view === "task" ? S.prev : S.view; S.view = view; S.proposal = null; render(dir); toTop(); }
 const toTop = () => (HOST.scroller ? (HOST.scroller.scrollTop = 0) : window.scrollTo(0, 0));
 const closeBtn = () => HOST.onClose ? `<button type="button" class="td-ghost td-x" data-close aria-label="Close the to-do list">${I.close}</button>` : "";
 const backBar = (label = "Back", extra = "") => `<div class="td-bar"><button type="button" class="td-ghost td-back" data-back>${I.back}<span>${esc(label)}</span></button><span class="td-sp"></span>${extra}${closeBtn()}</div>`;
@@ -257,8 +258,9 @@ function rowHTML(t, n, opts = {}) {
     t.project ? `<span class="td-tag plain">${esc(t.project)}</span>` : "",
   ].join("");
   const state = t.status === "done" ? "on" : t.status === "partial" ? "half" : "";
-  return `<li class="td-item${t.status === "done" ? " done" : ""}" data-id="${esc(t.id)}" style="--i:${Math.min(n || 0, 14)}">
-    <button type="button" class="td-check ${state}" data-toggle aria-label="${t.status === "done" ? "Mark as not done" : "Mark as done"}: ${esc(t.title)}">${I.check}</button>
+  return `<li class="td-item${t.status === "done" ? " done" : ""}${S.select?.has(t.id) ? " sel" : ""}" data-id="${esc(t.id)}" style="--i:${Math.min(n || 0, 14)}">
+    ${S.select ? `<button type="button" class="td-check sq${S.select.has(t.id) ? " on" : ""}" data-sel aria-pressed="${S.select.has(t.id)}" aria-label="Select: ${esc(t.title)}">${I.check}</button>`
+      : `<button type="button" class="td-check ${state}" data-toggle aria-label="${t.status === "done" ? "Mark as not done" : "Mark as done"}: ${esc(t.title)}">${I.check}</button>`}
     <div class="td-body" data-open tabindex="0" role="button" aria-label="Open ${esc(t.title)}">
       <div class="td-t">${n ? `<span class="td-num">${n}</span>` : ""}${esc(t.title)}</div>
       ${meta ? `<div class="td-meta">${meta}</div>` : ""}
@@ -271,6 +273,15 @@ function wireRows(scope = root) {
   scope.querySelectorAll(".td-item").forEach((li) => {
     const t = byId(li.dataset.id);
     if (!t) return;
+    if (S.select) {   // select mode: a click anywhere on the row picks it
+      const pick = () => { const on = !S.select.has(t.id); on ? S.select.add(t.id) : S.select.delete(t.id); li.classList.toggle("sel", on); const b = li.querySelector("[data-sel]"); b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); updateSelectBar(); };
+      li.querySelector("[data-sel]").onclick = (e) => { e.stopPropagation(); pick(); };
+      const body = li.querySelector("[data-open]");
+      body.setAttribute("aria-label", `Select ${t.title}`);
+      body.onclick = pick;
+      body.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === body) { e.preventDefault(); pick(); } };
+      return;
+    }
     li.querySelector("[data-toggle]").onclick = () => toggleDone(t, li);
     const body = li.querySelector("[data-open]");
     body.onclick = (e) => { if (!e.target.closest("button")) openTask(t.id); };
@@ -356,6 +367,60 @@ function listGroups(open) {
   }
   return g;
 }
+// ---------- removing or ticking off several tasks at once ----------
+const selectToggle = () => S.items.some((t) => isOpen(t) || t.status === "done")
+  ? `<button type="button" class="td-ghost-text td-sel-toggle" id="td-sel-toggle">${S.select ? "Cancel" : "Select"}</button>` : "";
+const doneHTML = (done) => `<details class="td-done-toggle"${S.doneOpen ? " open" : ""}><summary>Done this week · ${done.length}</summary>
+  <ul class="td-list">${done.map((t) => rowHTML(t, 0)).join("")}</ul>
+  ${S.select ? "" : `<button type="button" class="td-ghost-text td-clear-done" id="td-clear-done">${I.trash}Clear done tasks</button>`}</details>`;
+const selectBar = () => S.select ? `<div class="td-selbar" role="toolbar" aria-label="Selected tasks">
+    <span class="td-selbar-n" id="td-sel-n">${S.select.size} selected</span>
+    <button type="button" class="td-ghost-text" id="td-sel-all">Select all</button>
+    <span class="td-sp"></span>
+    <button type="button" class="td-ghost-text" id="td-sel-done"${S.select.size ? "" : " disabled"}>${I.check}Done</button>
+    <button type="button" class="td-danger" id="td-sel-rm"${S.select.size ? "" : " disabled"}>${I.trash}Remove</button>
+  </div>` : "";
+function updateSelectBar() {
+  const n = S.select?.size ?? 0;
+  const lab = document.getElementById("td-sel-n"); if (lab) lab.textContent = `${n} selected`;
+  for (const id of ["td-sel-done", "td-sel-rm"]) { const b = document.getElementById(id); if (b) b.disabled = !n; }
+  const all = document.getElementById("td-sel-all"); if (all) all.textContent = n && n >= visibleIds().length ? "Select none" : "Select all";
+}
+const visibleIds = () => [...root.querySelectorAll(".td-item[data-id]")].filter((li) => !li.closest("details:not([open])")).map((li) => li.dataset.id);
+function setSelect(on) { S.select = on ? new Set() : null; render("none"); }
+// Changes many tasks with one request, with Undo that puts each one back as it was.
+async function bulkStatus(ids, to, msg) {
+  const list = ids.map(byId).filter(Boolean);
+  if (!list.length) return;
+  const prev = list.map((t) => [t, t.status]);
+  const r = await act(() => api("apply", { ops: list.map((t) => ({ op: to === "dropped" ? "drop" : "done", id: t.id })) }));
+  if (!r) return;
+  upsert(r.items); S.select = null; render("fade");
+  toast(msg(list.length), { label: "Undo", run: async () => {
+    const back = await act(() => Promise.all(prev.map(([t, st]) => api("save", { item: { id: t.id, status: st } }))));
+    if (back) { upsert(back.map((x) => x.item)); render(); }
+  } });
+}
+function wireSelect() {
+  const tg = document.getElementById("td-sel-toggle");
+  if (tg) tg.onclick = () => setSelect(!S.select);
+  const dt = root.querySelector(".td-done-toggle");
+  if (dt) dt.ontoggle = () => { S.doneOpen = dt.open; if (S.select) updateSelectBar(); };
+  const clear = document.getElementById("td-clear-done");
+  if (clear) clear.onclick = () => {
+    const ids = [...root.querySelectorAll(".td-done-toggle .td-item[data-id]")].map((li) => li.dataset.id);
+    bulkStatus(ids, "dropped", (n) => `${n} done task${n === 1 ? "" : "s"} cleared`);
+  };
+  if (!S.select) return;
+  document.getElementById("td-sel-all").onclick = () => {
+    const ids = visibleIds(), all = S.select.size >= ids.length && ids.length;
+    S.select = new Set(all ? [] : ids); render("none");
+  };
+  document.getElementById("td-sel-done").onclick = () => bulkStatus([...S.select].filter((id) => isOpen(byId(id) ?? {})), "done", (n) => `${n} task${n === 1 ? "" : "s"} marked done`);
+  document.getElementById("td-sel-rm").onclick = () => bulkStatus([...S.select], "dropped", (n) => `${n} task${n === 1 ? "" : "s"} removed`);
+  updateSelectBar();
+}
+
 // Full page on a laptop: every folder side by side, highest priority first (same priority = next to each other).
 const isWide = () => !!HOST.standalone && window.innerWidth >= 1100 && S.areas.length > 0;
 function boardCols() {
@@ -382,7 +447,7 @@ function boardHTML() {
     </div>`;
   return `${headHTML()}
     <div class="td-wide-top">
-      <p class="td-sub">${weekLabel(week)} · ${openAll.length} open${done.length ? ` · ${done.length} done` : ""}</p>
+      <div class="td-subrow"><p class="td-sub">${weekLabel(week)} · ${openAll.length} open${done.length ? ` · ${done.length} done` : ""}</p>${selectToggle()}</div>
       <form class="td-compose" id="td-add" autocomplete="off">
         <span class="td-compose-ico">${I.plus}</span>
         <textarea id="td-new" rows="1" placeholder="Add a task" aria-label="New task"></textarea>
@@ -397,7 +462,8 @@ function boardHTML() {
         <div class="td-pcols">${g.cols.map(col).join("")}</div>
       </section>`).join("")}
     </div>
-    ${done.length ? `<div class="td-wide-top"><details class="td-done-toggle"><summary>Done this week · ${done.length}</summary><ul class="td-list">${done.map((t) => rowHTML(t, 0)).join("")}</ul></details></div>` : ""}`;
+    ${done.length ? `<div class="td-wide-top">${doneHTML(done)}</div>` : ""}
+    ${selectBar()}`;
 }
 function listHTML() {
   if (isWide()) return boardHTML();
@@ -419,7 +485,7 @@ function listHTML() {
   const fa = S.filter !== "all" && S.filter !== "none" ? areaById(S.filter) : null;
   const tip = S.areas.length > 1 ? `Tip: start with a letter, e.g. “${esc(S.areas.find((a) => !a.builtin)?.code ?? "M")}: …”. Add EOD or EOW at the end.` : "Add EOD or EOW at the end to set when.";
   return `${headHTML()}
-    <p class="td-sub">${weekLabel(week)} · ${openAll.length} open${done.length ? ` · ${done.length} done` : ""}</p>
+    <div class="td-subrow"><p class="td-sub">${weekLabel(week)} · ${openAll.length} open${done.length ? ` · ${done.length} done` : ""}</p>${selectToggle()}</div>
     ${chips}
     <form class="td-compose" id="td-add" autocomplete="off">
       <span class="td-compose-ico">${I.plus}</span>
@@ -431,12 +497,13 @@ function listHTML() {
     <div class="td-lists stagger">
     ${open.length ? group("Urgent", g.urgent) + group("Today", g.today) + group("This week", g.week) + group("Later", g.later) + group("No date", g.none)
       : `<div class="td-empty">${ICON_TODO}<p>${S.filter === "all" ? "Nothing on your list." : "Nothing in this area."}</p><span>Add a task above, or snap a photo of your notepad.</span></div>`}
-    ${done.length ? `<details class="td-done-toggle"><summary>Done this week · ${done.length}</summary><ul class="td-list">${done.map((t) => rowHTML(t, 0)).join("")}</ul></details>` : ""}
-    </div>`;
+    ${done.length ? doneHTML(done) : ""}
+    </div>
+    ${selectBar()}`;
 }
 let numbered = [];
 function wireList() {
-  wireHead(); wireRows();
+  wireHead(); wireRows(); wireSelect();
   const inFilter = (t) => S.filter === "all" || (S.filter === "none" ? !t.area_id : t.area_id === S.filter);
   const wide = isWide();
   const g = listGroups(sortOpen(S.items.filter(isOpen).filter(inFilter)));
@@ -964,7 +1031,11 @@ async function boot() {
 }
 // Close the "more" menu on a click outside it or Escape.
 document.addEventListener("click", (e) => { const m = root?.querySelector(".td-menu[open]"); if (m && !m.contains(e.target)) m.open = false; });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") root?.querySelector(".td-menu[open]")?.removeAttribute("open"); });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (root?.querySelector(".td-menu[open]")) return root.querySelector(".td-menu[open]").removeAttribute("open");
+  if (S.select && S.view === "list" && !document.querySelector("dialog[open], .dlg-back")) { e.stopImmediatePropagation(); setSelect(false); }
+}, true);
 const quiet = () => !document.querySelector("dialog[open]") && !["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement?.tagName);
 
 // ---------- todo.html: the page of its own ----------
