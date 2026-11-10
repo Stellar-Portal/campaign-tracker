@@ -3,7 +3,11 @@
 <head>
   <meta charset="utf-8">
   <!-- Moving home: when NEW is set, the old GitHub address forwards to the new one (path and #link kept). -->
-  <script>(function(){var NEW="";if(NEW&&location.hostname==="stellar-portal.github.io"){location.replace(NEW+location.pathname.replace(/^\/campaign-tracker\/?/,"/")+location.search+location.hash)}})()</script>
+  <script>(function(){var NEW="";if(!NEW||location.hostname!=="stellar-portal.github.io")return;var h=location.hash,ls=null;try{ls=localStorage}catch(e){}
+  /* carry over what this browser saved here: a deck viewer's email pass, the private to-do key */
+  try{var t=(new URLSearchParams(h.slice(1)).get("t")||"").toLowerCase(),p=t&&ls&&ls.getItem("stellar-deck-pass:"+t);if(p)h+="&p="+encodeURIComponent(p);
+  var k=/todo\.html/.test(location.pathname)&&!/[#&]k=/.test(h)&&ls&&ls.getItem("stellar-todo-key");if(k)h="#k="+k}catch(e){}
+  location.replace(NEW+location.pathname.replace(/^\/campaign-tracker\/?/,"/")+location.search+h)})()</script>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Stellar OS</title>
   <meta name="robots" content="noindex, nofollow">

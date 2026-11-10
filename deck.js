@@ -15,6 +15,15 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
   del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
 };
+// A pass carried over from the old address (#t=…&p=…): keep it here, then take it out of the address bar.
+{
+  const hp = new URLSearchParams(location.hash.slice(1)), carried = hp.get("p");
+  if (carried && token) {
+    if (!store.get(PASS_KEY)) store.set(PASS_KEY, carried);
+    hp.delete("p");
+    try { history.replaceState(null, "", `${location.pathname}${location.search}#${hp.toString()}`); } catch { /* ignore */ }
+  }
+}
 const ARROW = (d) => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d === "prev" ? "M15 18l-6-6 6-6" : "M9 6l6 6-6 6"}"/></svg>`;
 
 // Stellar team members signed in to the OS in this browser view without being tracked.
