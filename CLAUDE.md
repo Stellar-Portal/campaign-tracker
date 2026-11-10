@@ -33,6 +33,7 @@ Sam asked: keep these until he asks to solve them, and **list them every time he
 
 ## Stack
 - Front end: static ES modules on GitHub Pages (https://stellar-portal.github.io/campaign-tracker/), no build step.
+  - Moving to Cloudflare Pages (pending #4): `_headers` holds the security headers there; every HTML page has a `NEW` redirect stub in `<head>` (empty = off) that forwards the GitHub address to the new one, keeping path and `#` token; `deck-notify` reads `STELLAR_OS_URL`; `figma-plugin/ui.html` still has the GitHub address. Links in the app are built from `location`, so they follow the domain by themselves.
   - Cache-busting `?v=YYYYMMDDx` on every import. Bump it everywhere with `grep -rl OLD --include=*.js --include=*.html . | xargs sed -i 's/OLD/NEW/g'`.
 - Back end: Supabase project `vmzbpuootzchpdnvtfhb` (StellarCRM, eu-west-1).
 - Brand colour is cobalt `#0626c7` (`--accent`). Design rules are in DESIGN.md.

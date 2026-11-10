@@ -11,7 +11,8 @@ function serviceKey(): string {
 }
 const db = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey(), { auth: { persistSession: false } });
 const HOOK = Deno.env.get("SLACK_DECKS_WEBHOOK") ?? "";
-const OS = "https://stellar-portal.github.io/campaign-tracker/#/decks/";
+// Where Stellar OS lives (secret STELLAR_OS_URL, e.g. https://os.stellarmusic.dk/); the GitHub address until it moves.
+const OS = `${(Deno.env.get("STELLAR_OS_URL") || "https://stellar-portal.github.io/campaign-tracker/").replace(/\/?$/, "/")}#/decks/`;
 const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json" } });
 const dur = (ms: number) => { const s = Math.round((ms || 0) / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`; };
 const slack = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
