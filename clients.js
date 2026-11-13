@@ -2,10 +2,10 @@
 // their people, their invoicing companies, and everything Stellar has done with them: campaigns in the OS,
 // campaigns in the Campaign Overview sheet, invoices and deck views (viewers matched by email).
 // Routes: #/clients, #/clients/<id>. Team only; the client-facing share function never reads these tables.
-import { confirmDialog } from "./dialog.js?v=20261113a";
-import { esc, flag, regionName } from "./report.js?v=20261113a";
-import { statusPill } from "./invoices.js?v=20261113a";
-import { statusLabel } from "./sheet-lists.js?v=20261113a";
+import { confirmDialog } from "./dialog.js?v=20261113b";
+import { esc, flag, regionName } from "./report.js?v=20261113b";
+import { statusPill } from "./invoices.js?v=20261113b";
+import { statusLabel } from "./sheet-lists.js?v=20261113b";
 
 export const MARKETS = ["West", "Central", "East"];
 const TYPES = ["Major", "Indie", "Other"];

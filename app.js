@@ -1,17 +1,18 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261113a";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261113a";
-import { renderRoster } from "./roster.js?v=20261113a";
-import { renderDiscover } from "./discover.js?v=20261113a";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261113a";
-import { renderTrending } from "./trending.js?v=20261113a";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261113a";
-import { renderDecks, figmaReminder } from "./decks.js?v=20261113a";
-import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261113a";
-import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261113a";
-import { confirmDialog } from "./dialog.js?v=20261113a";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261113a";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261113a";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261113b";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261113b";
+import { renderRoster } from "./roster.js?v=20261113b";
+import { renderDiscover } from "./discover.js?v=20261113b";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261113b";
+import { renderTrending } from "./trending.js?v=20261113b";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261113b";
+import { renderDecks, figmaReminder } from "./decks.js?v=20261113b";
+import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261113b";
+import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261113b";
+import { confirmDialog } from "./dialog.js?v=20261113b";
+import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261113b";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261113b";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261113b";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -1472,6 +1473,7 @@ async function renderCampaign(token, id, tab = "report") {
     header: `<a class="camp-crumb" href="#/campaigns"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5"/></svg>All campaigns</a>`,
     heroMeta: `<span class="key-chip status-chip s-${esc(c.status)}">${esc(statusLabel(c.status))}</span>${c.po_number ? `<span class="key-chip po"><span class="key-sub">PO</span><span class="key-text">${esc(c.po_number)}</span>${copyBtn(c.po_number)}</span>` : ""}`,
     heroActions: `
+      <button type="button" id="chat-btn" class="chat-btn" aria-pressed="false" title="Team chat and what changed since your last visit">${chatIcon}<span>Team chat</span><em class="cc-badge" hidden></em></button>
       <button type="button" id="share-btn">Share with client</button>
       <button type="button" id="req-inv">Request invoice</button>
       <details class="camp-menu"><summary aria-label="More actions">⋯</summary><div>
@@ -1541,6 +1543,8 @@ async function renderCampaign(token, id, tab = "report") {
       app.querySelectorAll("[data-ctab]").forEach((b) => (b.onclick = () => showTab(b.dataset.ctab)));
       showTab(tab);
       loadPosts(token, id, { ...c, artist_image: data.artist_image });
+      // Team chat docked on the right, with what changed since this person's last visit (chat.js).
+      signedInUser().then((u) => token === routeToken && mountCampaignChat(sb, { campaign: c, user: u, toast, isCurrent: () => token === routeToken })).catch(() => {});
       document.getElementById("share-btn").onclick = () => openShareDialog(c);
       const menu = app.querySelector(".camp-menu");
       if (menu) {
@@ -2384,7 +2388,7 @@ async function route() {
   const token = newToken();
   const user = await signedInUser();
   if (token !== routeToken) return;
-  if (!user) { teamOk = null; unmountTodoInOS(); return renderLogin(); }
+  if (!user) { teamOk = null; unmountTodoInOS(); unmountCampaignChat(); return renderLogin(); }
   if (teamOk?.uid !== user.id) teamOk = { uid: user.id, ok: await isTeamMember() };
   if (token !== routeToken) return;
   if (!teamOk.ok) {
@@ -2405,6 +2409,8 @@ async function route() {
   mountTodoInOS(sb, user).catch(() => {});
   renderWho(user);
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  // The campaign chat belongs to one campaign page (Report or Payouts); anywhere else it closes.
+  if (!(parts[0] === "c" && parts[1] && (!parts[2] || parts[2] === "payouts"))) unmountCampaignChat();
   trackHistory(); updateBack(); rememberTitle(normHash(location.hash));
   // Opening or closing a creator's side panel on the roster keeps the page where it is.
   const pageKey = parts[0] === "roster" && parts[parts.length - 2] === "c" ? `#/${parts.slice(0, -2).join("/")}` : normHash(location.hash);
