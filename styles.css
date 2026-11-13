@@ -2331,6 +2331,9 @@ body.cc-open .cc { transform: none; }
 .cc-tab { position: fixed; right: 0; top: 50%; z-index: 43; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 8px; border-radius: 14px 0 0 14px;
   background: var(--canvas); color: var(--accent); border: none; box-shadow: -2px 2px 14px rgba(0,0,0,.10); font-size: 12px; font-weight: 600; }
 .cc-tab:hover { background: var(--accent-tint); }
+/* Buttons shrink a little when pressed (button:active); keep the centring so the tab doesn't jump away mid-click. */
+.cc-tab:active { transform: translateY(-50%) scale(0.97); }
+.cc-del:active { transform: translateY(-50%) scale(0.92); }
 .cc-tab svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
 .cc-tab span { writing-mode: vertical-rl; }
 body.cc-open .cc-tab { display: none; }

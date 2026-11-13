@@ -4,7 +4,7 @@
 // gained, edits, payouts, invoices, folders, client links, new messages), then the conversation.
 // Tables: campaign_messages (live via Supabase Realtime), campaign_visits (last visit per person),
 // campaign_activity (filled by triggers). Team only; clients never reach any of it.
-import { statusLabel } from "./sheet-lists.js?v=20261113c";
+import { statusLabel } from "./sheet-lists.js?v=20261113d";
 
 const OPEN_KEY = "stellar-chat-open";   // the panel stays open from campaign to campaign until closed
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
