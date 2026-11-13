@@ -4,7 +4,7 @@
 // gained, edits, payouts, invoices, folders, client links, new messages), then the conversation.
 // Tables: campaign_messages (live via Supabase Realtime), campaign_visits (last visit per person),
 // campaign_activity (filled by triggers). Team only; clients never reach any of it.
-import { statusLabel } from "./sheet-lists.js?v=20261113b";
+import { statusLabel } from "./sheet-lists.js?v=20261113c";
 
 const OPEN_KEY = "stellar-chat-open";   // the panel stays open from campaign to campaign until closed
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -35,17 +35,16 @@ const ICON = {
   send: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M12.5 6.5 18 12l-5.5 5.5"/></svg>',
 };
 
-let S = null;
-const RECAP_SHOW = 4;   // recap lines shown before "Show more", so a busy campaign doesn't flood the panel   // the chat on screen: { id, campaign, me, team, since, first, recap, messages, channel, ... }
+let S = null;   // the chat on screen: { id, campaign, me, team, since, first, recap, messages, channel, ... }
 
 // ---------- recap ----------
 function recapLines(r) {
   const out = [];
   if (r.new_posts > 0) {
     const f = (r.new_posts_folders ?? []).filter((x) => x.folder);
-    out.push({ ic: "▶", go: "posts", t: `<b>${plural(r.new_posts, "new video")}</b>${f.length ? ` · ${f.map((x) => `${x.n} in ${esc(x.folder)}`).join(", ")}` : ""}${r.new_posts_by?.length ? ` · added by ${esc(list(r.new_posts_by))}` : ""}` });
+    out.push({ k: "videos", ic: "▶", go: "posts", t: `<b>${plural(r.new_posts, "new video")}</b>${f.length ? ` · ${f.map((x) => `${x.n} in ${esc(x.folder)}`).join(", ")}` : ""}${r.new_posts_by?.length ? ` · added by ${esc(list(r.new_posts_by))}` : ""}` });
   }
-  if (r.views_gained > 0) out.push({ ic: "↗", go: "report", t: `<b>+${cf.format(r.views_gained)} views</b> · ${cf.format(r.views_total)} in total now` });
+  if (r.views_gained > 0) out.push({ k: "views", ic: "↗", go: "report", t: `<b>+${cf.format(r.views_gained)} views</b> · ${cf.format(r.views_total)} in total now` });
   const acts = r.activity ?? [];
   // Campaign edits: one line per person, with every field they changed.
   const edits = {};
@@ -74,17 +73,28 @@ function recapLines(r) {
   if (folders.length) out.push({ ic: "▣", go: "posts", t: `New folder${folders.length > 1 ? "s" : ""} ${list(folders.map((f) => `<b>${esc(f.detail?.name)}</b>`))} by ${people(folders)}` });
   const links = by("share_link");
   if (links.length) out.push({ ic: "↗", go: null, t: `<b>${people(links)}</b> made ${links.length === 1 ? "a client link" : `${links.length} client links`}` });
-  if (r.messages > 0) out.push({ ic: "✉", go: "messages", t: `<b>${plural(r.messages, "new message")}</b> below` });
+  if (r.messages > 0) out.push({ k: "msgs", ic: "✉", go: "messages", t: `<b>${plural(r.messages, "new message")}</b> below` });
   return out;
 }
+function recapSummary(r, lines) {
+  const updates = lines.filter((l) => !l.k).length;   // edits, payouts, invoices, folders, client links
+  return [
+    r.new_posts > 0 ? plural(r.new_posts, "new video") : "",
+    r.views_gained > 0 ? `+${cf.format(r.views_gained)} views` : "",
+    updates ? plural(updates, "update") : "",
+    r.messages > 0 ? plural(r.messages, "message") : "",
+  ].filter(Boolean).join(" · ");
+}
 function recapHTML() {
-  const lines = recapLines(S.recap ?? {});
-  const head = S.first ? "In the last 7 days" : `Since your last visit · ${esc(when(S.since))}`;
-  if (!lines.length) return `<div class="cc-recap quiet"><span>${S.first ? "Nothing new in the last 7 days." : `Nothing new since your last visit (${esc(when(S.since))}).`}</span></div>`;
-  return `<section class="cc-recap${S.recapOpen ? "" : " shut"}" aria-label="What changed">
-    <button type="button" class="cc-recap-head" aria-expanded="${S.recapOpen}"><span>${head}</span><em>${lines.length}</em><i aria-hidden="true">⌃</i></button>
-    <ul>${lines.map((l, i) => `<li${i >= RECAP_SHOW && !S.recapAll ? " hidden" : ""}>${l.go ? `<button type="button" data-go="${l.go}">` : "<span>"}<span class="cc-ic" aria-hidden="true">${l.ic}</span><span>${l.t}</span>${l.go ? "</button>" : "</span>"}</li>`).join("")}</ul>
-    ${lines.length > RECAP_SHOW && !S.recapAll ? `<button type="button" class="cc-more" id="cc-more">Show ${lines.length - RECAP_SHOW} more</button>` : ""}
+  const r = S.recap ?? {}, lines = recapLines(r);
+  const head = S.first ? "Last 7 days" : `Since ${esc(when(S.since))}`;
+  if (!lines.length) return `<p class="cc-recap-none">${S.first ? "Nothing new in the last 7 days." : `Nothing new since ${esc(when(S.since))}.`}</p>`;
+  return `<section class="cc-recap${S.recapOpen ? " open" : ""}" aria-label="What changed">
+    <button type="button" class="cc-recap-head" aria-expanded="${S.recapOpen}">
+      <span class="cc-recap-t"><b>${head}</b><span>${esc(recapSummary(r, lines))}</span></span>
+      <svg class="cc-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+    </button>
+    <ul${S.recapOpen ? "" : " hidden"}>${lines.map((l) => `<li>${l.go ? `<button type="button" data-go="${l.go}">${l.t}</button>` : `<span>${l.t}</span>`}</li>`).join("")}</ul>
   </section>`;
 }
 
@@ -98,17 +108,16 @@ function bodyHTML(text) {
 }
 function messagesHTML() {
   const ms = S.messages.filter((m) => !m.deleted_at);
-  if (!ms.length) return `<p class="cc-empty">No messages yet. Use this chat for anything about this campaign. Everyone on the team can read it, and type @ to get someone's attention.</p>`;
+  if (!ms.length) return `<p class="cc-empty">No messages yet.<br>Anything about this campaign goes here. Type @ to mention someone.</p>`;
   let html = "", prev = null, divided = false;
   for (const m of ms) {
-    if (!prev || dayKey(prev.created_at) !== dayKey(m.created_at)) { html += `<div class="cc-day"><span>${esc(dayLabel(m.created_at))}</span></div>`; prev = null; }
-    if (!divided && !S.first && m.author_email !== S.me && m.created_at > S.since) { html += `<div class="cc-new" id="cc-new"><span>New since your last visit</span></div>`; divided = true; prev = null; }
+    if (!prev || dayKey(prev.created_at) !== dayKey(m.created_at)) { html += `<p class="cc-day">${esc(dayLabel(m.created_at))}</p>`; prev = null; }
+    if (!divided && !S.first && m.author_email !== S.me && m.created_at > S.since) { html += `<p class="cc-new" id="cc-new">New</p>`; divided = true; prev = null; }
     const grouped = prev && prev.author_email === m.author_email && Date.parse(m.created_at) - Date.parse(prev.created_at) < 5 * 60000;
-    const name = nameOf(m.author_email), mine = m.author_email === S.me;
-    html += `<div class="cc-msg${grouped ? " cont" : ""}${mine ? " mine" : ""}" data-mid="${m.id}">
-      ${grouped ? "" : `<span class="cc-av" aria-hidden="true">${esc(initials(name))}</span><div class="cc-meta"><b>${esc(name)}</b><time datetime="${m.created_at}">${time(m.created_at)}</time></div>`}
-      <div class="cc-body">${bodyHTML(m.body)}</div>
-      ${mine ? `<button type="button" class="cc-del" data-del="${m.id}" aria-label="Delete this message" title="Delete">${ICON.close}</button>` : ""}
+    const mine = m.author_email === S.me;
+    html += `<div class="cc-msg${mine ? " mine" : ""}${grouped ? " cont" : ""}" data-mid="${m.id}">
+      ${grouped ? "" : `<p class="cc-meta">${mine ? "" : `<b>${esc(nameOf(m.author_email))}</b>`}<time datetime="${m.created_at}">${time(m.created_at)}</time></p>`}
+      <div class="cc-bubble">${bodyHTML(m.body)}${mine && !m.pending ? `<button type="button" class="cc-del" data-del="${m.id}" aria-label="Delete this message" title="Delete">${ICON.close}</button>` : ""}</div>
     </div>`;
     prev = m;
   }
@@ -131,25 +140,22 @@ function ensureShell() {
 }
 function people() {
   const c = S.campaign, run = String(c.campaign_runner ?? "").split(",").map((x) => x.trim()).filter(Boolean);
-  return [c.comms_owner ? `DRI <b>${esc(c.comms_owner)}</b>` : "", run.length ? `Running <b>${esc(run.join(", "))}</b>` : ""].filter(Boolean).join(" · ");
+  return [...new Set([c.comms_owner, ...run].filter(Boolean))].join(", ");
 }
 function draw() {
   const panel = ensureShell();
   const c = S.campaign;
   panel.innerHTML = `
     <header class="cc-head">
-      <div class="cc-title"><b>Team chat</b><small>${esc([c.artist, c.song].filter(Boolean).join(" – "))}</small></div>
+      <div class="cc-title"><b>Chat</b>${people() ? `<small title="DRI and the people running this campaign">${esc(people())}</small>` : ""}</div>
       <div class="cc-here" id="cc-here"></div>
-      <button type="button" class="cc-x" id="cc-close" aria-label="Close the chat" title="Close (the page stays as it is)">${ICON.close}</button>
+      <button type="button" class="cc-x" id="cc-close" aria-label="Close the chat" title="Close (Esc)">${ICON.close}</button>
     </header>
-    ${people() ? `<p class="cc-people">${people()}</p>` : ""}
-    <div class="cc-scroll" id="cc-scroll">
-      <div id="cc-recap">${recapHTML()}</div>
-      <div class="cc-msgs" id="cc-msgs">${messagesHTML()}</div>
-    </div>
+    <div id="cc-recap" class="cc-recap-wrap">${recapHTML()}</div>
+    <div class="cc-scroll" id="cc-scroll"><div class="cc-msgs" id="cc-msgs">${messagesHTML()}</div></div>
     <form class="cc-compose" id="cc-form" autocomplete="off">
       <ul class="cc-suggest" id="cc-suggest" role="listbox" hidden></ul>
-      <textarea id="cc-text" rows="1" maxlength="4000" placeholder="Message the team (@ to mention)" aria-label="Message"></textarea>
+      <textarea id="cc-text" rows="1" maxlength="4000" placeholder="Message" aria-label="Message the team, type @ to mention someone"></textarea>
       <button type="submit" class="cc-send" aria-label="Send" title="Send (Enter)">${ICON.send}</button>
     </form>`;
   wire();
@@ -168,15 +174,14 @@ function scrollToStart() {
   const box = document.getElementById("cc-scroll");
   if (!box) return;
   const nw = document.getElementById("cc-new");
-  // With a recap to read, open at the top; otherwise at the first new message, or the latest one.
-  const hasRecap = recapLines(S.recap ?? {}).length > 0;
-  requestAnimationFrame(() => { box.scrollTop = hasRecap ? 0 : nw ? Math.max(0, nw.offsetTop - 120) : box.scrollHeight; });
+  // Open at the first new message, or the latest one (the recap stays pinned above the conversation).
+  requestAnimationFrame(() => { box.scrollTop = nw ? Math.max(0, nw.offsetTop - 140) : box.scrollHeight; });
 }
 function drawHere() {
   const el = document.getElementById("cc-here");
   if (!el || !S) return;
   const others = [...(S.here ?? new Set())].filter((e) => e !== S.me);
-  el.innerHTML = others.length ? `${others.slice(0, 3).map((e) => `<span class="cc-av sm" title="${esc(nameOf(e))} has this campaign open">${esc(initials(nameOf(e)))}</span>`).join("")}<small>${others.length === 1 ? `${esc(nameOf(others[0]))} is here` : `${others.length} here`}</small>` : "";
+  el.innerHTML = others.slice(0, 3).map((e) => `<span class="cc-av" title="${esc(nameOf(e))} has this campaign open too">${esc(initials(nameOf(e)))}</span>`).join("");
 }
 function badge() {
   if (!S) return;
@@ -191,8 +196,6 @@ function wire() {
   function wireRecap() {
     const head = document.querySelector("#cc-recap .cc-recap-head");
     if (head) head.onclick = () => { S.recapOpen = !S.recapOpen; redrawRecap(); };
-    const more = document.getElementById("cc-more");
-    if (more) more.onclick = () => { S.recapAll = true; redrawRecap(); };
     document.querySelectorAll("#cc-recap [data-go]").forEach((b) => (b.onclick = () => go(b.dataset.go)));
   }
   wireRecap();
@@ -271,6 +274,27 @@ function go(where) {
   target?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+// ---------- closing from outside ----------
+// A click on empty page space closes the chat. Clicks on anything you use on the dashboard (buttons, links,
+// tabs, fields, videos, menus) leave it open, so the two can still be used side by side.
+const INTERACTIVE = "a, button, input, select, textarea, label, summary, details, video, iframe, canvas, svg, [role=button], [role=tab], [role=option], [tabindex]:not([tabindex='-1']), [contenteditable], dialog, .post, .cover, [data-pop]";
+function outsideClick(e) {
+  if (!S?.open || e.button !== 0) return;
+  const t = e.target;
+  if (!(t instanceof Element) || t.closest("#cc, #cc-tab, #chat-btn, .td-drawer, .td-fab, #toast, dialog[open]")) return;
+  if (t.closest(INTERACTIVE)) return;
+  if (String(window.getSelection?.() ?? "").length) return;   // finishing a text selection isn't a "close"
+  openChat(false);
+}
+function escClose(e) {
+  if (e.key !== "Escape" || !S?.open || e.defaultPrevented) return;
+  if (document.querySelector("dialog[open], details[open].camp-menu, .td-drawer:not([hidden])")) return;
+  if (document.activeElement?.closest?.("#cc .cc-compose") && document.getElementById("cc-suggest")?.hidden === false) return;
+  openChat(false);
+}
+document.addEventListener("click", outsideClick);
+document.addEventListener("keydown", escClose);
+
 // ---------- open / close ----------
 export function openChat(on) {
   if (!S) return;
@@ -305,7 +329,7 @@ export async function mountCampaignChat(sb, { campaign, user, toast, isCurrent }
   ]);
   if (!isCurrent()) return;
   S = {
-    sb, id, campaign, me, toast, since, first, recap: recap.data ?? {}, recapOpen: true, unseenLive: 0, draft: "",
+    sb, id, campaign, me, toast, since, first, recap: recap.data ?? {}, recapOpen: false, unseenLive: 0, draft: "",
     messages: (msgs.data ?? []).reverse(),
     team: (team.data ?? []).map((t) => ({ email: String(t.email).toLowerCase(), name: t.name && t.name !== "Admin" ? t.name : String(t.email).split("@")[0] })),
     here: new Set(), open: false,

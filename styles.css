@@ -2251,87 +2251,89 @@ a.cl-chip:hover { background: var(--accent-tint); color: var(--accent); }
 }
 
 /* ---------- Team chat on a campaign page (chat.js): docked on the right, pushes the page aside ---------- */
-:root { --cc-w: 372px; }
+:root { --cc-w: 360px; }
 .content { transition: margin-left 0.34s cubic-bezier(.2,.8,.2,1), margin-right 0.34s cubic-bezier(.2,.8,.2,1); }
 @media (min-width: 1100px) {
   body.cc-open .content { margin-right: var(--cc-w); }
   body.cc-open .to-top, body.cc-open .td-fab { right: calc(var(--cc-w) + 24px); }
 }
 .cc { position: fixed; top: 0; right: 0; bottom: 0; z-index: 44; width: var(--cc-w); display: flex; flex-direction: column; background: var(--canvas);
-  border-left: 1px solid var(--hairline); box-shadow: -12px 0 32px rgba(0,0,0,.04); transform: translateX(100%); transition: transform 0.34s cubic-bezier(.2,.8,.2,1); }
+  box-shadow: -1px 0 0 rgba(0,0,0,.06); transform: translateX(100%); transition: transform 0.34s cubic-bezier(.2,.8,.2,1); }
 body.cc-open .cc { transform: none; }
 .cc svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.cc-head { display: flex; align-items: center; gap: 10px; padding: 16px 14px 10px 18px; }
-.cc-title { flex: 1; min-width: 0; display: grid; }
-.cc-title b { font-size: 17px; letter-spacing: -0.02em; }
-.cc-title small { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cc-here { display: flex; align-items: center; gap: 4px; }
-.cc-here small { font-size: 11.5px; color: var(--muted); margin-left: 2px; white-space: nowrap; }
-.cc-x { all: unset; cursor: pointer; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; color: var(--muted); }
+.cc-head { display: flex; align-items: center; gap: 8px; padding: 18px 12px 12px 20px; }
+.cc-title { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.cc-title b { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; }
+.cc-title small { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-here { display: flex; }
+.cc-here .cc-av + .cc-av { margin-left: -6px; }
+.cc-av { width: 24px; height: 24px; border-radius: 50%; background: var(--accent-tint); color: var(--accent); border: 2px solid var(--canvas); display: grid; place-items: center; font-size: 9.5px; font-weight: 700; }
+.cc-x { all: unset; cursor: pointer; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: var(--muted); }
 .cc-x:hover { background: var(--parchment); color: var(--ink); }
 .cc-x:focus-visible { outline: 2px solid var(--accent-focus); }
-.cc-people { margin: 0; padding: 0 18px 12px; font-size: 12.5px; color: var(--muted); border-bottom: 1px solid var(--hairline); }
-.cc-people b { color: var(--ink); font-weight: 600; }
-.cc-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 14px 14px 8px; }
-.cc-recap { border-radius: 16px; background: var(--accent-tint); margin-bottom: 14px; overflow: hidden; }
-.cc-recap.quiet { background: none; padding: 2px 4px 6px; font-size: 12.5px; color: var(--muted); }
-.cc-recap-head { all: unset; cursor: pointer; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 8px; padding: 11px 14px; font-size: 12.5px; font-weight: 600; color: var(--accent); }
-.cc-recap-head span { flex: 1; }
-.cc-recap-head em { font-style: normal; font-size: 11px; background: var(--accent); color: #fff; border-radius: 99px; padding: 1px 7px; }
-.cc-recap-head i { font-style: normal; transition: transform .2s; }
-.cc-recap.shut .cc-recap-head i { transform: rotate(180deg); }
-.cc-recap.shut ul { display: none; }
-.cc-recap-head:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: -2px; border-radius: 16px; }
-.cc-recap ul { list-style: none; margin: 0; padding: 0 6px 8px; }
-.cc-recap li > button, .cc-recap li > span { all: unset; box-sizing: border-box; width: 100%; display: flex; gap: 10px; padding: 7px 8px; border-radius: 10px; font-size: 13.5px; line-height: 1.4; color: var(--ink); }
+/* What changed: one quiet line, details on a click */
+.cc-recap-wrap { padding: 0 14px 6px; }
+.cc-recap-none { margin: 0 6px 6px; font-size: 12px; color: var(--muted); }
+.cc-recap { border-radius: 14px; background: var(--parchment); }
+.cc-recap-head { all: unset; cursor: pointer; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 14px; border-radius: 14px; }
+.cc-recap-head:hover { background: rgba(0,0,0,.025); }
+.cc-recap-head:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: -2px; }
+.cc-recap-t { flex: 1; min-width: 0; display: grid; font-size: 12.5px; line-height: 1.35; }
+.cc-recap-t b { font-weight: 600; color: var(--accent); font-size: 11.5px; }
+.cc-recap-t span { color: var(--ink); }
+.cc-chev { flex: none; width: 16px !important; height: 16px !important; color: var(--muted); transition: transform .2s; }
+.cc-recap.open .cc-chev { transform: rotate(180deg); }
+.cc-recap ul { list-style: none; margin: 0; padding: 0 8px 8px; max-height: 38vh; overflow-y: auto; }
+.cc-recap li > button, .cc-recap li > span { all: unset; box-sizing: border-box; width: 100%; display: block; padding: 6px 6px 6px 18px; position: relative; border-radius: 8px; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+.cc-recap li > button::before, .cc-recap li > span::before { content: ""; position: absolute; left: 7px; top: 12px; width: 4px; height: 4px; border-radius: 50%; background: rgba(0,0,0,.25); }
+.cc-recap li b { color: var(--ink); font-weight: 600; }
 .cc-recap li > button { cursor: pointer; }
-.cc-recap li > button:hover { background: rgba(255,255,255,.7); }
+.cc-recap li > button:hover { background: var(--canvas); }
 .cc-recap li > button:focus-visible { outline: 2px solid var(--accent-focus); }
-.cc-more { all: unset; cursor: pointer; display: block; margin: -4px 0 8px 46px; font-size: 12.5px; font-weight: 600; color: var(--accent); }
-.cc-more:hover { text-decoration: underline; }
-.cc-more:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 2px; border-radius: 4px; }
-.cc-ic { flex: none; width: 22px; height: 22px; border-radius: 7px; background: #fff; color: var(--accent); display: grid; place-items: center; font-size: 12px; font-weight: 700; }
-.cc-day, .cc-new { display: flex; align-items: center; gap: 10px; margin: 14px 0 8px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
-.cc-day::before, .cc-day::after, .cc-new::before, .cc-new::after { content: ""; flex: 1; border-top: 1px solid var(--hairline); }
-.cc-new { color: var(--bad); }
-.cc-new::before, .cc-new::after { border-color: rgba(201,48,44,.35); }
-.cc-msg { position: relative; display: grid; grid-template-columns: 32px minmax(0, 1fr); column-gap: 10px; padding: 6px 30px 2px 4px; border-radius: 10px; }
-.cc-msg.cont { padding-top: 1px; }
-.cc-msg:hover { background: var(--pearl); }
-.cc-av { grid-row: span 2; width: 32px; height: 32px; border-radius: 50%; background: #e8ebfb; color: var(--accent); display: grid; place-items: center; font-size: 11.5px; font-weight: 700; letter-spacing: 0; }
-.cc-av.sm { width: 24px; height: 24px; font-size: 9.5px; grid-row: auto; }
-.cc-msg.mine .cc-av { background: var(--accent); color: #fff; }
-.cc-meta { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
-.cc-meta time { font-size: 11.5px; color: var(--muted); }
-.cc-body { grid-column: 2; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
-.cc-body a { color: var(--accent); }
-.cc-at { color: var(--accent); font-weight: 600; background: var(--accent-tint); border-radius: 5px; padding: 0 3px; }
-.cc-at.me { background: #fff3c4; color: #7a5600; }
-.cc-del { all: unset; cursor: pointer; position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; color: var(--muted); opacity: 0; }
-.cc-del svg { width: 13px; height: 13px; }
+/* Conversation */
+.cc-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 4px 14px 10px; }
+.cc-day { margin: 16px 0 6px; text-align: center; font-size: 11px; font-weight: 500; color: var(--muted); }
+.cc-new { display: flex; align-items: center; gap: 8px; margin: 12px 0 4px; font-size: 11px; font-weight: 600; color: var(--accent); }
+.cc-new::after { content: ""; flex: 1; border-top: 1px solid rgba(6,38,199,.25); }
+.cc-msg { display: flex; flex-direction: column; align-items: flex-start; margin-top: 10px; }
+.cc-msg.cont { margin-top: 3px; }
+.cc-msg.mine { align-items: flex-end; }
+.cc-meta { margin: 0 4px 3px; display: flex; gap: 6px; align-items: baseline; font-size: 11.5px; color: var(--muted); }
+.cc-meta b { color: var(--ink); font-weight: 600; font-size: 12px; }
+.cc-bubble { position: relative; max-width: 86%; padding: 8px 12px; border-radius: 16px; background: var(--parchment); font-size: 14px; line-height: 1.42; overflow-wrap: anywhere; }
+.cc-msg.mine .cc-bubble { background: var(--accent); color: #fff; }
+.cc-bubble a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.cc-at { font-weight: 600; color: var(--accent); }
+.cc-msg.mine .cc-at { color: #fff; }
+.cc-at.me { background: #fff1b8; color: #6b4b00; border-radius: 4px; padding: 0 2px; }
+.cc-del { all: unset; cursor: pointer; position: absolute; left: -26px; top: 50%; transform: translateY(-50%); width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); opacity: 0; transition: opacity .15s; }
+.cc-del svg { width: 12px; height: 12px; }
 .cc-msg:hover .cc-del, .cc-del:focus-visible { opacity: 1; }
 .cc-del:hover { background: var(--parchment); color: var(--bad); }
-.cc-empty { margin: 8px 4px; font-size: 13px; color: var(--muted); line-height: 1.5; }
-.cc-compose { position: relative; display: flex; align-items: flex-end; gap: 8px; margin: 0; padding: 10px 12px 14px; border-top: 1px solid var(--hairline); }
-.cc-compose textarea { flex: 1; resize: none; min-height: 40px; max-height: 160px; padding: 9px 12px; border-radius: 14px; font: inherit; font-size: 14px; line-height: 1.4; background: var(--parchment); border: 1px solid transparent; }
-.cc-compose textarea:focus { background: var(--canvas); }
-.cc-send { flex: none; width: 40px; height: 40px; padding: 0; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; border: none; }
+.cc-empty { margin: 28px 12px; text-align: center; font-size: 13px; color: var(--muted); line-height: 1.55; }
+/* Writing */
+.cc-compose { position: relative; display: flex; align-items: flex-end; gap: 6px; margin: 0 12px 14px; padding: 4px 4px 4px 14px; border-radius: 22px; background: var(--parchment); transition: background .15s, box-shadow .15s; }
+.cc-compose:focus-within { background: var(--canvas); box-shadow: 0 0 0 1px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06); }
+.cc-compose textarea { flex: 1; resize: none; min-height: 36px; max-height: 160px; padding: 8px 0; border: none !important; background: transparent !important; box-shadow: none !important; font: inherit; font-size: 14px; line-height: 1.4; }
+.cc-compose textarea:focus { outline: none; }
+.cc-send { flex: none; width: 34px; height: 34px; padding: 0; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; border: none; }
+.cc-send svg { width: 16px; height: 16px; }
 .cc-send:hover { background: var(--accent-focus); }
-.cc-suggest { position: absolute; left: 12px; right: 60px; bottom: 100%; margin: 0 0 4px; padding: 4px; list-style: none; background: var(--canvas); border: 1px solid var(--hairline); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.12); }
-.cc-suggest li { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; font-size: 13.5px; cursor: pointer; }
+.cc-suggest { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); margin: 0; padding: 4px; list-style: none; background: var(--canvas); border-radius: 14px; box-shadow: 0 0 0 1px rgba(0,0,0,.06), 0 12px 30px rgba(0,0,0,.12); }
+.cc-suggest li { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 10px; font-size: 13.5px; cursor: pointer; }
+.cc-suggest li .cc-av { border: none; }
 .cc-suggest li[aria-selected="true"], .cc-suggest li:hover { background: var(--accent-tint); }
-/* The way in: a button in the campaign banner, and a tab on the right edge that's always there. */
+/* The way in: a button in the campaign banner, and a small tab on the right edge */
 .chat-btn { display: inline-flex; align-items: center; gap: 7px; }
 .chat-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
 .art-band .hero-actions .chat-btn[aria-pressed="true"] { background: #fff; color: var(--accent); }
 .cc-badge { font-style: normal; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 99px; background: #ff4d4f; color: #fff; font-size: 11px; font-weight: 700; display: inline-grid; place-items: center; line-height: 1; }
 .cc-tab { position: fixed; right: 0; top: 50%; z-index: 43; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 8px; border-radius: 14px 0 0 14px;
-  background: var(--canvas); color: var(--accent); border: 1px solid var(--hairline); border-right: none; box-shadow: -4px 4px 18px rgba(0,0,0,.08); font-size: 12px; font-weight: 600; }
-.cc-tab:hover { background: var(--accent-tint); border-color: var(--hairline); }
+  background: var(--canvas); color: var(--accent); border: none; box-shadow: -2px 2px 14px rgba(0,0,0,.10); font-size: 12px; font-weight: 600; }
+.cc-tab:hover { background: var(--accent-tint); }
 .cc-tab svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
 .cc-tab span { writing-mode: vertical-rl; }
 body.cc-open .cc-tab { display: none; }
-/* Narrower than a laptop: there's no room to dock, so the chat comes in over the page. */
 @media (max-width: 1099px) {
   .cc { width: min(420px, 100vw); box-shadow: -20px 0 50px rgba(0,0,0,.18); z-index: 70; }
   .cc-tab { display: none; }
