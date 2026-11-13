@@ -2119,6 +2119,12 @@ tr:hover .po-manual, .po-manual:focus { opacity: 1; }
 .dk-meta b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dk-hero { margin: 0 0 18px; }
 .dk-panel, .dk-fix { margin-bottom: 18px; }
+.dk-wait { margin-bottom: 18px; border-color: rgba(6,38,199,.25); background: #f5f7ff; }
+.dk-wait h2 { margin: 0; font-size: 20px; }
+.dk-wait > p { margin: 6px 0 12px; }
+.dk-waitrow { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 12px 0; border-top: 1px solid rgba(6,38,199,.12); }
+.dk-waitrow > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.dk-waitacts { display: flex; gap: 8px; flex: none; }
 .dk-head { display: flex; align-items: baseline; gap: 6px 14px; flex-wrap: wrap; margin-bottom: 14px; }
 .dk-head h2, .dk-fix h2 { margin: 0; font-size: 20px; }
 .dk-fix { border-color: #f1d9a8; background: #fffaf0; }

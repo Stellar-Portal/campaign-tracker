@@ -3,6 +3,8 @@
 //   { action: "code", token, email }                 email a 6-digit code (links with "check their email" on)
 //   { action: "open", token, email?, code?, pass?, tz? } start a viewing session → slides, links, videos
 //   { action: "track", session, sig, slides, clicks } merge time per slide (running totals) and link clicks
+//   { action: "help", token, email }                 the code didn't arrive: ask the team (Slack + Decks) to let them in
+//   { action: "help_status", id, sig }               has the team let them in yet? → a viewer pass when they have
 // Slides and videos live in the private deck-media bucket and are handed out as links that expire in
 // 2 hours. Viewer passes (so returning viewers skip the gate) and session ids are signed with a secret
 // only this function can read. Signed-in Stellar team members can view without being tracked.
@@ -71,11 +73,15 @@ async function sendCode(linkId: string, email: string, title: string) {
 }
 async function checkCode(linkId: string, email: string, code: unknown): Promise<boolean> {
   if (typeof code !== "string" || !/^\d{6}$/.test(code.trim())) return false;
-  const { data: row } = await db.from("deck_email_codes").select("id,code_hash,attempts,expires_at,used_at").eq("link_id", linkId).eq("email", email)
-    .order("created_at", { ascending: false }).limit(1).maybeSingle();
-  if (!row || row.used_at || row.attempts >= 5 || new Date(row.expires_at) < new Date()) return false;
-  if (row.code_hash !== (await sha(`code:${linkId}:${email}:${code.trim()}`))) { await db.from("deck_email_codes").update({ attempts: row.attempts + 1 }).eq("id", row.id); return false; }
-  await db.from("deck_email_codes").update({ used_at: new Date().toISOString() }).eq("id", row.id);
+  // Any code still valid for this link and email works, not only the newest: an email that turns up late
+  // (e.g. from the spam folder) after a new code was asked for still opens the deck.
+  const { data: rows } = await db.from("deck_email_codes").select("id,code_hash,attempts,expires_at,used_at").eq("link_id", linkId).eq("email", email)
+    .is("used_at", null).gt("expires_at", new Date().toISOString()).lt("attempts", 5).order("created_at", { ascending: false }).limit(6);
+  if (!rows?.length) return false;
+  const hash = await sha(`code:${linkId}:${email}:${code.trim()}`);
+  const hit = rows.find((r) => r.code_hash === hash);
+  if (!hit) { for (const r of rows) await db.from("deck_email_codes").update({ attempts: r.attempts + 1 }).eq("id", r.id); return false; }
+  await db.from("deck_email_codes").update({ used_at: new Date().toISOString() }).in("id", rows.map((r) => r.id));
   return true;
 }
 
@@ -165,6 +171,44 @@ Deno.serve(async (req) => {
       if (!okIp || !okMail) return json({ error: "Too many codes asked for. Please wait a few minutes." }, 429);
       try { await sendCode(r.link.id, email, r.deck.title); } catch { return json({ error: "We couldn't send the code. Check the address and try again." }, 502); }
       return json({ ok: true });
+    }
+
+    if (body.action === "help") {
+      const r = await liveLink(body.token);
+      if ("error" in r) return json({ error: r.error }, 404);
+      const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+      if (!EMAIL.test(email)) return json({ error: "Enter a valid email address." }, 400);
+      if (!r.link.verify_email || !codesOn()) return json({ error: "This link doesn't use codes." }, 400);
+      // The same person asking again within a day waits on the same request.
+      const { data: open } = await db.from("deck_access_requests").select("id,status").eq("link_id", r.link.id).eq("email", email)
+        .in("status", ["pending", "approved"]).gte("created_at", new Date(Date.now() - 86400_000).toISOString()).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (open) return json({ id: open.id, sig: await sign("help:" + open.id) });
+      const okIp = (await db.rpc("deck_rate_ok", { p_key: "h:" + (await ipKey(req)), p_limit: 4, p_seconds: 3600 })).data;
+      const okMail = (await db.rpc("deck_rate_ok", { p_key: "he:" + (await sha(email)), p_limit: 2, p_seconds: 3600 })).data;
+      if (!okIp || !okMail) return json({ error: "Too many requests. Please wait a while, or contact Stellar directly." }, 429);
+      const { data: row, error } = await db.from("deck_access_requests").insert({ deck_id: r.deck.id, link_id: r.link.id, email }).select("id").single();
+      if (error) throw error;
+      const hook = Deno.env.get("SLACK_DECKS_WEBHOOK");
+      if (hook) {
+        const { data: lk } = await db.from("deck_links").select("label").eq("id", r.link.id).maybeSingle();
+        const os = (Deno.env.get("STELLAR_OS_URL") || "https://stellar-portal.github.io/campaign-tracker/").replace(/\/?$/, "/");
+        const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const text = `🔑 *${esc(email)}* didn't get their code for *${esc(r.deck.title)}*${lk?.label ? ` via "${esc(lk.label)}"` : ""} and is waiting to be let in. <${os}#/decks/${r.deck.id}|Let them in or decline in Stellar OS>`;
+        await fetch(hook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, unfurl_links: false }) }).catch(() => null);
+      }
+      return json({ id: row.id, sig: await sign("help:" + row.id) });
+    }
+
+    if (body.action === "help_status") {
+      const id = String(body.id ?? "");
+      if (!/^[0-9a-f-]{36}$/.test(id) || !(await checkSig("help:" + id, body.sig))) return json({ error: "Not allowed" }, 403);
+      if (!(await db.rpc("deck_rate_ok", { p_key: "hs:" + id, p_limit: 40, p_seconds: 60 })).data) return json({ error: "Too many checks" }, 429);
+      const { data: q } = await db.from("deck_access_requests").select("id,deck_id,link_id,email,status,decided_at").eq("id", id).maybeSingle();
+      if (!q) return json({ status: "gone" });
+      if (q.status !== "approved") return json({ status: q.status });
+      if (Date.now() - new Date(q.decided_at).getTime() > 86400_000) return json({ status: "gone" });
+      // A team member vouched for this person: the pass counts as checked, like a code would.
+      return json({ status: "approved", email: q.email, pass: await makePass(q.deck_id, q.link_id, q.email, true) });
     }
 
     if (body.action === "open") {

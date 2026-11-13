@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
   if (body.action === "check") {
     // Setup check: one test message to Slack, and a read-only look at the Resend domains (no email is sent).
     const out: Record<string, unknown> = { slack: HOOK ? "set" : "missing", resend: Deno.env.get("RESEND_API_KEY") ? "set" : "missing" };
-    if (HOOK) {
+    if (HOOK && !body.quiet) {   // quiet: look at the setup without posting in Slack
       const r = await fetch(HOOK, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "✅ Stellar OS is connected. Deck view alerts will appear in this channel." }) });
       out.slack_post = `${r.status} ${(await r.text()).slice(0, 80)}`;
     }
@@ -33,7 +33,13 @@ Deno.serve(async (req) => {
       const r = await fetch("https://api.resend.com/domains", { headers: { Authorization: `Bearer ${rk}` } });
       const j = await r.json().catch(() => null);
       out.resend_domains = r.ok ? (j?.data ?? []).map((d: any) => `${d.name}: ${d.status}`) : `${r.status} ${JSON.stringify(j).slice(0, 120)}`;
+      // Which DNS records Resend wants for each domain, and whether it found them (SPF, DKIM, return path).
+      if (r.ok) for (const d of (j?.data ?? []).slice(0, 3)) {
+        const x = await fetch(`https://api.resend.com/domains/${d.id}`, { headers: { Authorization: `Bearer ${rk}` } }).then((y) => y.json()).catch(() => null);
+        (out.resend_records ??= {} as Record<string, unknown>)[d.name] = (x?.records ?? []).map((rec: any) => `${rec.record} ${rec.type} ${rec.name}: ${rec.status}`);
+      }
     }
+    out.from = Deno.env.get("DECK_EMAIL_FROM") ? "set" : "(default) Stellar <noreply@stellarmusic.dk>";
     return json(out);
   }
   if (!HOOK) return json({ skipped: "SLACK_DECKS_WEBHOOK isn't set" });

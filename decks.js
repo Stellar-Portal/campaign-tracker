@@ -2,8 +2,8 @@
 // Decks come in from Figma Slides through the "Send to Stellar OS" Figma button (figma-plugin/), which
 // calls the deck-import function. Here the team makes links, switches them off, sees who viewed what,
 // adds videos the import couldn't fetch, and keeps an eye on the Figma connection's expiry date.
-import { confirmDialog } from "./dialog.js?v=20261109f";
-import { loadClients } from "./clients.js?v=20261109f";
+import { confirmDialog } from "./dialog.js?v=20261113a";
+import { loadClients } from "./clients.js?v=20261113a";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const day = (d) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "");
@@ -17,6 +17,36 @@ const place = (tz) => (tz ? tz.split("/").pop().replace(/_/g, " ") : "");
 const deckUrl = (token) => `${new URL("deck.html", location.href.split("#")[0]).href}#t=${token}`;
 const daysLeft = (d) => (d && !isNaN(Date.parse(`${d}T00:00:00`)) ? Math.ceil((Date.parse(`${d}T00:00:00`) - Date.now()) / 86400000) : null);
 const PLUGIN_ZIP = "figma-plugin/send-to-stellar-os.zip";
+
+// ---------- viewers waiting to be let in ----------
+// A viewer whose email code didn't arrive can press "Ask Stellar to let you in" on the deck page
+// (deck-view "help"): Slack gets a message, and the request shows here until someone decides.
+async function loadRequests(sb, deckId) {
+  let q = sb.from("deck_access_requests").select("id,deck_id,link_id,email,created_at").eq("status", "pending")
+    .gte("created_at", new Date(Date.now() - 86400_000).toISOString()).order("created_at", { ascending: false }).limit(50);
+  if (deckId) q = q.eq("deck_id", deckId);
+  const { data } = await q;
+  return data ?? [];
+}
+function requestsHTML(reqs, { deckTitle, linkName, company }) {
+  if (!reqs.length) return "";
+  return `<div class="panel dk-wait"><h2>Waiting to be let in</h2>
+    <p class="muted small">They didn't get their email code. Let them in only if you know the address belongs to the person you sent the deck to. Their page opens by itself.</p>
+    ${reqs.map((r) => `<div class="dk-waitrow"><span><b>${esc(r.email)}</b>${company?.(r.email) ?? ""}<br>
+        <span class="muted small">${deckTitle ? `${esc(deckTitle(r.deck_id))} · ` : ""}${linkName ? `${esc(linkName(r.link_id))} · ` : ""}asked ${esc(ago(r.created_at))}</span></span>
+      <span class="dk-waitacts"><button type="button" data-deny="${r.id}">Decline</button><button type="button" class="primary" data-letin="${r.id}" data-email="${esc(r.email)}">Let in</button></span></div>`).join("")}
+  </div>`;
+}
+function wireRequests(root, sb, toast, again) {
+  root.querySelectorAll("[data-letin], [data-deny]").forEach((b) => (b.onclick = async () => {
+    const ok = !!b.dataset.letin;
+    root.querySelectorAll(`[data-letin="${b.dataset.letin || b.dataset.deny}"], [data-deny="${b.dataset.letin || b.dataset.deny}"]`).forEach((x) => (x.disabled = true));
+    const { error } = await sb.rpc("deck_access_decide", { p_id: b.dataset.letin || b.dataset.deny, p_ok: ok });
+    if (error) toast?.(error.message);
+    else toast?.(ok ? `${b.dataset.email} is in. Their page opens by itself.` : "Request declined.");
+    again();
+  }));
+}
 
 async function signed(sb, paths) {
   const out = {};
@@ -121,10 +151,11 @@ async function figmaButtonDialog(sb, toast) {
 export async function renderDecks(app, sb, ctx) {
   if (ctx.parts[1]) return renderDeck(app, sb, ctx, ctx.parts[1]);
   app.innerHTML = `<p class="muted pad">Loading decks…</p>`;
-  const [dk, ss, exp] = await Promise.all([
+  const [dk, ss, exp, reqs] = await Promise.all([
     sb.from("decks").select("id,title,current_version_id,updated_at,created_at").order("updated_at", { ascending: false }),
     sb.from("deck_sessions").select("deck_id,email,started_at").order("started_at", { ascending: false }).limit(5000),
     sb.rpc("figma_token_expiry"),
+    loadRequests(sb).catch(() => []),
   ]);
   if (!ctx.isCurrent()) return;
   if (dk.error) { app.innerHTML = `<p class="error">${esc(dk.error.message)}</p>`; return; }
@@ -146,6 +177,7 @@ export async function renderDecks(app, sb, ctx) {
       <p class="muted small" style="margin:6px 0 0">Share a pitch deck as a link and see who opened it, which slides they read and for how long.</p></div>
       <div class="actions" style="margin:0"><button type="button" id="dk-btn" class="primary">Figma button</button></div></div>
     <p class="small dk-tokline">${tokenLine(exp.data)} <button type="button" class="linkish" id="dk-exp">Update date</button></p>
+    ${requestsHTML(reqs, { deckTitle: (id) => decks.find((d) => d.id === id)?.title ?? "A deck" })}
     ${!decks.length ? `<div class="panel dk-empty"><h2>No decks yet</h2>
       <p class="muted">Decks come straight from Figma Slides. Set up the <b>Send to Stellar OS</b> button once (two minutes), then send any deck from Figma.</p>
       <button type="button" class="primary" id="dk-btn2">Set up the Figma button</button></div>` : `
@@ -163,6 +195,7 @@ export async function renderDecks(app, sb, ctx) {
   app.querySelector("#dk-btn").onclick = () => figmaButtonDialog(sb, ctx.toast);
   app.querySelector("#dk-btn2")?.addEventListener("click", () => figmaButtonDialog(sb, ctx.toast));
   app.querySelector("#dk-exp").onclick = () => expiryDialog(sb, exp.data, again);
+  wireRequests(app, sb, ctx.toast, again);
 }
 
 // ---------- one deck ----------
@@ -171,13 +204,14 @@ async function renderDeck(app, sb, ctx, id) {
   const { data: deck, error } = await sb.from("decks").select("id,title,figma_url,current_version_id,updated_at").eq("id", id).maybeSingle();
   if (!ctx.isCurrent()) return;
   if (error || !deck) { app.innerHTML = `<div class="panel"><p class="muted" style="margin:0">This deck doesn't exist any more.</p></div>`; return; }
-  const [ver, slides, spots, links, sess, cl] = await Promise.all([
+  const [ver, slides, spots, links, sess, cl, reqs] = await Promise.all([
     sb.from("deck_versions").select("id,version,slide_count,note,created_at,created_by").eq("id", deck.current_version_id).maybeSingle(),
     sb.from("deck_slides").select("n,image_path").eq("version_id", deck.current_version_id).order("n"),
     sb.from("deck_spots").select("id,n,kind,label,layer_name,status,note,video_path").eq("version_id", deck.current_version_id).order("n"),
     sb.from("deck_links").select("id,token,label,enabled,expires_at,require_email,verify_email,created_at,created_by").eq("deck_id", id).order("created_at", { ascending: false }),
     sb.from("deck_sessions").select("id,link_id,email,verified,started_at,last_seen_at,total_ms,furthest_slide,slide_count,device,browser,os,country,timezone").eq("deck_id", id).order("started_at", { ascending: false }).limit(1000),
     loadClients(sb).catch(() => null),
+    loadRequests(sb, id).catch(() => []),
   ]);
   // Which client company each viewer belongs to (matched by email, see clients.js).
   const company = (email) => {
@@ -224,6 +258,8 @@ async function renderDeck(app, sb, ctx, id) {
         <div class="an-hero-card"><div class="l">Average time</div><div class="n">${V.length ? dur(totalMs / V.length) : "–"}</div><div class="d">per view</div></div>
         <div class="an-hero-card"><div class="l">Link clicks</div><div class="n">${(clicks.data ?? []).length}</div><div class="d">links opened from the deck</div></div>
       </div>
+
+      ${requestsHTML(reqs, { linkName: (lid) => linkName[lid] ?? "Link", company })}
 
       ${missing.length ? `<div class="panel dk-fix"><h2>Needs attention</h2>
         <p class="muted small">These videos show as a still image until a video is added. Upload the MP4, or rename the video layer in Figma to include the TikTok ID and send the deck again.</p>
@@ -285,6 +321,7 @@ async function renderDeck(app, sb, ctx, id) {
       ctx.toast?.(error ? error.message : v ? `Link expires ${day(v)}` : "Link never expires");
     }));
     app.querySelector("#dk-new").onclick = newLink;
+    wireRequests(app, sb, ctx.toast, () => renderDeck(app, sb, ctx, id));
     app.querySelector("#dk-new2")?.addEventListener("click", newLink);
     app.querySelector("#dk-rename").onclick = rename;
     app.querySelectorAll("[data-spot]").forEach((inp) => (inp.onchange = () => upload(inp)));

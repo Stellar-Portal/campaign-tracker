@@ -41,6 +41,12 @@
     .gate input.code { font-size: 28px; letter-spacing: 10px; font-variant-numeric: tabular-nums; }
     .gate .lnk { all: unset; cursor: pointer; text-decoration: underline; color: #fff; }
     .gate .lnk:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+    .gate .lnk:disabled, .gate .lnk[aria-disabled="true"] { cursor: default; text-decoration: none; opacity: .65; }
+    .gate .hint { margin: -24px 0 36px; font-size: 14px; line-height: 1.45; opacity: .78; max-width: 36ch; }
+    .gate .help { margin-top: 28px; font-size: 14px; opacity: .9; }
+    .gate .spin { width: 34px; height: 34px; margin: 0 0 30px; border-radius: 50%; border: 3px solid rgba(255,255,255,.3); border-top-color: #fff; animation: gate-spin 1s linear infinite; }
+    @keyframes gate-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .gate .spin { animation-duration: 3s; } }
 
     /* Viewer */
     .viewer { position: fixed; inset: 0; display: flex; flex-direction: column; }
@@ -101,6 +107,6 @@
 </head>
 <body>
   <main id="app"><div class="loading">Loading…</div></main>
-  <script type="module" src="deck.js?v=20261110a"></script>
+  <script type="module" src="deck.js?v=20261113a"></script>
 </body>
 </html>

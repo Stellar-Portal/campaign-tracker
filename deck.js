@@ -2,7 +2,7 @@
 // No login. The `deck-view` function checks the link, hands out slide images and videos as
 // short-lived links, and records time per slide. Time only counts while this tab is visible;
 // totals are running sums, so resending them (heartbeat, page close, retry) never double-counts.
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261109f";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261113a";
 
 const FN = `${SUPABASE_URL}/functions/v1/deck-view`;
 const app = document.getElementById("app");
@@ -47,12 +47,12 @@ async function call(body, auth) {
   return data;
 }
 
-function renderMessage(msg) {
+function renderMessage(msg, sub = "Ask your Stellar contact for a new link.") {
   document.body.className = "";
   app.innerHTML = `<section class="gate">
     <img class="wm" src="assets/stellar-white.png" alt="Stellar" width="150" height="41">
     <h1>${esc(msg)}</h1>
-    <p class="sub">Ask your Stellar contact for a new link.</p></section>`;
+    <p class="sub">${esc(sub)}</p></section>`;
 }
 
 let verify = false;   // this link checks the viewer's email with a one-time code
@@ -86,20 +86,26 @@ function renderGate(errMsg = "") {
   });
 }
 
+const HELP_KEY = `stellar-deck-help:${token}`;   // a "let me in" request waiting on this device
+const RESEND_WAIT = 30;
+
 function renderCode(email, errMsg = "") {
   app.innerHTML = `<section class="gate">
     <img class="wm" src="assets/stellar-white.png" alt="Stellar" width="150" height="41">
     <h1>Check your email</h1>
     <p class="sub">We sent a 6-digit code to <b>${esc(email)}</b>. It works for 15 minutes.</p>
+    <p class="hint">Can't find it? It can take a minute to arrive. Check your spam or junk folder too.</p>
     <form novalidate>
       <label for="code" style="position:absolute;left:-9999px">Code</label>
       <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*" placeholder="••••••" class="code">
       <p class="err" role="alert">${esc(errMsg)}</p>
       <button type="submit">View deck</button>
     </form>
-    <p class="legal"><button type="button" class="lnk" id="again">Send a new code</button> · <button type="button" class="lnk" id="other">Use a different email</button></p>
+    <p class="legal"><button type="button" class="lnk" id="again"></button> · <button type="button" class="lnk" id="other">Use a different email</button></p>
+    <p class="help"><button type="button" class="lnk" id="help">Didn't get a code? Ask Stellar to let you in</button></p>
   </section>`;
   const form = app.querySelector("form"), input = form.querySelector("input"), btn = form.querySelector("button"), err = form.querySelector(".err");
+  const again = app.querySelector("#again");
   setTimeout(() => input.focus(), 50);
   input.addEventListener("input", () => { input.value = input.value.replace(/\D/g, "").slice(0, 6); if (input.value.length === 6) form.requestSubmit(); });
   form.addEventListener("submit", async (e) => {
@@ -109,10 +115,66 @@ function renderCode(email, errMsg = "") {
     try { start(await call({ action: "open", email, code: input.value, tz: tz() })); }
     catch (x) { btn.disabled = false; btn.textContent = "View deck"; input.value = ""; err.textContent = x.data?.error || "Something went wrong. Check your connection and try again."; }
   });
-  app.querySelector("#again").onclick = async () => {
-    try { await call({ action: "code", email }); err.textContent = "New code sent."; } catch (x) { err.textContent = x.data?.error || "Couldn't send a new code."; }
+  // "Send a new code" waits 30 seconds, so the first email has time to arrive.
+  let left = RESEND_WAIT, timer = null;
+  const tick = () => {
+    if (!again.isConnected) return clearInterval(timer);
+    again.disabled = left > 0;
+    again.textContent = left > 0 ? `Send a new code (${left}s)` : "Send a new code";
+    if (left-- <= 0) clearInterval(timer);
   };
-  app.querySelector("#other").onclick = () => renderGate();
+  const wait = () => { left = RESEND_WAIT; clearInterval(timer); tick(); timer = setInterval(tick, 1000); };
+  wait();
+  again.onclick = async () => {
+    again.disabled = true; again.textContent = "Sending…";
+    try { await call({ action: "code", email }); err.textContent = "New code sent. Either code works."; wait(); }
+    catch (x) { err.textContent = x.data?.error || "Couldn't send a new code."; left = 0; tick(); }
+  };
+  app.querySelector("#other").onclick = () => { clearInterval(timer); renderGate(); };
+  app.querySelector("#help").onclick = async (e) => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = "Asking Stellar…";
+    try {
+      const r = await call({ action: "help", email });
+      store.set(HELP_KEY, JSON.stringify({ id: r.id, sig: r.sig, email }));
+      clearInterval(timer); renderWaiting({ id: r.id, sig: r.sig, email });
+    } catch (x) { b.disabled = false; b.textContent = "Didn't get a code? Ask Stellar to let you in"; err.textContent = x.data?.error || "Couldn't reach Stellar. Check your connection and try again."; }
+  };
+}
+
+// Waiting for the Stellar team to let this person in (they get a Slack message and a button in Decks).
+function renderWaiting(req) {
+  document.body.className = "";
+  app.innerHTML = `<section class="gate">
+    <img class="wm" src="assets/stellar-white.png" alt="Stellar" width="150" height="41">
+    <div class="spin" aria-hidden="true"></div>
+    <h1>We've asked Stellar to let you in</h1>
+    <p class="sub">The team has been told that <b>${esc(req.email)}</b> couldn't get a code. Keep this page open: the deck opens by itself as soon as they let you in.</p>
+    <p class="err" role="status" aria-live="polite"></p>
+    <p class="legal"><button type="button" class="lnk" id="code-again">I found the code after all</button></p>
+  </section>`;
+  const note = app.querySelector(".err");
+  let stop = false, tries = 0;
+  app.querySelector("#code-again").onclick = () => { stop = true; renderCode(req.email); };
+  const poll = async () => {
+    if (stop || !app.isConnected) return;
+    tries++;
+    try {
+      const r = await call({ action: "help_status", id: req.id, sig: req.sig });
+      if (r.status === "approved" && r.pass) {
+        stop = true; store.del(HELP_KEY); store.set(PASS_KEY, r.pass);
+        return start(await call({ action: "open", pass: r.pass, tz: tz() }));
+      }
+      if (r.status === "declined" || r.status === "gone") {
+        stop = true; store.del(HELP_KEY);
+        return r.status === "declined" ? renderMessage("Stellar couldn't confirm this request.", "Please get in touch with your Stellar contact directly.")
+          : renderMessage("This request has expired.", "Reload the page to try again, or get in touch with your Stellar contact.");
+      }
+      note.textContent = "";
+    } catch { note.textContent = "Still waiting… (connection problem, trying again)"; }
+    // Every 5 seconds for 10 minutes, then every 30 seconds.
+    setTimeout(poll, tries < 120 ? 5000 : 30000);
+  };
+  poll();
 }
 
 const tz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return null; } };
@@ -125,7 +187,10 @@ async function boot() {
     if (!st.live) return renderMessage(st.message || "This link isn't active.");
     verify = !!st.verify;
     const pass = store.get(PASS_KEY);
-    if (st.require_email && !pass && !auth) return renderGate();
+    if (st.require_email && !pass && !auth) {
+      let waiting = null; try { waiting = JSON.parse(store.get(HELP_KEY) || "null"); } catch { /* ignore */ }
+      return waiting?.id ? renderWaiting(waiting) : renderGate();
+    }
     start(await call({ action: "open", pass, tz: tz() }, auth));
   } catch (e) {
     if (e.data?.gate) { store.del(PASS_KEY); return renderGate(); }
