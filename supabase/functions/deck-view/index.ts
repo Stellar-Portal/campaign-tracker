@@ -191,7 +191,7 @@ Deno.serve(async (req) => {
       const hook = Deno.env.get("SLACK_DECKS_WEBHOOK");
       if (hook) {
         const { data: lk } = await db.from("deck_links").select("label").eq("id", r.link.id).maybeSingle();
-        const os = (Deno.env.get("STELLAR_OS_URL") || "https://stellar-portal.github.io/campaign-tracker/").replace(/\/?$/, "/");
+        const os = (Deno.env.get("STELLAR_OS_URL") || "https://os.stellarmusic.dk/").replace(/\/?$/, "/");
         const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
         const text = `🔑 *${esc(email)}* didn't get their code for *${esc(r.deck.title)}*${lk?.label ? ` via "${esc(lk.label)}"` : ""} and is waiting to be let in. <${os}#/decks/${r.deck.id}|Let them in or decline in Stellar OS>`;
         await fetch(hook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, unfurl_links: false }) }).catch(() => null);
