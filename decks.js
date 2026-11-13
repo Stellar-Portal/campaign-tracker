@@ -2,8 +2,8 @@
 // Decks come in from Figma Slides through the "Send to Stellar OS" Figma button (figma-plugin/), which
 // calls the deck-import function. Here the team makes links, switches them off, sees who viewed what,
 // adds videos the import couldn't fetch, and keeps an eye on the Figma connection's expiry date.
-import { confirmDialog } from "./dialog.js?v=20261113d";
-import { loadClients } from "./clients.js?v=20261113d";
+import { confirmDialog } from "./dialog.js?v=20261114c";
+import { loadClients } from "./clients.js?v=20261114c";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const day = (d) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "");
@@ -108,6 +108,61 @@ function expiryDialog(sb, exp, onDone) {
   d.showModal();
 }
 
+// ---------- privacy requests: "delete my data" from someone who viewed a deck ----------
+// Looks up everything held for one email address (views with their slide times and clicks, email codes,
+// "let me in" requests, links made out to them), then deletes it after a confirmation. RPCs deck_viewer_data
+// and deck_forget_viewer (team only); each deletion is logged in privacy_erasures with only a hash of the address.
+function privacyDialog(sb, toast, onDone) {
+  const d = document.createElement("dialog");
+  d.className = "po-dialog";
+  document.body.append(d);
+  const draw = (found, email = "") => {
+    const none = found && !found.views && !found.codes && !found.requests && !found.links;
+    d.innerHTML = `<form method="dialog" novalidate>
+      <h2>Delete someone's data</h2>
+      <p class="muted small">For when someone who opened a deck asks us to delete their data (the privacy policy promises a reply within one month). Enter the email address they used.</p>
+      <label>Email address <input type="email" name="e" value="${esc(email)}" autocomplete="off" required></label>
+      ${found ? (none ? `<p class="small">We hold nothing for this address.</p>` : `<div class="dk-found small"><p><b>We hold for ${esc(email)}:</b></p><ul>
+        ${found.views ? `<li>${found.views} view${found.views === 1 ? "" : "s"} of ${found.decks} deck${found.decks === 1 ? "" : "s"} (${esc(day(found.first))} – ${esc(day(found.last))}), with time per slide and links opened</li>` : ""}
+        ${found.codes ? `<li>${found.codes} email code record${found.codes === 1 ? "" : "s"} (only scrambled codes)</li>` : ""}
+        ${found.requests ? `<li>${found.requests} "let me in" request${found.requests === 1 ? "" : "s"}</li>` : ""}
+        ${found.links ? `<li>${found.links} link${found.links === 1 ? "" : "s"} made out to this address (the link stays, but will ask for an email again)</li>` : ""}
+      </ul></div>`) : ""}
+      <p class="error small" role="alert"></p>
+      <div class="actions">${found && !none ? `<button type="button" class="danger" id="pv-del">Delete all of it</button>` : `<button type="button" class="primary" id="pv-look">Look up</button>`}<button type="submit" value="cancel" formnovalidate>Close</button></div>
+    </form>`;
+    const input = d.querySelector("[name=e]"), err = d.querySelector(".error");
+    input.oninput = () => { if (found) draw(null, input.value); };
+    const look = async () => {
+      const e = input.value.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) { err.textContent = "Enter a valid email address."; input.focus(); return; }
+      const { data, error } = await sb.rpc("deck_viewer_data", { p_email: e });
+      if (error) { err.textContent = error.message; return; }
+      draw(data, e); d.querySelector("#pv-del")?.focus();
+    };
+    d.querySelector("#pv-look")?.addEventListener("click", look);
+    input.onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); if (!found) look(); } };
+    d.querySelector("#pv-del")?.addEventListener("click", async (ev) => {
+      // Two steps in the same dialog: the first click asks, the second deletes.
+      const btn = ev.currentTarget;
+      if (!btn.dataset.sure) {
+        btn.dataset.sure = "1"; btn.textContent = "Yes, delete it for good";
+        err.textContent = "This can't be undone. Click again to delete.";
+        return;
+      }
+      btn.disabled = true;
+      const { data, error } = await sb.rpc("deck_forget_viewer", { p_email: email });
+      if (error) { err.textContent = error.message; return; }
+      toast?.(`Deleted: ${data.views} view${data.views === 1 ? "" : "s"}${data.codes ? `, ${data.codes} code record${data.codes === 1 ? "" : "s"}` : ""}${data.requests ? `, ${data.requests} request${data.requests === 1 ? "" : "s"}` : ""}${data.links ? `, address removed from ${data.links} link${data.links === 1 ? "" : "s"}` : ""}. You can now confirm to them that it's done.`);
+      d.close(); onDone?.();
+    });
+    if (!found) setTimeout(() => input.focus(), 30);
+  };
+  draw(null);
+  d.addEventListener("close", () => d.remove());
+  d.showModal();
+}
+
 // ---------- the Figma button: setup + personal keys ----------
 async function figmaButtonDialog(sb, toast) {
   const d = document.createElement("dialog");
@@ -175,7 +230,7 @@ export async function renderDecks(app, sb, ctx) {
   app.innerHTML = `
     <div class="page-head"><div><h1>Decks</h1>
       <p class="muted small" style="margin:6px 0 0">Share a pitch deck as a link and see who opened it, which slides they read and for how long.</p></div>
-      <div class="actions" style="margin:0"><button type="button" id="dk-btn" class="primary">Figma button</button></div></div>
+      <div class="actions" style="margin:0"><button type="button" id="dk-privacy" title="Someone asked us to delete their data">Delete someone's data</button><button type="button" id="dk-btn" class="primary">Figma button</button></div></div>
     <p class="small dk-tokline">${tokenLine(exp.data)} <button type="button" class="linkish" id="dk-exp">Update date</button></p>
     ${requestsHTML(reqs, { deckTitle: (id) => decks.find((d) => d.id === id)?.title ?? "A deck" })}
     ${!decks.length ? `<div class="panel dk-empty"><h2>No decks yet</h2>
@@ -193,6 +248,7 @@ export async function renderDecks(app, sb, ctx) {
     }).join("")}</div>`}`;
   const again = () => renderDecks(app, sb, ctx);
   app.querySelector("#dk-btn").onclick = () => figmaButtonDialog(sb, ctx.toast);
+  app.querySelector("#dk-privacy").onclick = () => privacyDialog(sb, ctx.toast, again);
   app.querySelector("#dk-btn2")?.addEventListener("click", () => figmaButtonDialog(sb, ctx.toast));
   app.querySelector("#dk-exp").onclick = () => expiryDialog(sb, exp.data, again);
   wireRequests(app, sb, ctx.toast, again);

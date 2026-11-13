@@ -158,7 +158,7 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
     const total = rowTotal(r), c = creatorOf(r);
     return `<tr data-row="${r.id}" class="po-st-${r.status}">
       <td class="po-who">
-        <span class="po-av">${c?.avatar_url ? `<img src="${esc(c.avatar_url)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span>${esc((handleKey(r.handle) || "?").charAt(0).toUpperCase())}</span></span>
+        <span class="po-av">${c?.avatar_url ? `<img src="${esc(c.avatar_url)}" alt="" referrerpolicy="no-referrer" data-fail="remove">` : ""}<span>${esc((handleKey(r.handle) || "?").charAt(0).toUpperCase())}</span></span>
         <input class="po-in po-handle" data-f="handle" value="${esc(r.handle)}" aria-label="Creator handle">
         ${c ? `<span class="po-ok" title="Matched to @${esc(c.username)}'s videos in this campaign">✓</span>` : ""}
         <a class="po-open" href="https://www.tiktok.com/@${esc(handleKey(r.handle))}" target="_blank" rel="noopener" title="Open profile" aria-label="Open ${esc(r.handle)}'s profile">↗</a></td>

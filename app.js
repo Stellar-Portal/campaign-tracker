@@ -1,18 +1,18 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261113d";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261113d";
-import { renderRoster } from "./roster.js?v=20261113d";
-import { renderDiscover } from "./discover.js?v=20261113d";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261113d";
-import { renderTrending } from "./trending.js?v=20261113d";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261113d";
-import { renderDecks, figmaReminder } from "./decks.js?v=20261113d";
-import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261113d";
-import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261113d";
-import { confirmDialog } from "./dialog.js?v=20261113d";
-import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261113d";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261113d";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261113d";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261114c";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261114c";
+import { renderRoster } from "./roster.js?v=20261114c";
+import { renderDiscover } from "./discover.js?v=20261114c";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261114c";
+import { renderTrending } from "./trending.js?v=20261114c";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261114c";
+import { renderDecks, figmaReminder } from "./decks.js?v=20261114c";
+import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261114c";
+import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261114c";
+import { confirmDialog } from "./dialog.js?v=20261114c";
+import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261114c";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261114c";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261114c";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -1767,7 +1767,7 @@ async function loadSounds(token, id) {
   if (token !== routeToken) return;
   el.innerHTML = `<div class="sounds">${sounds.map((s) => `
     <div class="sound">
-      ${s.cover_url ? `<img src="${esc(s.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'ph'}))">` : `<div class="ph"></div>`}
+      ${s.cover_url ? `<img src="${esc(s.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fail="div.ph">` : `<div class="ph"></div>`}
       <div>
         <div class="t"><a href="${esc(s.sound_url)}" target="_blank" rel="noopener">${esc(s.title ?? "Untitled sound")}</a></div>
         <div class="s">${esc(s.author ?? "")}${s.matched_song_title && s.matched_song_title !== s.title ? ` · song: ${esc(s.matched_song_title)}` : ""}</div>
@@ -2030,7 +2030,7 @@ async function loadPosts(token, id, camp) {
     const by = sortSel.value;
     return rows.sort((a, b) => by === "plays" ? (b.plays ?? -1) - (a.plays ?? -1) : by === "newest" ? String(b.last ?? "").localeCompare(String(a.last ?? "")) : String(b.addedAt).localeCompare(String(a.addedAt)));
   }
-  const avatarHtml = (c) => `<span class="av">${c?.avatar ? `<img src="${esc(c.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span>${esc((c?.name || c?.username || "?").trim().charAt(0).toUpperCase())}</span></span>`;
+  const avatarHtml = (c) => `<span class="av">${c?.avatar ? `<img src="${esc(c.avatar)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fail="remove">` : ""}<span>${esc((c?.name || c?.username || "?").trim().charAt(0).toUpperCase())}</span></span>`;
   const profileHref = (c) => c?.platform === "youtube" ? `https://www.youtube.com/@${encodeURIComponent(c.username)}` : c?.platform === "instagram" ? `https://www.instagram.com/${encodeURIComponent(c.username)}/` : `https://www.tiktok.com/@${encodeURIComponent(c?.username ?? "")}`;
 
   function creatorTable(rows, key) {

@@ -10,3 +10,7 @@
 -- 2026-11-13 "campaign_chat" (+ "campaign_chat_fix_edit_log"): campaign_messages, campaign_visits, campaign_activity (+ triggers on
 -- campaigns, payout_rows, invoice_requests, campaign_folders, share_links), RPC campaign_recap(uuid, timestamptz); campaign_messages in
 -- the supabase_realtime publication. Applied live through the Supabase tools; the live database is the truth.
+
+-- 2026-11-14 "security_privacy_check_2026_11_14": revoke sync_campaign_invoiced from anon/authenticated; actor_email search_path;
+-- campaign_visits update needs team; privacy_erasures + RPCs deck_viewer_data/deck_forget_viewer; private.deck_retention_cleanup()
+-- (NOT scheduled; waiting for Sam's OK). Applied live through the Supabase tools.

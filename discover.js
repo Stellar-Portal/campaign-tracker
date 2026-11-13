@@ -4,8 +4,8 @@
 // and the same search again within 24 hours is free.
 //
 // Route: #/discover
-import { esc, big } from "./report.js?v=20261113d";
-import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261113d";
+import { esc, big } from "./report.js?v=20261114c";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261114c";
 
 const PAGE = 25;
 const STORE = "discover:v1";
@@ -290,7 +290,7 @@ export async function renderDiscover(app, sb, ctx) {
           const key = `${r.platform}:${String(a.username).toLowerCase()}`, rid = onRoster.get(key);
           return `<tr>
             <td><a class="ro-who dc-who" href="${esc(pf.url(a.username))}" target="_blank" rel="noopener">
-              <span class="ro-av" style="--s:40px">${a.picture ? `<img src="${esc(a.picture)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span>${esc((a.name || a.username || "?").charAt(0).toUpperCase())}</span></span>
+              <span class="ro-av" style="--s:40px">${a.picture ? `<img src="${esc(a.picture)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fail="remove">` : ""}<span>${esc((a.name || a.username || "?").charAt(0).toUpperCase())}</span></span>
               <span class="ro-names"><b>${esc(a.name || a.username)}</b><span class="muted small ro-handle"><span class="ro-pfmini">${pf.icon}</span>@${esc(a.username)}</span></span></a></td>
             <td class="num" title="${a.followers ?? ""}">${big(a.followers)}</td>
             <td class="num">${a.engagement != null ? `${Number(a.engagement).toFixed(1)}%` : "–"}</td>

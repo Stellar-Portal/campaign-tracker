@@ -4,7 +4,7 @@
 // Function and scored in the database (trend_compute_scores).
 //
 // Routes: #/trending (tracks) · #/trending/artists · #/trending/artist/<chartmetric artist id>
-import { esc, flag, ago, compact } from "./report.js?v=20261113d";
+import { esc, flag, ago, compact } from "./report.js?v=20261114c";
 
 const REGIONS = ["Asia", "LATAM", "US"];
 const PLATFORM = { spotify: "Spotify", shazam: "Shazam", tiktok: "TikTok", applemusic: "Apple Music", youtube: "YouTube" };
@@ -23,7 +23,7 @@ async function fetchAll(build, pageSize = 1000) {
 }
 const day = (iso) => (iso ? new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "");
 const thumb = (url, alt = "") => url
-  ? `<img class="tr-thumb" src="${esc(url)}" alt="${esc(alt)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'tr-thumb'}))">`
+  ? `<img class="tr-thumb" src="${esc(url)}" alt="${esc(alt)}" loading="lazy" referrerpolicy="no-referrer" data-fail="span.tr-thumb">`
   : `<span class="tr-thumb" aria-hidden="true"></span>`;
 
 // What each platform says about a track, e.g. "Shazam #4 · new", "Spotify #37 ↑52",

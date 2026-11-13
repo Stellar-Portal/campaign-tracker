@@ -2,7 +2,7 @@
 // No login. The `deck-view` function checks the link, hands out slide images and videos as
 // short-lived links, and records time per slide. Time only counts while this tab is visible;
 // totals are running sums, so resending them (heartbeat, page close, retry) never double-counts.
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261113d";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261114c";
 
 const FN = `${SUPABASE_URL}/functions/v1/deck-view`;
 const app = document.getElementById("app");
@@ -332,7 +332,7 @@ function start(d) {
         v.play().catch(() => { v.muted = true; v.play().catch(() => {}); drawSound(); });
       } else if (sp.kind === "link") {
         const a = document.createElement("a");
-        a.className = "spot"; a.style.cssText = pos; a.href = sp.url; a.target = "_blank"; a.rel = "noopener noreferrer";
+        a.className = "spot"; a.style.cssText = pos; a.href = /^https?:\/\//i.test(String(sp.url ?? "")) ? sp.url : "#"; a.target = "_blank"; a.rel = "noopener noreferrer";
         a.setAttribute("aria-label", sp.label || "Open link");
         a.addEventListener("click", () => {
           if (!session) return;

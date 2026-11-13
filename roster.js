@@ -1,12 +1,12 @@
-import { confirmDialog } from "./dialog.js?v=20261113d";
+import { confirmDialog } from "./dialog.js?v=20261114c";
 // Creator roster: the creators Stellar works with, each with topline numbers from their recent
 // TikTok videos (ScrapeCreators, refreshed weekly by the roster Edge Function) and, on request,
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261113d";
-import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261113d";
-import { openCreatorImport } from "./creator-import.js?v=20261113d";
+import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261114c";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261114c";
+import { openCreatorImport } from "./creator-import.js?v=20261114c";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
@@ -20,7 +20,7 @@ const st = { q: "", country: "", platform: "", sort: "added", addPlatform: "tikt
 
 const avatar = (c, size = 40) => {
   const letter = esc((c.display_name || c.username || "?").trim().charAt(0).toUpperCase());
-  return `<span class="ro-av" style="--s:${size}px">${c.avatar_url ? `<img src="${esc(c.avatar_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span>${letter}</span></span>`;
+  return `<span class="ro-av" style="--s:${size}px">${c.avatar_url ? `<img src="${esc(c.avatar_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fail="remove">` : ""}<span>${letter}</span></span>`;
 };
 const place = (code) => (code ? `${flag(code)} ${esc(regionName(code))}` : "–");
 const perWeek = (x) => (x == null ? "–" : x >= 1 ? `${Math.round(x * 10) / 10}` : `${Math.round(x * 4 * 10) / 10}/mo`);
@@ -909,7 +909,7 @@ function insightsHtml(ins, c) {
     ${brands.length ? `<div class="ic-cap ic-gap">Brands mentioned</div><div class="ro-notable">${brands.map((b) => `<span class="ro-chip">${esc(b)}</span>`).join("")}</div>` : ""}
     ${sponsored.length ? `<div class="ic-cap ic-gap">Sponsored posts</div><div class="ic-spons">${sponsored.slice(0, 8).map((x) => `
       <a class="ic-spon" href="${esc(x.post_url)}" target="_blank" rel="noopener">
-        <span class="ic-spon-img">${x.thumbnail ? `<img src="${esc(x.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}</span>
+        <span class="ic-spon-img">${x.thumbnail ? `<img src="${esc(x.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer" data-fail="remove">` : ""}</span>
         <span class="ic-spon-t">${esc((x.caption || "").slice(0, 90) || "Sponsored post")}</span>
         <span class="ic-spon-m">${x.created_at ? esc(ago(x.created_at)) : ""}${x.engagement?.likes != null ? ` · ${big(x.engagement.likes)} likes` : ""}</span></a>`).join("")}</div>` : ""}
     ${tagged.length ? `<div class="ic-cap ic-gap">Recently tagged accounts</div><div class="ro-notable">${tagged.slice(0, 16).map((t) => { const u = typeof t === "string" ? t : t.username ?? t.name ?? ""; return u ? `<a class="ro-chip" href="${esc(platformOf(c.platform).url(u))}" target="_blank" rel="noopener">@${esc(u)}</a>` : ""; }).join("")}</div>` : ""}

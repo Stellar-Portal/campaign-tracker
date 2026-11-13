@@ -1,4 +1,4 @@
-import { confirmDialog } from "./dialog.js?v=20261113d";
+import { confirmDialog } from "./dialog.js?v=20261114c";
 // The report: one module used in two places.
 // - share.html (a client with a link): what the link's settings allow.
 // - the team dashboard (#/report/<artist>): the same view with everything on, plus "remove".
@@ -6,6 +6,22 @@ import { confirmDialog } from "./dialog.js?v=20261113d";
 
 // ---------- formatting ----------
 export const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Broken pictures (e.g. an expired TikTok avatar): <img data-fail="remove|hide|tag.class"> is removed, hidden or
+// swapped for an empty placeholder. One listener for the whole page, because the Content-Security-Policy
+// doesn't allow inline onerror="..." handlers. report.js is loaded by both the OS and the client report.
+if (typeof document !== "undefined" && !window.__imgFail) {
+  window.__imgFail = true;
+  document.addEventListener("error", (e) => {
+    const img = e.target;
+    if (!(img instanceof HTMLImageElement) || !img.dataset.fail) return;
+    const how = img.dataset.fail;
+    if (how === "remove") img.remove();
+    else if (how === "hide") img.hidden = true;
+    else { const [tag, cls] = how.split("."); const ph = document.createElement(tag || "span"); if (cls) ph.className = cls; img.replaceWith(ph); }
+  }, true);
+}
+// Links shown to clients only ever go to normal web addresses (never javascript: or data:).
+export const escUrl = (v) => (/^https?:\/\//i.test(String(v ?? "").trim()) ? esc(String(v).trim()) : "#");
 const nf = new Intl.NumberFormat("en");
 const cf = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 const n = (v) => (v == null ? "–" : nf.format(v));
@@ -35,9 +51,13 @@ const truncate = (s, k) => (s.length > k ? s.slice(0, k - 1) + "…" : s);
 const shortName = (s) => { const m = /^original sound\s*[-–]\s*(.+)$/i.exec(s); return m ? `${m[1]} (original)` : s; };
 // Posts come from TikTok or YouTube (YouTube video ids are stored as "yt:<id>").
 const isYT = (p) => String(p?.video_id ?? "").startsWith("yt:");
+// Has this browser agreed to load TikTok/YouTube video players on client links? (see drawMedia)
+function videosOk(set) {
+  try { if (set) localStorage.setItem("stellar-videos-ok", "1"); return localStorage.getItem("stellar-videos-ok") === "1"; } catch { return !!set; }
+}
 const platformName = (p) => (isYT(p) ? "YouTube" : "TikTok");
 const embedSrc = (p) => isYT(p)
-  ? `https://www.youtube.com/embed/${encodeURIComponent(p.video_id.slice(3))}?rel=0&playsinline=1`
+  ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(p.video_id.slice(3))}?rel=0&playsinline=1`
   : `https://www.tiktok.com/player/v1/${encodeURIComponent(p.video_id)}?description=1&music_info=1&rel=0&native_context_menu=0`;
 const profileUrl = (p) => {
   const u = p.creator?.username ?? "";
@@ -234,7 +254,7 @@ export function renderWall(el, list, ctx, { shown = 48, view = "grid", onMore } 
   const pick = (p, i) => picking ? `<label class="pick" title="Select"><input type="checkbox" data-pick="${i}" ${ctx.selected.has(p.id) ? "checked" : ""} aria-label="Select @${esc(p.creator?.username ?? "")}'s video"></label>` : "";
   const actions = (p, i) => `<div class="card-actions">
       <button type="button" data-act="copy" data-i="${i}" title="Copy link" aria-label="Copy link to this video">${ICON.link}</button>
-      <a data-act="open" href="${esc(p.url)}" target="_blank" rel="noopener" title="Open on ${platformName(p)}" aria-label="Open this video on ${platformName(p)}">${ICON.open}</a>
+      <a data-act="open" href="${escUrl(p.url)}" target="_blank" rel="noopener" title="Open on ${platformName(p)}" aria-label="Open this video on ${platformName(p)}">${ICON.open}</a>
       ${team ? `<button type="button" data-act="remove" data-i="${i}" title="Remove from campaign" aria-label="Remove this video from the campaign">${ICON.trash}</button>` : ""}
     </div>`;
   el.innerHTML = view === "grid"
@@ -243,7 +263,7 @@ export function renderWall(el, list, ctx, { shown = 48, view = "grid", onMore } 
         <div class="cover-wrap">
           ${pick(p, i)}
           <button type="button" class="cover" data-i="${i}" aria-label="Preview @${esc(p.creator?.username ?? "")}'s video: ${esc(n(p.plays))} views">
-            <img data-vid="${esc(p.video_id)}" alt="" loading="lazy" ${ctx.covers[p.video_id] ? `src="${esc(ctx.covers[p.video_id])}"` : "hidden"} onerror="this.hidden=true">
+            <img data-vid="${esc(p.video_id)}" alt="" loading="lazy" ${ctx.covers[p.video_id] ? `src="${esc(ctx.covers[p.video_id])}"` : "hidden"} data-fail="hide">
             <span class="tile-top">
               ${p.gone ? `<span class="chip">No longer on ${platformName(p)}</span>` : `<span class="chip">${ctx.showCountry !== false && flag(p.country) ? `${flag(p.country)} ` : ""}${isYT(p) ? "YouTube · " : ""}${esc(ago(p.published_at))}</span>`}
             </span>
@@ -371,6 +391,22 @@ export function openPostModal(list, index, ctx) {
     const media = wrap.querySelector(".pm-media");
     const yt = isYT(p);
     media.classList.remove("ready");
+    // On client links, TikTok's and YouTube's players (which can set their own cookies) load only after the
+    // viewer says yes once; the answer is remembered in this browser.
+    if (ctx.mode !== "team" && !videosOk()) {
+      player = null;
+      media.innerHTML = `${ctx.covers[p.video_id] ? `<img class="pm-poster" src="${esc(ctx.covers[p.video_id])}" alt="">` : ""}
+        <div class="pm-consent"><p>Videos play through ${yt ? "YouTube" : "TikTok"}, which may set its own cookies.</p>
+          <button type="button" class="pm-consent-ok">${ICON.play}<span>Play videos</span></button>
+          <a href="privacy.html" target="_blank" rel="noopener">How we handle data</a></div>
+        ${list.length > 1 ? `<button type="button" class="pm-nav prev" aria-label="Previous video" ${i === 0 ? "disabled" : ""}>${ICON.prev}</button>
+        <button type="button" class="pm-nav next" aria-label="Next video" ${i === list.length - 1 ? "disabled" : ""}>${ICON.next}</button>` : ""}`;
+      media.classList.add("ready");
+      media.querySelector(".pm-consent-ok").onclick = () => { videosOk(true); drawMedia(); };
+      media.querySelector(".prev")?.addEventListener("click", () => go(-1));
+      media.querySelector(".next")?.addEventListener("click", () => go(1));
+      return;
+    }
     media.innerHTML = `
       ${ctx.covers[p.video_id] ? `<img class="pm-poster" src="${esc(ctx.covers[p.video_id])}" alt="">` : ""}
       <iframe src="${esc(yt ? embedSrc(p) : ttSrc(p))}" title="${platformName(p)} video by ${esc(p.creator?.name || p.creator?.username || "")}"
@@ -422,15 +458,15 @@ export function openPostModal(list, index, ctx) {
     const side = wrap.querySelector(".pm-side");
     side.innerHTML = `
       <div class="pm-head">
-        <div class="pm-avatar">${p.creator?.avatar ? `<img src="${esc(p.creator.avatar)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}<span>${initial}</span></div>
+        <div class="pm-avatar">${p.creator?.avatar ? `<img src="${esc(p.creator.avatar)}" alt="" referrerpolicy="no-referrer" data-fail="remove">` : ""}<span>${initial}</span></div>
         <div class="pm-who">
           <div class="pm-name">${esc(name)}${p.creator?.verified ? ' <span class="tick" title="Verified">✓</span>' : ""}</div>
-          <div class="pm-sub"><a href="${esc(profileUrl(p))}" target="_blank" rel="noopener">${isYT(p) && /^UC[\w-]{22}$/.test(p.creator?.username ?? "") ? "YouTube channel" : "@" + esc(p.creator?.username ?? "unknown")}</a>${p.published_at ? ` · ${esc(dayLong(p.published_at.slice(0, 10)))}` : ""}${ctx.showCountry !== false && p.country ? ` · ${flag(p.country)} ${esc(regionName(p.country))}` : ""}</div>
+          <div class="pm-sub"><a href="${escUrl(profileUrl(p))}" target="_blank" rel="noopener">${isYT(p) && /^UC[\w-]{22}$/.test(p.creator?.username ?? "") ? "YouTube channel" : "@" + esc(p.creator?.username ?? "unknown")}</a>${p.published_at ? ` · ${esc(dayLong(p.published_at.slice(0, 10)))}` : ""}${ctx.showCountry !== false && p.country ? ` · ${flag(p.country)} ${esc(regionName(p.country))}` : ""}</div>
         </div>
         <button type="button" class="pm-close" aria-label="Close">${ICON.close}</button>
       </div>
       <div class="pm-actions">
-        <a class="pm-act" href="${esc(p.url)}" target="_blank" rel="noopener">${ICON.open}<span>Open on ${platformName(p)}</span></a>
+        <a class="pm-act" href="${escUrl(p.url)}" target="_blank" rel="noopener">${ICON.open}<span>Open on ${platformName(p)}</span></a>
         <button type="button" class="pm-act" data-pm="copy">${ICON.link}<span>Copy link</span></button>
         ${team && ctx.move && ctx.folders?.length ? `<label class="pm-folder"><span class="sr">Folder</span><select data-pm="folder" aria-label="Folder"><option value="">Not in a folder</option>${ctx.folders.map((f) => `<option value="${esc(f.id)}" ${p.folder_id === f.id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select></label>` : ""}
         ${team && ctx.remove ? `<button type="button" class="pm-act icon danger" data-pm="remove" title="Remove from campaign" aria-label="Remove from campaign">${ICON.trash}</button>` : ""}
@@ -640,7 +676,7 @@ export function mountReport(root, api) {
     const top = [...sounds].sort((a, b) => latest(b) - latest(a))[0];
     const uses = latest(top);
     const label = `<span class="note" aria-hidden="true">♪</span><span class="key-text">${esc(top.title ?? "Campaign sound")}</span>${uses ? `<span class="key-sub">${esc(big(uses))} videos</span>` : ""}${sounds.length > 1 ? `<span class="key-sub">+${sounds.length - 1} more</span>` : ""}`;
-    return top.sound_url ? `<a class="key-chip sound" href="${esc(top.sound_url)}" target="_blank" rel="noopener" title="Open the sound on TikTok">${label}</a>` : `<span class="key-chip sound">${label}</span>`;
+    return top.sound_url ? `<a class="key-chip sound" href="${escUrl(top.sound_url)}" target="_blank" rel="noopener" title="Open the sound on TikTok">${label}</a>` : `<span class="key-chip sound">${label}</span>`;
   }
 
   function render() {
@@ -850,7 +886,7 @@ export function mountReport(root, api) {
     });
     el.innerHTML = `
       <div class="tiles">
-        ${tiles.map(({ s, now, delta }) => `<div class="tile"><div class="tile-name"><i style="background:${s.color}"></i><a href="${esc(s.sound_url)}" target="_blank" rel="noopener">${esc(s.title ?? "Untitled sound")}</a></div>
+        ${tiles.map(({ s, now, delta }) => `<div class="tile"><div class="tile-name"><i style="background:${s.color}"></i><a href="${escUrl(s.sound_url)}" target="_blank" rel="noopener">${esc(s.title ?? "Untitled sound")}</a></div>
           <div class="n">${n(now)}</div>
           <div class="d muted">videos use this sound${delta != null ? ` · <b class="${delta < 0 ? "neg" : "pos"}">${signed(delta)}</b> in this period` : ""}</div>
           ${s.matched_song_title && s.matched_song_title !== s.title ? `<div class="d muted">TikTok matches it to “${esc(s.matched_song_title)}”</div>` : ""}</div>`).join("")}

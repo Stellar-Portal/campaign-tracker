@@ -10,8 +10,8 @@
 // next to tasks on paper; M = Meetings & calls is there for everyone. Photos, quick add and the AI box use them.
 // Weeks run Monday to Sunday, Copenhagen time. The Friday recap opens from 17:00 on Friday; the week overview
 // from 08:00 on Monday. Both light up the week button (and the OS button) until they're gone through.
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261113d";
-import { confirmDialog } from "./dialog.js?v=20261113d";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261114c";
+import { confirmDialog } from "./dialog.js?v=20261114c";
 
 const FN = `${SUPABASE_URL}/functions/v1/todo`;
 const KEY_STORE = "stellar-todo-key";
