@@ -96,7 +96,7 @@ Sam asked: keep these until he asks to solve them, and **list them every time he
 - Creator avatars are copied to the `avatars` bucket by both `roster` and `process-links` (TikTok's own links expire).
 
 ## Front-end map
-- `app.js`: router, nav and page cache. Desktop menu is icons-only and opens almost instantly on hover (120ms) and pushes the page aside (never covers it), closing 150ms after the pointer leaves or on a click in the page (`navPeek`); Ctrl/⌘+\\ toggles it. Phones keep the top bar.
+- `app.js`: router, nav and page cache. Desktop menu is icons-only and opens almost instantly on hover (120ms) and pushes the page aside (never covers it), closing 150ms after the pointer leaves or on a click in the page (`navPeek`); Ctrl/⌘+\\ toggles it. The open menu is a cobalt blob (`.sidebar::before`) that grows out of the icon strip and shrinks back into it: one animated number `--nav-o` (registered with `@property`) drives the blob's clip, the menu's clickable area and the icon/text colours, and nothing in the menu moves between folded and open. The page follows the blob's edge via `--nav-c` on `.content`. No fading. Phones keep the top bar.
   - Page cache: KEEPABLE hashes stay in the DOM for 3 minutes and are cleared on any write.
   - Also: overview (`renderOverview`), campaign page (`renderCampaign`: Report/Payouts tabs switch in place, share dialog, ⋯ menu), campaign form, folders.
 - Pop-ups: one app-wide handler (`closePopups` in app.js) closes them on an outside click or Escape. Menus/dropdowns built as `<details>` must be listed in `POPUP_DETAILS`; button-opened panels get `data-pop` and `aria-controls` on their button. Modal `<dialog>`s close on a click on the dimmed backdrop.

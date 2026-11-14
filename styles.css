@@ -2356,3 +2356,75 @@ body.nav-collapsed:not(.nav-peek) .nav-label { color: transparent; }
 .dk-found { background: var(--parchment); border-radius: 12px; padding: 4px 14px; margin: 12px 0 4px; }
 .dk-found ul { margin: 0 0 10px; padding-left: 18px; }
 .dk-found li { margin: 4px 0; }
+
+/* ---------- Menu as a cobalt blob (desktop, 2026-11-14) ----------
+   One number, --nav-o (0 = folded, 1 = open), drives everything, so the blob, the labels and the icon colours move as one:
+   - the blob (.sidebar::before) grows out of the icon strip and shrinks back into it; no fading, no colour change of its own;
+   - nothing in the menu changes place between folded and open: icons stay put, labels are simply uncovered or covered;
+   - the menu's visible/clickable area follows the blob's edge but never gets narrower than the 68px icon strip.
+   Its edge: E = 10px + o × 216px. --k1 / --k2 = how much of the icons / the text the blob covers (0…1). */
+@property --nav-o { syntax: '<number>'; inherits: true; initial-value: 1; }
+@property --nav-c { syntax: '<number>'; inherits: false; initial-value: 1; }
+@media (min-width: 901px) {
+  body .sidebar, body.nav-collapsed .sidebar {
+    --nav-o: 1;
+    --k1: clamp(0, calc((var(--nav-o) * 216 - 17) / 16), 1);
+    --k2: clamp(0, calc((var(--nav-o) * 216 - 38) / 20), 1);
+    width: 232px; padding: 22px 14px 18px; background: transparent; overflow-x: hidden;
+    clip-path: inset(0 calc(232px - max(68px, 10px + var(--nav-o) * 216px)) 0 0);
+    transition: --nav-o 0.3s cubic-bezier(.2, .75, .25, 1);
+  }
+  body.nav-collapsed .sidebar { --nav-o: 0; transition: --nav-o 0.28s cubic-bezier(.4, 0, .4, 1); }
+  .sidebar::before {
+    content: ""; position: fixed; top: 0; bottom: 0; left: 0; width: 232px; z-index: -1; pointer-events: none;
+    background: var(--accent);
+    clip-path: inset(10px calc((1 - var(--nav-o)) * 216px + 6px) 10px 10px round 22px);
+  }
+  /* The page keeps a 6px gap from the blob's edge (never closer than the strip), so the blob pushes it and pulls it back. */
+  body:not(.signin) .content, body.nav-peek:not(.signin) .content {
+    --nav-c: 1; margin-left: max(68px, calc(16px + var(--nav-c) * 216px));
+    transition: --nav-c 0.3s cubic-bezier(.2, .75, .25, 1), margin-right 0.34s cubic-bezier(.2, .8, .2, 1);
+  }
+  body.nav-collapsed:not(.signin) .content { --nav-c: 0; transition: --nav-c 0.28s cubic-bezier(.4, 0, .4, 1), margin-right 0.34s cubic-bezier(.2, .8, .2, 1); }
+
+  /* Same layout folded and open */
+  body .side-top, body.nav-collapsed .side-top { flex-direction: row; gap: 8px; }
+  body .brand, body.nav-collapsed .brand { justify-content: flex-start; padding: 2px 4px; gap: 10px; }
+  body .brand img.brand-mark, body.nav-collapsed .brand img.brand-mark { display: block; width: 32px; height: 32px; order: -1; }
+  body .brand img:not(.brand-mark), body.nav-collapsed .brand img:not(.brand-mark) { display: block; opacity: var(--k2); }
+  body .brand span, body.nav-collapsed .brand span { display: inline; color: rgba(255,255,255, calc(0.6 * var(--k2))); }
+  body .nav, body.nav-collapsed .nav { gap: 10px; }
+  body .sidebar .nav-label, body.nav-collapsed:not(.nav-peek) .sidebar .nav-label {
+    font-size: 11px; line-height: 14px; height: auto; padding: 0 10px 4px; margin: 0; background: none;
+    color: rgba(255,255,255, calc(0.6 * var(--k2)));
+  }
+  body .sidebar .nav-item, body.nav-collapsed .sidebar .nav-item {
+    width: calc(40px + var(--nav-o) * 164px); overflow: hidden; justify-content: flex-start; padding: 9px 11px; gap: 14px;
+    color: color-mix(in srgb, rgba(255,255,255,0.86) calc(var(--k1) * 100%), rgba(0,0,0,0.38));
+    background: none; box-shadow: none;
+  }
+  body .sidebar .nav-item span, body.nav-collapsed .sidebar .nav-item span { display: inline; color: rgba(255,255,255, var(--k2)); }
+  body .sidebar .nav-item.on, body.nav-collapsed .sidebar .nav-item.on {
+    font-weight: 600;
+    color: color-mix(in srgb, #fff calc(var(--k1) * 100%), var(--accent));
+    background: rgba(255,255,255, calc(0.2 * var(--k2)));
+    box-shadow: inset 3px 0 0 rgba(255,255,255, var(--k2));
+  }
+  body:not(.nav-collapsed) .sidebar .nav-item:hover { background: rgba(255,255,255,0.12); color: #fff; }
+  body:not(.nav-collapsed) .sidebar .nav-item.on:hover { background: rgba(255,255,255,0.2); }
+  body.nav-collapsed .sidebar .nav-item:hover { background: rgba(0,0,0,0.05); color: var(--ink); }
+  body .sidebar .who, body.nav-collapsed .sidebar .who {
+    align-items: flex-start; padding: 12px 4px 0; border-top: 1px solid rgba(255,255,255, calc(0.12 * var(--k2)));
+  }
+  body .sidebar .who .email, body.nav-collapsed .sidebar .who .email { display: block; padding-left: 6px; color: rgba(255,255,255, calc(0.6 * var(--k2))); }
+  body .sidebar .who button, body.nav-collapsed .sidebar .who button {
+    padding: 7px 9px; color: color-mix(in srgb, #fff calc(var(--k1) * 100%), rgba(0,0,0,0.38));
+    border-color: rgba(255,255,255, calc(0.3 * var(--k2)));
+  }
+  body .sidebar .who button span, body.nav-collapsed .sidebar .who button span { display: inline; color: rgba(255,255,255, var(--k2)); }
+  body.nav-collapsed .sidebar .who button:hover { color: var(--ink); }
+  body.nav-peek .sidebar * { animation: none !important; }
+}
+@media (min-width: 901px) and (prefers-reduced-motion: reduce) {
+  body .sidebar, body.nav-collapsed .sidebar, body:not(.signin) .content, body.nav-collapsed:not(.signin) .content { transition: none; }
+}
