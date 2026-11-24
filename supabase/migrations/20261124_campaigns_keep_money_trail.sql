@@ -1,4 +1,5 @@
--- NOT APPLIED YET (2026-11-24): the Supabase tool asked Sam to confirm and got no answer. Apply once Sam says OK.
+-- Applied 2026-11-24 (Sam said yes).
+-- Note: applied with "create or replace trigger" instead of the plain "create trigger" below.
 -- A campaign with a money trail (invoices that aren't cancelled, creators marked paid) is archived, never deleted.
 -- PayPal payments already block it through their foreign key. A campaign made by mistake (no money trail) can still be deleted.
 -- The OS already checks this before deleting (moneyTrail/archiveInstead in app.js); this is the database backstop.
