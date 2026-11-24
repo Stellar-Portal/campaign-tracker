@@ -1,7 +1,7 @@
 // Payouts: the PayPal payout sheet, built into each campaign (team only; clients never see it).
 // "Pay with PayPal" sends the ticked "Posted · to pay" creators as one PayPal batch through the paypal-payouts function;
 // every payment carries the campaign's PO number, and payout_payments keeps where each one stands.
-import { confirmDialog } from "./dialog.js?v=20261124c";
+import { confirmDialog } from "./dialog.js?v=20261124d";
 // A campaign has sections (a set of deliverables, e.g. "20x Edits" at $50 each) and one row per creator:
 // who sources and pays them, videos, price, status (contacted → waiting for draft → drafted →
 // waiting to post → posted (to pay) → paid) and their posting progress, read from the tracker's posts.
@@ -14,6 +14,14 @@ const money = (v, cur) => {
 };
 const num = (v) => { const t = String(v ?? "").replace(/[^0-9.,-]/g, "").replace(/,(?=\d{3}\b)/g, "").replace(",", "."); const x = parseFloat(t); return Number.isFinite(x) ? x : null; };
 const today = () => new Date().toISOString().slice(0, 10);
+// A one-time link a creator uses to fill in their payment details; saved on their roster card.
+export async function copyDetailsLink(sb, creatorId, toast) {
+  const { data, error } = await sb.rpc("make_creator_details_link", { p_creator: creatorId });
+  if (error || !data) return toast?.(error?.message ?? "Couldn't make the link");
+  const url = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}payment-details.html#t=${data}`;
+  try { await navigator.clipboard.writeText(url); toast?.("Link copied. Send it to the creator: it works once, for 30 days."); }
+  catch { toast?.(url); }
+}
 const SEND_ICON = `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h11M10 5l5 5-5 5"/></svg>`;
 const dayLabel = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "");
 const handleKey = (h) => String(h ?? "").trim().replace(/^@/, "").replace(/^https?:\/\/(www\.)?tiktok\.com\/@/i, "").split(/[/?]/)[0].toLowerCase();
@@ -67,10 +75,10 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
   const invoices = invRes.data ?? [];
   const pp = ppRes?.data && !ppRes.data.error ? ppRes.data : { mode: "off", ready: false, allowed: false };
   const camp = campRes.data ?? {};
-  // PayPal addresses already known for these creators (from earlier payments).
-  const creatorEmail = new Map();
+  // Payment details saved on these creators' roster cards (filled in once, used for every campaign).
+  const creatorPay = new Map();
   { const ids = [...new Set(rows.map((r) => r.creator_id).filter(Boolean))];
-    if (ids.length) { const { data } = await sb.from("creators").select("id,paypal_email").in("id", ids); for (const c of data ?? []) if (c.paypal_email) creatorEmail.set(c.id, c.paypal_email); } }
+    if (ids.length) { const { data } = await sb.from("creators").select("id,paypal_email,payout_method,wise_email").in("id", ids); for (const c of data ?? []) creatorPay.set(c.id, c); } }
   const budget = campRes.data?.budget != null ? Number(campRes.data.budget) : null;
   let capPct = Number(campRes.data?.spend_cap_percent ?? 30);
   // Who can source and pay creators here: the people running this campaign (and its DRI).
@@ -98,7 +106,8 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
   const lastPayment = (r) => payments.find((p) => p.row_id === r.id) ?? null;
   const onTheWay = (r) => { const p = lastPayment(r); return !!p && (WAITING.includes(p.status) || p.status === "success"); };
   const payable = (r) => r.status === "posted" && rowTotal(r) > 0 && !onTheWay(r);
-  const emailOf = (r) => r.paypal_email || (r.creator_id && creatorEmail.get(r.creator_id)) || "";
+  // The roster card wins (it's what the creator last told us), then whatever was used on this sheet before.
+  const emailOf = (r) => (r.creator_id && creatorPay.get(r.creator_id)?.paypal_email) || r.paypal_email || "";
   const PAY_LABEL = { queued: "Sending to PayPal…", pending: "Sending to PayPal…", unclaimed: "Waiting for them to claim it", onhold: "On hold at PayPal",
     success: "Paid through PayPal", failed: "PayPal payment failed", returned: "Money came back", blocked: "Blocked by PayPal", refunded: "Refunded",
     reversed: "Reversed", denied: "Refused by PayPal", canceled: "Taken back" };
@@ -360,8 +369,13 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
     el.querySelector("#po-paste").onclick = () => pasteDialog();
     el.querySelectorAll("[data-sglink]").forEach((b) => (b.onclick = async () => {
       const r = rows.find((x) => x.id === b.dataset.sglink), c = creators.get(b.dataset.c);
-      const patch = { creator_id: c.id, handle: `@${handleKey(c.username)}` };
-      if (await save("payout_rows", r.id, patch)) { Object.assign(r, patch); await sync(); toast(`Matched to @${c.username}`); draw(); }
+      const patch = { creator_id: c.id, handle: `@${handleKey(c.username)}` }, was = r.creator_id;
+      if (await save("payout_rows", r.id, patch)) {
+        Object.assign(r, patch);
+        // The card the sheet made for the misspelt handle folds into the right creator (details and all).
+        if (was && was !== c.id) await sb.rpc("merge_creators", { p_from: was, p_into: c.id });   // refused (fine) if that card has real numbers
+        await sync(); toast(`Matched to @${c.username}`); draw();
+      }
     }));
     el.querySelectorAll("[data-sgno]").forEach((b) => (b.onclick = () => { st.dismissed.add(b.dataset.sgno); el.querySelector("#po-suggest").innerHTML = suggestHtml(); bind(); }));
     el.querySelectorAll(".po-sec").forEach((box) => {
@@ -540,7 +554,9 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
         <div class="pp-li pp-head"><span></span><span>Creator</span><span>PayPal email</span><span class="num">Amount</span></div>
         ${cand.map((r) => `<label class="pp-li" data-r="${r.id}">
           <input type="checkbox" name="pick" value="${r.id}"${picked.has(r.id) ? " checked" : ""} aria-label="Pay ${esc(r.handle)}">
-          <span class="pp-h"><b>${esc(r.handle)}</b>${r.videos ? ` <span class="muted small">${r.videos} video${r.videos === 1 ? "" : "s"}</span>` : ""}</span>
+          <span class="pp-h"><b>${esc(r.handle)}</b>${r.videos ? ` <span class="muted small">${r.videos} video${r.videos === 1 ? "" : "s"}</span>` : ""}
+            ${creatorPay.get(r.creator_id)?.payout_method === "wise" ? `<br><span class="small pp-warn">Prefers Wise${creatorPay.get(r.creator_id)?.wise_email ? `: ${esc(creatorPay.get(r.creator_id).wise_email)}` : ""}</span>` : ""}
+            ${!emailOf(r) && r.creator_id ? `<br><button type="button" class="link-btn small" data-pplink="${r.creator_id}">Copy a link for them to fill in</button>` : ""}</span>
           <input type="email" class="pp-email" name="email-${r.id}" value="${esc(emailOf(r))}" placeholder="their PayPal email" autocomplete="off" aria-label="${esc(r.handle)}'s PayPal email">
           <span class="num pp-amt">${money(rowTotal(r), cur)}</span></label>`).join("")}
       </div>
@@ -567,6 +583,7 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
       errEl.textContent = missing.length ? `Add a PayPal email for ${missing.map((r) => r.handle).join(", ")}.` : "";
     };
     f.addEventListener("input", refresh); f.addEventListener("change", refresh); refresh();
+    d.querySelectorAll("[data-pplink]").forEach((b) => (b.onclick = (e) => { e.preventDefault(); copyDetailsLink(sb, b.dataset.pplink, toast); }));
     d.addEventListener("click", (e) => { if (e.target === d) d.close(); });
     d.onclose = () => d.remove();
     btn.onclick = async () => {

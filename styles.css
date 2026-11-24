@@ -2474,3 +2474,16 @@ body.nav-collapsed:not(.nav-peek) .nav-label { color: transparent; }
   .pp-head span:nth-child(3) { display: none; }
   .pp-facts > div { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* ---------- Roster card: payment details (2026-11-24) ---------- */
+.cr-pay { margin-top: 16px; }
+.cr-pay-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.cr-pay-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 16px; }
+.cr-pay-grid label { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.cr-pay-grid label.wide { grid-column: span 2; }
+.cr-pay-grid input, .cr-pay-grid select { margin-top: 4px; width: 100%; font-size: 14px; color: var(--ink); }
+.cr-pay-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.cr-pay-h4 { margin: 20px 0 8px; font-size: 14px; }
+.cr-pay-tbl { width: 100%; min-width: 520px; }
+@media (max-width: 900px) { .cr-pay-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .cr-pay-grid { grid-template-columns: 1fr; } .cr-pay-grid label.wide { grid-column: auto; } }

@@ -1,12 +1,14 @@
-import { confirmDialog } from "./dialog.js?v=20261124c";
+import { confirmDialog } from "./dialog.js?v=20261124d";
 // Creator roster: the creators Stellar works with, each with topline numbers from their recent
 // TikTok videos (ScrapeCreators, refreshed weekly by the roster Edge Function) and, on request,
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261124c";
-import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261124c";
-import { openCreatorImport } from "./creator-import.js?v=20261124c";
+import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261124d";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261124d";
+import { openCreatorImport } from "./creator-import.js?v=20261124d";
+import { COUNTRIES } from "./countries.js?v=20261124d";
+import { copyDetailsLink } from "./payouts.js?v=20261124d";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
@@ -629,11 +631,13 @@ async function renderCreator(app, sb, ctx, id) {
   const { data: c, error } = await sb.from("creators").select("*").eq("id", id).maybeSingle();
   if (!isCurrent()) return;
   if (error || !c) { app.innerHTML = `<div class="panel"><p>This creator doesn't exist.</p><p><a href="#/roster">Back to the roster</a></p></div>`; return; }
-  const [postsRes, insRes, listsRes, myListsRes] = await Promise.all([
+  const [postsRes, insRes, listsRes, myListsRes, paidRes, linkRes] = await Promise.all([
     sb.from("posts").select("campaign_id,tiktok_video_id,published_at,campaign:campaigns(id,artist,song,status)").eq("creator_id", id),
     sb.from("creator_insights").select("*").eq("platform", c.platform ?? "tiktok").eq("handle", String(c.username).toLowerCase()).maybeSingle(),
     sb.from("roster_lists").select("id,name").order("created_at"),
     sb.from("roster_list_members").select("list_id").eq("creator_id", id),
+    sb.from("payout_payments").select("id,campaign_id,amount,currency,po_number,status,env,created_at,campaign:campaigns(artist,song)").eq("creator_id", id).order("created_at", { ascending: false }).limit(50),
+    sb.from("creator_detail_links").select("created_at,created_by,expires_at,used_at").eq("creator_id", id).order("created_at", { ascending: false }).limit(1),
   ]);
   const allLists = listsRes.data ?? [];
   const mine = new Set((myListsRes.data ?? []).map((m) => m.list_id));
@@ -720,6 +724,8 @@ async function renderCreator(app, sb, ctx, id) {
       </section>
     </div>
 
+    ${payDetailsHtml(c, paidRes.data ?? [], (linkRes.data ?? [])[0])}
+
     <div class="ro-insights" id="cr-insights">${insRes.error ? `<section class="panel"><p class="muted small" style="margin:0">Couldn't load audience insights: ${esc(insRes.error.message)}</p></section>` : insightsHtml(ins, c)}</div>
 
     <h3 class="ro-h3">${c.platform === "instagram" ? "Recent posts" : c.platform === "twitch" ? "Recent broadcasts" : "Recent videos"}</h3>
@@ -784,8 +790,70 @@ async function renderCreator(app, sb, ctx, id) {
     if (ctx.inDrawer) view.base = null;
     renderCreator(app, sb, ctx, id);
   });
+  bindPayDetails(app, sb, ctx, c);
   if (ctx.list) compareSnippet(sb, ctx.list, c).then((h) => { const el = app.querySelector("#cr-cmp"); if (el && isCurrent()) el.innerHTML = h; });
   bindInsights(app, sb, ctx, c, id);
+}
+
+// ---------- Payment details: how this creator gets paid, saved once and used for every campaign ----------
+const PAY_FIELDS = [
+  ["payout_method", "Paid by", "select"], ["paypal_email", "PayPal email", "email"], ["paypal_username", "PayPal username", "text", "paypal.me name"],
+  ["wise_email", "Wise email", "email"], ["legal_name", "Full name", "text", "As on their PayPal account"], ["residence_country", "Country they live in", "country"],
+  ["payout_note", "Note", "text", "e.g. needs an invoice first"],
+];
+const PAY_STATUS = { queued: "Sending", pending: "Sending", success: "Paid", unclaimed: "Not claimed yet", onhold: "On hold", failed: "Failed", returned: "Came back",
+  blocked: "Blocked", refunded: "Refunded", reversed: "Reversed", denied: "Refused", canceled: "Taken back" };
+const savedLine = (c) => !c.payout_updated_at ? "Not filled in yet. Type them here, or send the creator a link to fill in."
+  : `Saved ${ago(c.payout_updated_at).toLowerCase()} ${c.payout_updated_by === "the creator" ? "by the creator" : c.payout_updated_by === "form import" ? "from the old form answers" : `by ${String(c.payout_updated_by ?? "the team").split("@")[0]}`}. Used for every payment to them.`;
+const linkLine = (l) => !l ? "" : l.used_at ? `They filled in the last link ${ago(l.used_at).toLowerCase()}.`
+  : new Date(l.expires_at) > new Date() ? `Link sent ${ago(l.created_at).toLowerCase()}, not filled in yet.` : "";
+function payDetailsHtml(c, paid, link) {
+  const field = ([k, label, type, ph]) => {
+    const v = c[k] ?? "";
+    const ctl = type === "select" ? `<select data-pf="${k}"><option value="">Not set</option><option value="paypal"${v === "paypal" ? " selected" : ""}>PayPal</option><option value="wise"${v === "wise" ? " selected" : ""}>Wise</option></select>`
+      : type === "country" ? `<select data-pf="${k}"><option value="">Not set</option>${COUNTRIES.map((x) => `<option value="${x.c}"${x.c === v ? " selected" : ""}>${esc(x.n)}</option>`).join("")}</select>`
+      : `<input data-pf="${k}" type="${type === "email" ? "email" : "text"}" value="${esc(v)}"${ph ? ` placeholder="${esc(ph)}"` : ""} maxlength="200" autocomplete="off">`;
+    return `<label class="${k === "payout_note" ? "wide" : ""}">${label}${ctl}</label>`;
+  };
+  return `<section class="panel cr-pay" id="cr-pay">
+    <div class="cr-pay-head"><h3 style="margin:0">Payment details</h3><span class="muted small" id="cr-pay-msg">${esc(savedLine(c))}</span></div>
+    <div class="cr-pay-grid">${PAY_FIELDS.map(field).join("")}</div>
+    <div class="cr-pay-foot"><button type="button" id="cr-paylink">Copy a link for them to fill in</button><span class="muted small" id="cr-link-msg">${esc(linkLine(link))}</span></div>
+    ${paid.length ? `<h4 class="cr-pay-h4">Payments</h4><div class="table-wrap"><table class="cr-pay-tbl"><thead><tr><th>Sent</th><th>Campaign</th><th>PO</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>
+      ${paid.map((p) => `<tr><td>${esc(new Date(p.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }))}</td>
+        <td><a href="#/c/${esc(p.campaign_id)}/payouts">${esc(p.campaign?.artist ?? "")}${p.campaign?.song ? ` – ${esc(p.campaign.song)}` : ""}</a></td>
+        <td>${esc(p.po_number)}</td><td class="num">${esc(new Intl.NumberFormat("en-US", { style: "currency", currency: p.currency || "USD" }).format(Number(p.amount)))}</td>
+        <td>${esc(PAY_STATUS[p.status] ?? p.status)}${p.env === "sandbox" ? ' <span class="muted small">(test)</span>' : ""}</td></tr>`).join("")}
+    </tbody></table></div>` : ""}
+  </section>`;
+}
+function bindPayDetails(app, sb, ctx, c) {
+  const box = app.querySelector("#cr-pay");
+  if (!box) return;
+  const msg = box.querySelector("#cr-pay-msg");
+  const EMAIL = /^[^\s@<>()",;]+@[^\s@<>()",;]+\.[a-z]{2,}$/i;
+  box.querySelectorAll("[data-pf]").forEach((inp) => (inp.onchange = async () => {
+    const k = inp.dataset.pf;
+    let v = inp.value.trim();
+    if (k === "paypal_username") v = v.replace(/^(https?:\/\/)?(www\.)?paypal\.me\//i, "").replace(/^@/, "").replace(/\/.*$/, "");
+    if ((k === "paypal_email" || k === "wise_email") && v && !EMAIL.test(v)) { inp.classList.add("bad-in"); msg.textContent = "That email doesn't look right."; return; }
+    inp.classList.remove("bad-in");
+    if (k.endsWith("_email")) v = v.toLowerCase();
+    inp.value = v;
+    if ((c[k] ?? "") === v) return;   // nothing changed (e.g. the field just lost focus)
+    const patch = { [k]: v || null, payout_updated_at: new Date().toISOString(), payout_updated_by: await me(sb) };
+    if (k === "paypal_email" && v && !c.payout_method) { patch.payout_method = "paypal"; box.querySelector('[data-pf="payout_method"]').value = "paypal"; }
+    if (k === "wise_email" && v && !c.payout_method) { patch.payout_method = "wise"; box.querySelector('[data-pf="payout_method"]').value = "wise"; }
+    msg.textContent = "Saving…";
+    const { error } = await sb.from("creators").update(patch).eq("id", c.id);
+    if (error) { msg.textContent = `Couldn't save: ${error.message}`; return; }
+    Object.assign(c, patch);
+    msg.textContent = savedLine(c);
+  }));
+  box.querySelector("#cr-paylink").onclick = async () => {
+    await copyDetailsLink(sb, c.id, ctx.toast);
+    box.querySelector("#cr-link-msg").textContent = "Link copied just now. Earlier links stop working.";
+  };
 }
 
 function tile(label, value, exact, sub = "") {

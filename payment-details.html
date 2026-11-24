@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Your payment details · Stellar</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#0626c7">
+  <link rel="icon" type="image/png" href="assets/favicon.png?v=4">
+  <link rel="stylesheet" href="assets/fonts/inter.css?v=20261114a">
+  <!-- A creator fills in how Stellar pays them, once. No outside fonts or scripts: nothing goes anywhere but Stellar's own backend. -->
+  <style>
+    :root { --blue: #0626c7; --ink: #1d1d1f; --muted: #6e6e73; --line: #e5e5ea; color-scheme: light; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body { font-family: Inter, -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif; background: var(--blue); color: var(--ink); -webkit-font-smoothing: antialiased; }
+    [hidden] { display: none !important; }
+    .wrap { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; padding: 40px 20px calc(40px + env(safe-area-inset-bottom)); }
+    .wm { width: 130px; height: auto; margin: 8px 0 32px; }
+    .card { width: 100%; max-width: 480px; background: #fff; border-radius: 24px; padding: 32px 28px; box-shadow: 0 20px 60px rgba(0,0,0,.18); }
+    h1 { font-size: 26px; line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 8px; }
+    p.sub { margin: 0 0 24px; color: var(--muted); font-size: 15px; line-height: 1.5; }
+    label { display: block; font-size: 13px; font-weight: 600; margin: 0 0 16px; }
+    label .hint { display: block; font-weight: 400; color: var(--muted); margin-top: 4px; }
+    input, select { display: block; width: 100%; margin-top: 6px; font: inherit; font-size: 16px; font-weight: 400; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink); }
+    input:focus, select:focus { outline: 2px solid var(--blue); outline-offset: 1px; border-color: transparent; }
+    .bad-in { border-color: #c9302c; }
+    button { width: 100%; font: inherit; font-size: 16px; font-weight: 600; padding: 14px; border: 0; border-radius: 999px; background: var(--blue); color: #fff; cursor: pointer; margin-top: 6px; }
+    button:disabled { opacity: .55; cursor: default; }
+    .err { color: #c9302c; font-size: 14px; min-height: 20px; margin: 4px 0 8px; }
+    .fine { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 18px 0 0; }
+    .fine a, .done a { color: var(--blue); }
+    .done { text-align: center; padding: 12px 0; }
+    .done .tick { width: 56px; height: 56px; border-radius: 50%; background: rgba(6,38,199,.1); color: var(--blue); display: grid; place-items: center; margin: 0 auto 16px; font-size: 28px; }
+    .handle { font-weight: 600; color: var(--blue); }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <img class="wm" src="assets/stellar-white.png" alt="Stellar">
+    <div class="card" id="card" aria-live="polite"><p class="sub" style="margin:0">Loading…</p></div>
+  </main>
+  <script type="module" src="payment-details.js?v=20261124d"></script>
+</body>
+</html>
