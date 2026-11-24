@@ -1,7 +1,7 @@
 // Payouts: the PayPal payout sheet, built into each campaign (team only; clients never see it).
 // "Pay with PayPal" sends the ticked "Posted · to pay" creators as one PayPal batch through the paypal-payouts function;
 // every payment carries the campaign's PO number, and payout_payments keeps where each one stands.
-import { confirmDialog } from "./dialog.js?v=20261124a";
+import { confirmDialog } from "./dialog.js?v=20261124b";
 // A campaign has sections (a set of deliverables, e.g. "20x Edits" at $50 each) and one row per creator:
 // who sources and pays them, videos, price, status (contacted → waiting for draft → drafted →
 // waiting to post → posted (to pay) → paid) and their posting progress, read from the tracker's posts.
@@ -102,8 +102,8 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
   const PAY_LABEL = { queued: "Sending to PayPal…", pending: "Sending to PayPal…", unclaimed: "Waiting for them to claim it", onhold: "On hold at PayPal",
     success: "Paid through PayPal", failed: "PayPal payment failed", returned: "Money came back", blocked: "Blocked by PayPal", refunded: "Refunded",
     reversed: "Reversed", denied: "Refused by PayPal", canceled: "Taken back" };
-  const payLabel = (s) => PAY_LABEL[s] ?? s;
-  const payTone = (s) => (s === "success" ? "good" : WAITING.includes(s) ? "wait" : "bad");
+  const payLabel = (s, p) => (s === "queued" && p?.error ? "Check PayPal first" : PAY_LABEL[s] ?? s);
+  const payTone = (s, p) => (s === "success" ? "good" : s === "queued" && p?.error ? "bad" : WAITING.includes(s) ? "wait" : "bad");
 
   // Keep each row in step with the tracker: link exact handle matches, and move the status along
   // as videos come in (or back, if a video is removed).
@@ -186,7 +186,7 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
   function paidCell(r) {
     const p = lastPayment(r);
     if (p && (WAITING.includes(p.status) || (p.status === "success" && r.status !== "paid"))) {
-      return `<span class="pp-st ${payTone(p.status)}" title="${esc(`${money(Number(p.amount), p.currency)} to ${p.recipient}${p.error ? ` · ${p.error}` : ""}`)}">${esc(payLabel(p.status))}</span>`
+      return `<span class="pp-st ${payTone(p.status, p)}" title="${esc(`${money(Number(p.amount), p.currency)} to ${p.recipient}${p.error ? ` · ${p.error}` : ""}`)}">${esc(payLabel(p.status, p))}</span>`
         + (p.status === "unclaimed" && pp.allowed ? ` <button type="button" class="link-btn small" data-ppcancel="${p.id}">Take back</button>` : "");
     }
     if (!payable(r)) return null;
@@ -479,7 +479,7 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
         <td>${esc(new Date(p.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }))}</td>
         <td><b>${esc(p.handle ?? "")}</b></td><td class="muted">${esc(p.recipient)}</td>
         <td class="num">${money(Number(p.amount), p.currency)}</td>
-        <td><span class="pp-st ${payTone(p.status)}"${p.error ? ` title="${esc(p.error)}"` : ""}>${esc(payLabel(p.status))}</span>${p.env === "sandbox" ? ' <span class="pp-test">Test</span>' : ""}</td>
+        <td><span class="pp-st ${payTone(p.status, p)}"${p.error ? ` title="${esc(p.error)}"` : ""}>${esc(payLabel(p.status, p))}</span>${p.env === "sandbox" ? ' <span class="pp-test">Test</span>' : ""}</td>
         <td>${esc(p.po_number)}</td><td class="muted">${esc(p.sent_by)}</td></tr>`).join("")}</tbody></table></div></section>`;
   }
   async function reloadPayments() {
@@ -720,7 +720,7 @@ export async function renderPayoutsHome(app, sb, { isCurrent, go }) {
   const invOf = Object.fromEntries((batchRes.data ?? []).map((b) => [b.id, (b.invoices ?? []).map((i) => (i.invoice_number ? `Invoice ${i.invoice_number}` : `Request #${i.ref}`)).join(", ")]));
   const PAY_LABEL = { queued: "Sending…", pending: "Sending…", unclaimed: "Waiting for them to claim it", onhold: "On hold", success: "Paid", failed: "Failed", returned: "Money came back",
     blocked: "Blocked", refunded: "Refunded", reversed: "Reversed", denied: "Refused", canceled: "Taken back" };
-  const tone = (x) => (x === "success" ? "good" : ["queued", "pending", "unclaimed", "onhold"].includes(x) ? "wait" : "bad");
+  const tone = (x, p) => (x === "success" ? "good" : x === "queued" && p?.error ? "bad" : ["queued", "pending", "unclaimed", "onhold"].includes(x) ? "wait" : "bad");
   if (st.who && !people.includes(st.who)) st.who = "";
 
   const draw = () => {
@@ -781,7 +781,7 @@ export async function renderPayoutsHome(app, sb, { isCurrent, go }) {
       <td><b>${esc(p.po_number)}</b></td><td class="muted">${esc(invOf[p.batch_id] || "No invoice yet")}</td>
       <td class="muted">${esc((capOf[p.campaign_id]?.client_market ?? "").replace(/^Stellar /, ""))}</td>
       <td class="num">${money(Number(p.amount), p.currency)}</td>
-      <td><span class="pp-st ${tone(p.status)}"${p.error ? ` title="${esc(p.error)}"` : ""}>${esc(PAY_LABEL[p.status] ?? p.status)}</span>${p.env === "sandbox" ? ' <span class="pp-test">Test</span>' : ""}</td></tr>`; }).join("");
+      <td><span class="pp-st ${tone(p.status, p)}"${p.error ? ` title="${esc(p.error)}"` : ""}>${esc(p.status === "queued" && p.error ? "Check PayPal first" : PAY_LABEL[p.status] ?? p.status)}</span>${p.env === "sandbox" ? ' <span class="pp-test">Test</span>' : ""}</td></tr>`; }).join("");
   }
   function paymentsHtml() {
     if (!payments.length) return "";

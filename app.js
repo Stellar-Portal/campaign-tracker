@@ -1,18 +1,18 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261124a";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261124a";
-import { renderRoster } from "./roster.js?v=20261124a";
-import { renderDiscover } from "./discover.js?v=20261124a";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261124a";
-import { renderTrending } from "./trending.js?v=20261124a";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261124a";
-import { renderDecks, figmaReminder } from "./decks.js?v=20261124a";
-import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261124a";
-import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261124a";
-import { confirmDialog } from "./dialog.js?v=20261124a";
-import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261124a";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261124a";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261124a";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261124b";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261124b";
+import { renderRoster } from "./roster.js?v=20261124b";
+import { renderDiscover } from "./discover.js?v=20261124b";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261124b";
+import { renderTrending } from "./trending.js?v=20261124b";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261124b";
+import { renderDecks, figmaReminder } from "./decks.js?v=20261124b";
+import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261124b";
+import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261124b";
+import { confirmDialog } from "./dialog.js?v=20261124b";
+import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261124b";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261124b";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261124b";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -778,6 +778,9 @@ async function renderOverview(token) {
       const r = rows.find((x) => x.row === Number(b.dataset.ovdel));
       const name = `${v(r, "Artist Name") || "this campaign"}${v(r, "Song Name (s) or Project Name") ? ` – ${v(r, "Song Name (s) or Project Name")}` : ""}`;
       if (r.camp) {
+        // Campaigns with a money trail are archived, never deleted (and their sheet row stays too).
+        const trail = await moneyTrail(r.camp.id);
+        if (trail.length) { if (await archiveInstead({ ...r.camp, artist: v(r, "Artist Name") || r.camp.artist }, trail)) renderOverview(newToken()); return; }
         // In the tracker too: one dialog covers both.
         const ans = await confirmDialog({
           title: `Delete ${name}?`,
@@ -917,7 +920,7 @@ async function renderList(token) {
       <input id="q" type="search" placeholder="Search artist, song, PO, client or owner" aria-label="Search campaigns">
       <select id="st" aria-label="Status">
         <option value="active">Active</option><option value="draft">Upcoming</option><option value="on_hold">On hold</option>
-        <option value="finished">Completed</option><option value="">All</option>
+        <option value="finished">Completed (archive)</option><option value="">All</option>
       </select>
     </div>
     <div id="list"><p class="muted">Loading campaigns…</p></div>`;
@@ -1348,8 +1351,37 @@ function sheetStatus(sync) {
 // ---------- small dialogs ----------
 // confirmDialog: a clean yes/no box with optional tick boxes. Resolves to { ...ticks } or null.
 
+// Completed campaigns are the archive. A campaign with a money trail (PayPal payments, invoices, paid creators)
+// can't be deleted, only archived; one made by mistake (no money trail) can still be deleted.
+async function moneyTrail(cid) {
+  const n = (q) => q.then((x) => x.count ?? 0).catch(() => 0);
+  const [pay, inv, paid] = await Promise.all([
+    n(sb.from("payout_payments").select("id", { count: "exact", head: true }).eq("campaign_id", cid)),
+    n(sb.from("invoice_requests").select("id", { count: "exact", head: true }).eq("campaign_id", cid).neq("status", "cancelled")),
+    n(sb.from("payout_rows").select("id", { count: "exact", head: true }).eq("campaign_id", cid).eq("status", "paid")),
+  ]);
+  const s = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  return [pay && s(pay, "PayPal payment", "PayPal payments"), inv && s(inv, "invoice", "invoices"), paid && s(paid, "paid creator", "paid creators")].filter(Boolean);
+}
+async function archiveInstead(c, trail) {
+  const done = c.status === "finished";
+  const list = trail.length > 1 ? `${trail.slice(0, -1).join(", ")} and ${trail.at(-1)}` : trail[0];
+  const ans = await confirmDialog({
+    title: done ? `${c.artist} is archived` : `Archive ${c.artist} instead?`,
+    body: esc(`It has ${list}, so it can't be deleted: the money trail stays. ${done ? "It's already in the archive (Completed)." : "Archiving marks it Completed and moves it out of the everyday lists. Nothing is lost."} ${trail.some((t) => /PayPal/.test(t)) ? "Campaigns with PayPal payments always stay." : "If it really was made by mistake, cancel its invoice requests and change paid creators back first."}`),
+    confirm: done ? "OK" : "Archive", danger: false,
+  });
+  if (!ans || done) return false;
+  const { error } = await sb.from("campaigns").update({ status: "finished" }).eq("id", c.id);
+  if (error) { toast(error.message); return false; }
+  toast(`${c.artist} archived (Completed)`);
+  return true;
+}
+
 // Delete a tracker campaign in one step, optionally with its row in the Campaign Overview sheet.
 async function deleteCampaignFlow(c, after = () => go("#/campaigns")) {
+  const trail = await moneyTrail(c.id);
+  if (trail.length) { if (await archiveInstead(c, trail)) after(); return false; }
   const { data: sync } = await sb.from("campaign_sheet_sync").select("sheet_row,sheet_key").eq("campaign_id", c.id).maybeSingle();
   const inSheet = !!(sync?.sheet_key || c.po_number);
   const ans = await confirmDialog({

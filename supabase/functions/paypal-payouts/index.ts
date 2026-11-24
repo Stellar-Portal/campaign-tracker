@@ -163,10 +163,16 @@ async function send(who: any, body: any) {
   return json(res, res.error ? 502 : 200);
 }
 
+const isDuplicate = (j: any) => /sender_batch_id already exists|SENDER_BATCH_ID/i.test(JSON.stringify(j ?? {})) && /already|duplicate/i.test(JSON.stringify(j ?? {}));
+const originalBatchId = (j: any): string | null => {
+  const t = JSON.stringify(j ?? {});
+  const m = t.match(/\/v1\/payments\/payouts\/([A-Z0-9]{8,})/) ?? t.match(/"payout_batch_id"\s*:\s*"([A-Z0-9]{8,})"/);
+  return m ? m[1] : null;
+};
 // Hand a batch to PayPal. Retrying with the same sender_batch_id / PayPal-Request-Id never pays twice.
-async function submit(batch: any, items: { id: string; email: string; amount: number }[], camp: any) {
+function payloadFor(batch: any, items: { id: string; email: string; amount: number }[], camp: any) {
   const cur = batch.currency;
-  const payload = {
+  return {
     sender_batch_header: {
       sender_batch_id: batch.id,
       email_subject: "You have a payment from Stellar",
@@ -177,6 +183,10 @@ async function submit(batch: any, items: { id: string; email: string; amount: nu
       note: batch.note, sender_item_id: i.id, recipient_wallet: "PAYPAL",
     })),
   };
+}
+async function submit(batch: any, items: { id: string; email: string; amount: number }[], camp: any) {
+  const cur = batch.currency;
+  const payload = payloadFor(batch, items, camp);
   let r;
   try { r = await paypal(batch.env, "POST", "/v1/payments/payouts", payload, batch.id); }
   catch (e) { await db.from("payout_batches").update({ error: String((e as Error).message).slice(0, 300), checked_at: new Date().toISOString() }).eq("id", batch.id); return { batch_id: batch.id, status: "queued", note: "PayPal didn't answer; we'll try again in a few minutes." }; }
@@ -185,6 +195,19 @@ async function submit(batch: any, items: { id: string; email: string; amount: nu
     await db.from("payout_batches").update({ paypal_batch_id: r.body.batch_header.payout_batch_id, status: st, error: null, checked_at: new Date().toISOString() }).eq("id", batch.id);
     await db.from("payout_payments").update({ status: "pending", updated_at: new Date().toISOString() }).eq("batch_id", batch.id).eq("status", "queued");
     return { batch_id: batch.id, paypal_batch_id: r.body.batch_header.payout_batch_id, status: "pending", count: items.length, total: batch.total, currency: cur };
+  }
+  // PayPal already has this batch (we sent it before but never heard back): follow its link to the original, never mark it failed.
+  if (isDuplicate(r.body)) {
+    const orig = originalBatchId(r.body);
+    if (orig) {
+      await db.from("payout_batches").update({ paypal_batch_id: orig, status: "pending", error: null, checked_at: new Date().toISOString() }).eq("id", batch.id);
+      await db.from("payout_payments").update({ status: "pending", updated_at: new Date().toISOString() }).eq("batch_id", batch.id).eq("status", "queued");
+      return { batch_id: batch.id, paypal_batch_id: orig, status: "pending", count: items.length, total: batch.total, currency: cur };
+    }
+    const msg = "PayPal already has this batch. Check PayPal's activity before paying again: it may have been paid.";
+    await db.from("payout_batches").update({ status: "error", error: msg, checked_at: new Date().toISOString() }).eq("id", batch.id);
+    await db.from("payout_payments").update({ error: msg, updated_at: new Date().toISOString() }).eq("batch_id", batch.id).eq("status", "queued");
+    return { batch_id: batch.id, status: "queued", note: "PayPal already has this batch. Check PayPal's activity before doing anything else." };
   }
   if (r.status >= 500) {
     await db.from("payout_batches").update({ error: ppError(r.body), checked_at: new Date().toISOString() }).eq("id", batch.id);
@@ -203,9 +226,10 @@ async function syncBatch(b: any) {
   if (!b.paypal_batch_id) {
     // Never reached PayPal (or we never heard back): try again for an hour, then leave it to a person.
     if (Date.now() - new Date(b.created_at).getTime() > 3600_000) {
-      const msg = "PayPal never confirmed this batch. Check PayPal's activity before paying again.";
+      // It may still have gone through, so the creators stay blocked from a second payment until a person checks PayPal.
+      const msg = "PayPal never confirmed this batch. Check PayPal's activity: it may have been paid.";
       await db.from("payout_batches").update({ status: "error", error: msg, checked_at: now }).eq("id", b.id);
-      await db.from("payout_payments").update({ status: "failed", error: msg, updated_at: now }).eq("batch_id", b.id).eq("status", "queued");
+      await db.from("payout_payments").update({ error: msg, updated_at: now }).eq("batch_id", b.id).eq("status", "queued");
       return;
     }
     const { data: items } = await db.from("payout_payments").select("id,recipient,amount").eq("batch_id", b.id);
@@ -245,7 +269,7 @@ async function sync(campaignId?: string) {
   const { data: batches } = await db.from("payout_batches").select("*").in("id", ids);
   let n = 0;
   for (const b of batches ?? []) {
-    if (!hasKeys(b.env)) continue;
+    if (!hasKeys(b.env) || (b.status === "error" && !b.paypal_batch_id)) continue;
     try { await syncBatch(b); n++; } catch (e) { await db.from("payout_batches").update({ error: String((e as Error).message).slice(0, 300) }).eq("id", b.id); }
   }
   return { checked: n };
@@ -259,10 +283,48 @@ async function cancel(who: any, body: any) {
   if (!mayPay(who, camp ?? {})) return json({ error: "Only the people running this campaign (or an admin) can do this." }, 403);
   if (p.status !== "unclaimed" || !p.paypal_item_id) return json({ error: "Only payments the creator hasn't claimed yet can be taken back." }, 400);
   const r = await paypal(p.env, "POST", `/v1/payments/payouts-item/${encodeURIComponent(p.paypal_item_id)}/cancel`);
-  if (!r.ok) return json({ error: `PayPal said: ${ppError(r.body)}` }, 502);
+  if (!r.ok) return json({ error: /Processed status/i.test(ppError(r.body)) ? "PayPal is still processing this batch. Try again in a few minutes." : `PayPal said: ${ppError(r.body)}` }, 502);
   const st = String(r.body?.transaction_status ?? "RETURNED").toLowerCase();
   await db.from("payout_payments").update({ status: st, updated_at: new Date().toISOString() }).eq("id", p.id);
   return json({ ok: true, status: st });
+}
+
+// ---------- self-test with PayPal's TEST money (sandbox keys only; nothing is stored) ----------
+// Sends the same kind of batch the OS sends, sends it again with the same id (must not pay twice), reads the
+// status back and takes back one unclaimed payment. Run from SQL with the cron secret.
+async function selftest(body: any) {
+  if (!hasKeys("sandbox")) return { error: "No sandbox keys" };
+  if (body.cancel_item) {   // take back an unclaimed TEST payment from an earlier self-test
+    const c = await paypal("sandbox", "POST", `/v1/payments/payouts-item/${encodeURIComponent(String(body.cancel_item))}/cancel`);
+    return { take_back: { status: c.status, now: c.body?.transaction_status, error: c.ok ? null : ppError(c.body) } };
+  }
+  const id = crypto.randomUUID();
+  const receivers: string[] = (Array.isArray(body.receivers) && body.receivers.length ? body.receivers : ["stellar-test-creator-1@example.com", "stellar-test-creator-2@example.com"]).slice(0, 5).map(String);
+  const batch = { id, env: "sandbox", currency: "USD", po_number: "#ST0000", note: "Stellar · PO #ST0000 · Test Artist – Test Song" };
+  const items = receivers.map((e, i) => ({ id: crypto.randomUUID(), email: e, amount: 1.5 + i }));
+  const payload = payloadFor(batch, items, { artist: "Test Artist", song: "Test Song" });
+  const out: Record<string, unknown> = {};
+  const r1 = await paypal("sandbox", "POST", "/v1/payments/payouts", payload, id);
+  out.send = { status: r1.status, batch: r1.body?.batch_header?.payout_batch_id, batch_status: r1.body?.batch_header?.batch_status, error: r1.ok ? null : ppError(r1.body) };
+  if (!r1.ok) return out;
+  const r2 = await paypal("sandbox", "POST", "/v1/payments/payouts", payload, id);
+  out.resend_same_id = { status: r2.status, refused_as_duplicate: isDuplicate(r2.body), points_to_original: originalBatchId(r2.body) === r1.body.batch_header.payout_batch_id,
+    answer: { name: r2.body?.name, message: r2.body?.message, details: r2.body?.details, links: r2.body?.links } };
+  let last: any = null;
+  for (let i = 0; i < 8; i++) {
+    await new Promise((res) => setTimeout(res, 5000));
+    last = await paypal("sandbox", "GET", `/v1/payments/payouts/${r1.body.batch_header.payout_batch_id}?page_size=100&page=1`);
+    if (!(last.body?.items ?? []).some((it: any) => it.transaction_status === "PENDING")) break;
+  }
+  out.status = { batch_status: last?.body?.batch_header?.batch_status, items: (last?.body?.items ?? []).map((it: any) => ({
+    receiver: it.payout_item?.receiver, amount: it.payout_item?.amount, note: it.payout_item?.note, ours: items.some((x) => x.id === it.payout_item?.sender_item_id),
+    status: it.transaction_status, fee: it.payout_item_fee?.value, error: it.errors?.name ?? null, item: it.payout_item_id })) };
+  const un = (last?.body?.items ?? []).find((it: any) => it.transaction_status === "UNCLAIMED");
+  if (un) {
+    const c = await paypal("sandbox", "POST", `/v1/payments/payouts-item/${un.payout_item_id}/cancel`);
+    out.take_back = { status: c.status, now: c.body?.transaction_status, error: c.ok ? null : ppError(c.body) };
+  }
+  return out;
 }
 
 // ---------- check: mode, keys (names only), may this person pay; verify = ask PayPal for a token ----------
@@ -297,6 +359,7 @@ Deno.serve(async (req) => {
     const { data: secret } = await db.rpc("deck_secret");
     if (cronSecret !== secret) return json({ error: "Not allowed" }, 403);
     if (body.action === "check") return json(await check(null, { verify: true }));   // keys check from SQL; moves no money
+    if (body.action === "selftest") return json(await selftest(body));               // sandbox only, test money
     return json(await sync());
   }
   const who = await caller(req);
