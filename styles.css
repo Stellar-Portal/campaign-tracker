@@ -2428,3 +2428,48 @@ body.nav-collapsed:not(.nav-peek) .nav-label { color: transparent; }
 @media (min-width: 901px) and (prefers-reduced-motion: reduce) {
   body .sidebar, body.nav-collapsed .sidebar, body:not(.signin) .content, body.nav-collapsed:not(.signin) .content { transition: none; }
 }
+
+/* ---------- PayPal payouts (2026-11-24) ---------- */
+.pp-btn { display: inline-flex; align-items: center; gap: 6px; }
+.pp-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.pp-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--accent); cursor: pointer; }
+.pp-pick input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.pp-st { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: var(--pill); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.pp-st.good { background: rgba(26,127,55,0.1); color: var(--good); }
+.pp-st.wait { background: rgba(6,38,199,0.08); color: var(--accent); }
+.pp-st.bad { background: rgba(201,48,44,0.1); color: var(--bad); }
+.pp-test { font-size: 11px; font-weight: 600; color: var(--warn); border: 1px solid currentColor; border-radius: var(--pill); padding: 0 6px; }
+.po-paid .pp-st { max-width: 118px; }
+.pp-dialog { width: min(720px, calc(100vw - 32px)); }
+.pp-mode { margin: 0 0 12px; padding: 9px 12px; border-radius: 10px; font-size: 13px; font-weight: 600; }
+.pp-mode.test { background: rgba(154,91,0,0.1); color: var(--warn); }
+.pp-mode.live { background: rgba(6,38,199,0.08); color: var(--accent); }
+.pp-block { margin: 0 0 10px; padding: 9px 12px; border-radius: 10px; font-size: 13px; background: rgba(201,48,44,0.08); color: var(--bad); }
+.pp-list { border: 1px solid var(--hairline); border-radius: 12px; max-height: 46vh; overflow: auto; margin: 8px 0 14px; }
+.pp-li { display: grid !important; grid-template-columns: 24px minmax(0, 1fr) minmax(0, 1.3fr) 96px; gap: 10px; align-items: center; padding: 8px 12px !important; margin: 0 !important; border-top: 1px solid var(--hairline); font-weight: 400 !important; }
+.pp-li:first-child { border-top: none; }
+.pp-head { font-size: 12px; color: var(--muted); font-weight: 600 !important; padding: 8px 12px; }
+.pp-li input[type=checkbox] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.pp-li .pp-email { margin: 0 !important; padding: 6px 10px; font-size: 13px; }
+.pp-li .num, .pp-head .num { text-align: right; font-variant-numeric: tabular-nums; }
+.pp-h { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bad-in { border-color: var(--bad) !important; }
+.pp-facts { display: grid; gap: 8px; font-size: 13px; margin-bottom: 6px; }
+.pp-facts > div { display: grid; grid-template-columns: 200px 1fr; gap: 10px; }
+.pp-facts b { font-weight: 600; overflow-wrap: anywhere; }
+.pp-warn { color: var(--warn); }
+.pp-dialog .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.pp-hist { margin-top: 28px; }
+.pp-hist h3 { margin: 0 0 10px; }
+.pp-table { width: 100%; min-width: 760px; }
+.pp-table td, .pp-table th { padding: 8px 10px; }
+.pp-q { width: min(320px, 100%); }
+@media (max-width: 700px) {
+  .pp-li { grid-template-columns: 24px minmax(0, 1fr) 84px; }
+  .pp-li > input[type=checkbox] { grid-row: 1; grid-column: 1; }
+  .pp-li .pp-h { grid-row: 1; grid-column: 2; }
+  .pp-li .pp-amt, .pp-head .num { grid-row: 1; grid-column: 3; }
+  .pp-li .pp-email { grid-row: 2; grid-column: 2 / 4; }
+  .pp-head span:nth-child(3) { display: none; }
+  .pp-facts > div { grid-template-columns: 1fr; gap: 2px; }
+}

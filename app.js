@@ -1,18 +1,18 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261114d";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261114d";
-import { renderRoster } from "./roster.js?v=20261114d";
-import { renderDiscover } from "./discover.js?v=20261114d";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261114d";
-import { renderTrending } from "./trending.js?v=20261114d";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261114d";
-import { renderDecks, figmaReminder } from "./decks.js?v=20261114d";
-import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261114d";
-import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261114d";
-import { confirmDialog } from "./dialog.js?v=20261114d";
-import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261114d";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261114d";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261114d";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261124a";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261124a";
+import { renderRoster } from "./roster.js?v=20261124a";
+import { renderDiscover } from "./discover.js?v=20261124a";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261124a";
+import { renderTrending } from "./trending.js?v=20261124a";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261124a";
+import { renderDecks, figmaReminder } from "./decks.js?v=20261124a";
+import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261124a";
+import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261124a";
+import { confirmDialog } from "./dialog.js?v=20261124a";
+import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261124a";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261124a";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261124a";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.

@@ -1,4 +1,7 @@
 // Payouts: the PayPal payout sheet, built into each campaign (team only; clients never see it).
+// "Pay with PayPal" sends the ticked "Posted · to pay" creators as one PayPal batch through the paypal-payouts function;
+// every payment carries the campaign's PO number, and payout_payments keeps where each one stands.
+import { confirmDialog } from "./dialog.js?v=20261124a";
 // A campaign has sections (a set of deliverables, e.g. "20x Edits" at $50 each) and one row per creator:
 // who sources and pays them, videos, price, status (contacted → waiting for draft → drafted →
 // waiting to post → posted (to pay) → paid) and their posting progress, read from the tracker's posts.
@@ -11,6 +14,7 @@ const money = (v, cur) => {
 };
 const num = (v) => { const t = String(v ?? "").replace(/[^0-9.,-]/g, "").replace(/,(?=\d{3}\b)/g, "").replace(",", "."); const x = parseFloat(t); return Number.isFinite(x) ? x : null; };
 const today = () => new Date().toISOString().slice(0, 10);
+const SEND_ICON = `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h11M10 5l5 5-5 5"/></svg>`;
 const dayLabel = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "");
 const handleKey = (h) => String(h ?? "").trim().replace(/^@/, "").replace(/^https?:\/\/(www\.)?tiktok\.com\/@/i, "").split(/[/?]/)[0].toLowerCase();
 
@@ -44,18 +48,29 @@ export const splitPeople = (v) => String(v ?? "").split(/\s*(?:,|&|\+|\/|\band\b
 export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent }) {
   el.innerHTML = `<p class="muted">Loading payouts…</p>`;
   const cid = campaign.id, cur = campaign.currency || "USD";
-  const [secRes, rowRes, postRes, campRes, teamRes] = await Promise.all([
+  const [secRes, rowRes, postRes, campRes, teamRes, payRes, invRes, ppRes] = await Promise.all([
     sb.from("payout_sections").select("*").eq("campaign_id", cid).order("position").order("created_at"),
     sb.from("payout_rows").select("*").eq("campaign_id", cid).order("position").order("created_at"),
     sb.from("posts").select("creator_id,status,creator:creators(id,username,display_name,avatar_url,follower_count,platform)").eq("campaign_id", cid),
-    sb.from("campaigns").select("budget,spend_cap_percent,campaign_runner,comms_owner").eq("id", cid).maybeSingle(),
+    sb.from("campaigns").select("budget,spend_cap_percent,campaign_runner,comms_owner,po_number,artist,song").eq("id", cid).maybeSingle(),
     sb.from("team_members").select("name"),
+    sb.from("payout_payments").select("*").eq("campaign_id", cid).order("created_at", { ascending: false }),
+    sb.from("invoice_requests").select("ref,invoice_number,status,amount,currency").eq("campaign_id", cid).neq("status", "cancelled").order("requested_at"),
+    sb.functions.invoke("paypal-payouts", { body: { action: "check", campaign_id: cid } }).catch(() => ({ data: null })),
   ]);
   const me = (await sb.auth.getSession()).data.session?.user?.email ?? null;
   if (!isCurrent()) return;
   const err = secRes.error ?? rowRes.error ?? campRes.error;
   if (err) { el.innerHTML = `<p class="error">${esc(err.message)}</p>`; return; }
   const sections = secRes.data, rows = rowRes.data;
+  let payments = payRes.data ?? [];
+  const invoices = invRes.data ?? [];
+  const pp = ppRes?.data && !ppRes.data.error ? ppRes.data : { mode: "off", ready: false, allowed: false };
+  const camp = campRes.data ?? {};
+  // PayPal addresses already known for these creators (from earlier payments).
+  const creatorEmail = new Map();
+  { const ids = [...new Set(rows.map((r) => r.creator_id).filter(Boolean))];
+    if (ids.length) { const { data } = await sb.from("creators").select("id,paypal_email").in("id", ids); for (const c of data ?? []) if (c.paypal_email) creatorEmail.set(c.id, c.paypal_email); } }
   const budget = campRes.data?.budget != null ? Number(campRes.data.budget) : null;
   let capPct = Number(campRes.data?.spend_cap_percent ?? 30);
   // Who can source and pay creators here: the people running this campaign (and its DRI).
@@ -75,7 +90,20 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
   const creatorOf = (r) => (r.creator_id && creators.get(r.creator_id)) || byHandle.get(handleKey(r.handle)) || null;
   const postedOf = (r) => creatorOf(r)?.posts ?? 0;
   const isDone = (r) => r.posted_manual || ((r.videos ?? 0) > 0 && postedOf(r) >= r.videos);
-  const st = { filter: "all", confirm: null, dismissed: new Set(), adding: null };
+  const st = { filter: "all", confirm: null, dismissed: new Set(), adding: null, sel: new Set() };
+
+  // ---------- PayPal ----------
+  // The newest PayPal payment for a row decides what its "Paid" cell shows.
+  const WAITING = ["queued", "pending", "unclaimed", "onhold"];
+  const lastPayment = (r) => payments.find((p) => p.row_id === r.id) ?? null;
+  const onTheWay = (r) => { const p = lastPayment(r); return !!p && (WAITING.includes(p.status) || p.status === "success"); };
+  const payable = (r) => r.status === "posted" && rowTotal(r) > 0 && !onTheWay(r);
+  const emailOf = (r) => r.paypal_email || (r.creator_id && creatorEmail.get(r.creator_id)) || "";
+  const PAY_LABEL = { queued: "Sending to PayPal…", pending: "Sending to PayPal…", unclaimed: "Waiting for them to claim it", onhold: "On hold at PayPal",
+    success: "Paid through PayPal", failed: "PayPal payment failed", returned: "Money came back", blocked: "Blocked by PayPal", refunded: "Refunded",
+    reversed: "Reversed", denied: "Refused by PayPal", canceled: "Taken back" };
+  const payLabel = (s) => PAY_LABEL[s] ?? s;
+  const payTone = (s) => (s === "success" ? "good" : WAITING.includes(s) ? "wait" : "bad");
 
   // Keep each row in step with the tracker: link exact handle matches, and move the status along
   // as videos come in (or back, if a video is removed).
@@ -154,6 +182,18 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
         <span class="po-prog-n">${posted}/${need || "–"}</span><span class="po-prog-bar"><i style="width:${pctDone}%"></i></span></span>
       ${need && posted < need ? `<button type="button" class="link-btn small po-manual" data-manual="${r.id}" title="They posted somewhere the tracker doesn't follow">Mark posted</button>` : ""}`;
   }
+  // "Paid" cell: a tick box to pick the creator for PayPal, or where their PayPal payment stands.
+  function paidCell(r) {
+    const p = lastPayment(r);
+    if (p && (WAITING.includes(p.status) || (p.status === "success" && r.status !== "paid"))) {
+      return `<span class="pp-st ${payTone(p.status)}" title="${esc(`${money(Number(p.amount), p.currency)} to ${p.recipient}${p.error ? ` · ${p.error}` : ""}`)}">${esc(payLabel(p.status))}</span>`
+        + (p.status === "unclaimed" && pp.allowed ? ` <button type="button" class="link-btn small" data-ppcancel="${p.id}">Take back</button>` : "");
+    }
+    if (!payable(r)) return null;
+    const failed = p && !WAITING.includes(p.status) && p.status !== "success";
+    return `<label class="pp-pick"><input type="checkbox" data-ppsel="${r.id}"${st.sel.has(r.id) ? " checked" : ""}> <span>Pay</span></label>`
+      + (failed ? ` <span class="pp-st bad" title="${esc(p.error ?? "")}">${esc(payLabel(p.status))}</span>` : "");
+  }
   function rowHtml(r) {
     const total = rowTotal(r), c = creatorOf(r);
     return `<tr data-row="${r.id}" class="po-st-${r.status}">
@@ -168,7 +208,7 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
       <td class="num"><input class="po-in num po-total po-cost" data-f="amount" inputmode="decimal" value="${total ? nf.format(total) : ""}" placeholder="–" aria-label="Total"></td>
       <td><select class="po-status s-${r.status}" data-f="status" aria-label="Status">${STATUS.map(([k, l]) => `<option value="${k}"${k === r.status ? " selected" : ""}>${l}</option>`).join("")}</select></td>
       <td class="po-posted">${progressHtml(r)}</td>
-      <td class="po-paid">${r.status === "paid" ? `<select class="po-via" data-f="paid_via" aria-label="Paid via">${VIA.map(([k, l]) => `<option value="${k}"${k === (r.paid_via ?? "paypal") ? " selected" : ""}>${l}</option>`).join("")}</select><span class="muted small">${esc(dayLabel(r.paid_on))}</span>` : `<span class="muted">–</span>`}</td>
+      <td class="po-paid">${paidCell(r) ?? (r.status === "paid" ? `<select class="po-via" data-f="paid_via" aria-label="Paid via">${VIA.map(([k, l]) => `<option value="${k}"${k === (r.paid_via ?? "paypal") ? " selected" : ""}>${l}</option>`).join("")}</select><span class="muted small">${esc(dayLabel(r.paid_on))}</span>` : `<span class="muted">–</span>`)}</td>
       <td><input class="po-in" data-f="notes" value="${esc(r.notes ?? "")}" placeholder="" aria-label="Notes"></td>
       <td class="po-x"><button type="button" class="link-btn" data-del="${r.id}" aria-label="Remove ${esc(r.handle)}">${st.confirm === r.id ? "Remove?" : "×"}</button></td>
     </tr>`;
@@ -221,6 +261,7 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
           ${[["all", "All creators"], ["topay", "To pay"], ["draft", "Waiting for draft"], ["notposted", "Not posted yet"]].map(([k, l]) => `<button type="button" role="tab" data-filter="${k}" aria-selected="${st.filter === k}">${l}</button>`).join("")}
         </div>
         <span class="po-tools-r">
+          ${rows.some(payable) ? `<button type="button" class="primary small-btn pp-btn" id="pp-open">${SEND_ICON}Pay with PayPal${st.sel.size ? ` · ${st.sel.size}` : ""}</button>` : ""}
           <button type="button" class="link-btn" id="po-paste">Paste from sheet</button>
           <button type="button" class="link-btn" id="po-newsec">+ New section</button>
         </span>
@@ -228,7 +269,8 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
       <datalist id="po-known">${known.map((c) => `<option value="@${esc(c.username)}">${esc(c.display_name ?? "")} · ${c.posts} video${c.posts === 1 ? "" : "s"} in this campaign</option>`).join("")}</datalist>
       ${!rows.length && !sections.length ? emptyGuide(cur) : `${sections.map(sectionHtml).join("")}
       ${hasLoose ? sectionHtml(null) : ""}`}
-      <p class="muted small po-note">Clients never see payouts. Fill in any two of videos, price per video and total, and the third is worked out. "Posting" counts the creator's videos in the tracker; when all their videos are up they move to "Posted · to pay" by themselves.${runners.length ? "" : " Tip: set who runs this campaign (Edit campaign) to shorten the \"Sourced & paid by\" list."}</p>`;
+      <p class="muted small po-note">Clients never see payouts. Fill in any two of videos, price per video and total, and the third is worked out. "Posting" counts the creator's videos in the tracker; when all their videos are up they move to "Posted · to pay" by themselves.${runners.length ? "" : " Tip: set who runs this campaign (Edit campaign) to shorten the \"Sourced & paid by\" list."}</p>
+      ${historyHtml()}`;
     bind();
     el.querySelector("#po-start")?.addEventListener("click", () => el.querySelector("#po-newsec").click());
     el.querySelector("#po-start-paste")?.addEventListener("click", () => el.querySelector("#po-paste").click());
@@ -306,6 +348,8 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
 
   function bind() {
     bindCap();
+    el.querySelector("#pp-open")?.addEventListener("click", () => payDialog());
+    el.querySelectorAll("[data-ppcancel]").forEach((b) => (b.onclick = () => takeBack(b.dataset.ppcancel)));
     el.querySelectorAll("[data-filter]").forEach((b) => (b.onclick = () => { st.filter = b.dataset.filter; draw(); }));
     el.querySelector("#po-newsec").onclick = async () => {
       const { data, error } = await sb.from("payout_sections").insert({ campaign_id: cid, name: "New section", deliverable: "video", position: sections.length }).select().single();
@@ -340,6 +384,11 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
   }
   function bindRow(tr, r) {
     tr.querySelectorAll("[data-f]").forEach((inp) => (inp.onchange = () => editRow(r, inp, tr)));
+    tr.querySelector("[data-ppsel]")?.addEventListener("change", (e) => {
+      if (e.target.checked) st.sel.add(r.id); else st.sel.delete(r.id);
+      const b = el.querySelector("#pp-open"); if (b) b.innerHTML = `${SEND_ICON}Pay with PayPal${st.sel.size ? ` · ${st.sel.size}` : ""}`;
+    });
+    tr.querySelector("[data-ppcancel]")?.addEventListener("click", (e) => takeBack(e.currentTarget.dataset.ppcancel));
     tr.querySelector("[data-manual]")?.addEventListener("click", () => setManual(r, tr, true));
     tr.querySelector("[data-unmanual]")?.addEventListener("click", () => setManual(r, tr, false));
     tr.querySelector("[data-del]").onclick = async (e) => {
@@ -421,6 +470,127 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
     if (focusField && document.activeElement === document.body) fresh.querySelector(`[data-f="${focusField}"]`)?.closest("td")?.nextElementSibling?.querySelector("input,select")?.focus();
   }
 
+  // ---------- PayPal: history, review-and-send, status checks ----------
+  function historyHtml() {
+    if (!payments.length) return "";
+    return `<section class="pp-hist"><h3>PayPal payments</h3>
+      <div class="po-tablewrap"><table class="pp-table"><thead><tr><th>Sent</th><th>Creator</th><th>PayPal email</th><th class="num">Amount</th><th>Status</th><th>PO</th><th>Sent by</th></tr></thead>
+      <tbody>${payments.map((p) => `<tr>
+        <td>${esc(new Date(p.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }))}</td>
+        <td><b>${esc(p.handle ?? "")}</b></td><td class="muted">${esc(p.recipient)}</td>
+        <td class="num">${money(Number(p.amount), p.currency)}</td>
+        <td><span class="pp-st ${payTone(p.status)}"${p.error ? ` title="${esc(p.error)}"` : ""}>${esc(payLabel(p.status))}</span>${p.env === "sandbox" ? ' <span class="pp-test">Test</span>' : ""}</td>
+        <td>${esc(p.po_number)}</td><td class="muted">${esc(p.sent_by)}</td></tr>`).join("")}</tbody></table></div></section>`;
+  }
+  async function reloadPayments() {
+    const [{ data: ps }, { data: rs }] = await Promise.all([
+      sb.from("payout_payments").select("*").eq("campaign_id", cid).order("created_at", { ascending: false }),
+      sb.from("payout_rows").select("id,status,paid_on,paid_via,paypal_email").eq("campaign_id", cid),
+    ]);
+    if (!isCurrent() || !el.isConnected) return false;
+    payments = ps ?? payments;
+    for (const x of rs ?? []) { const r = rows.find((y) => y.id === x.id); if (r) Object.assign(r, x); }
+    for (const id of [...st.sel]) { const r = rows.find((y) => y.id === id); if (!r || !payable(r)) st.sel.delete(id); }
+    draw();
+    return true;
+  }
+  // While payments are on their way, ask PayPal every 20 seconds (only while this tab is open).
+  let polling = false;
+  async function poll() {
+    if (polling) return;
+    polling = true;
+    while (payments.some((p) => ["queued", "pending"].includes(p.status))) {
+      await new Promise((res) => setTimeout(res, 20000));
+      if (!isCurrent() || !el.isConnected) break;
+      await sb.functions.invoke("paypal-payouts", { body: { action: "sync", campaign_id: cid } }).catch(() => null);
+      if (!(await reloadPayments())) break;
+    }
+    polling = false;
+  }
+  async function takeBack(id) {
+    const p = payments.find((x) => x.id === id);
+    if (!p) return;
+    const ans = await confirmDialog({ title: `Take back ${money(Number(p.amount), p.currency)} from ${p.handle ?? p.recipient}?`,
+      body: "They haven't claimed it yet. PayPal returns the money to Stellar's account and the creator moves back to \"Posted · to pay\", so you can pay them again (e.g. to the right email).", confirm: "Take it back" });
+    if (!ans) return;
+    const { data, error } = await sb.functions.invoke("paypal-payouts", { body: { action: "cancel", payment_id: id } });
+    if (error || data?.error) return toast(data?.error ?? "Couldn't reach PayPal. Try again.");
+    toast("Taken back. The money is on its way back to Stellar's PayPal.");
+    reloadPayments();
+  }
+  function payDialog() {
+    const cand = rows.filter(payable);
+    if (!cand.length) return toast("Nobody is waiting to be paid.");
+    const picked = new Set(st.sel.size ? [...st.sel] : cand.map((r) => r.id));
+    const po = String(camp.po_number ?? "").trim();
+    const cap = creatorBudget();
+    const note = `Stellar · PO ${po || "–"} · ${camp.artist ?? ""}${camp.song ? ` – ${camp.song}` : ""}`;
+    const blockers = [];
+    if (pp.mode === "off") blockers.push("Paying through PayPal isn't switched on yet. Sam switches it on after the test round.");
+    else if (!pp.ready) blockers.push("The PayPal keys for this mode are missing in Supabase.");
+    if (pp.allowed === false) blockers.push(`Only the people running this campaign${runners.length ? ` (${esc(runners.join(", "))})` : ""} or an admin can send payments.`);
+    if (!po) blockers.push("This campaign has no PO number yet. Add it with Edit campaign: every payment carries it.");
+    const d = document.createElement("dialog");
+    d.className = "po-dialog pp-dialog";
+    d.innerHTML = `<form method="dialog">
+      <h2>Pay with PayPal</h2>
+      ${pp.mode === "sandbox" ? `<p class="pp-mode test">Test mode: this uses PayPal's test money. Nobody really gets paid.</p>` : pp.mode === "live" ? `<p class="pp-mode live">This sends real money from Stellar's PayPal account.</p>` : ""}
+      ${blockers.map((b) => `<p class="pp-block">${b}</p>`).join("")}
+      <div class="pp-list">
+        <div class="pp-li pp-head"><span></span><span>Creator</span><span>PayPal email</span><span class="num">Amount</span></div>
+        ${cand.map((r) => `<label class="pp-li" data-r="${r.id}">
+          <input type="checkbox" name="pick" value="${r.id}"${picked.has(r.id) ? " checked" : ""} aria-label="Pay ${esc(r.handle)}">
+          <span class="pp-h"><b>${esc(r.handle)}</b>${r.videos ? ` <span class="muted small">${r.videos} video${r.videos === 1 ? "" : "s"}</span>` : ""}</span>
+          <input type="email" class="pp-email" name="email-${r.id}" value="${esc(emailOf(r))}" placeholder="their PayPal email" autocomplete="off" aria-label="${esc(r.handle)}'s PayPal email">
+          <span class="num pp-amt">${money(rowTotal(r), cur)}</span></label>`).join("")}
+      </div>
+      <div class="pp-facts">
+        <div><span class="muted">Note on each payment</span><b>${esc(note)}</b></div>
+        <div><span class="muted">Paid from the budget of</span><b>${invoices.length ? invoices.map((i) => esc(i.invoice_number ? `Invoice ${i.invoice_number}` : `Invoice request #${i.ref}`) + ` <span class="muted small">(${esc(i.status)})</span>`).join(", ") : `<span class="pp-warn">No invoice requested for this campaign yet</span>`}</b></div>
+        ${cap != null ? `<div><span class="muted">Creator budget left</span><b id="pp-left"></b></div>` : ""}
+      </div>
+      <p class="small bad" id="pp-err" role="alert"></p>
+      <div class="actions"><button type="button" class="primary" id="pp-send" disabled>Send</button><button type="submit" value="cancel">Cancel</button></div>
+    </form>`;
+    document.body.append(d);
+    const f = d.querySelector("form"), btn = d.querySelector("#pp-send"), errEl = d.querySelector("#pp-err");
+    const EMAIL = /^[^\s@<>()",;]+@[^\s@<>()",;]+\.[a-z]{2,}$/i;
+    const chosen = () => cand.filter((r) => f.querySelector(`[name=pick][value="${r.id}"]`).checked);
+    const refresh = () => {
+      const ch = chosen(), tot = ch.reduce((a, r) => a + rowTotal(r), 0);
+      const missing = ch.filter((r) => !EMAIL.test(f[`email-${r.id}`].value.trim()));
+      cand.forEach((r) => f[`email-${r.id}`].classList.toggle("bad-in", f.querySelector(`[name=pick][value="${r.id}"]`).checked && !EMAIL.test(f[`email-${r.id}`].value.trim())));
+      // Paying doesn't add spend (it's already on the sheet); this shows what's left once these leave.
+      const left = d.querySelector("#pp-left"); if (left) left.textContent = money(cap - spent(), cur);
+      btn.disabled = !!blockers.length || !ch.length || !!missing.length;
+      btn.textContent = ch.length ? `Send ${money(tot, cur)} to ${ch.length} creator${ch.length === 1 ? "" : "s"}` : "Send";
+      errEl.textContent = missing.length ? `Add a PayPal email for ${missing.map((r) => r.handle).join(", ")}.` : "";
+    };
+    f.addEventListener("input", refresh); f.addEventListener("change", refresh); refresh();
+    d.addEventListener("click", (e) => { if (e.target === d) d.close(); });
+    d.onclose = () => d.remove();
+    btn.onclick = async () => {
+      const ch = chosen();
+      btn.disabled = true; btn.textContent = "Sending…"; errEl.textContent = "";
+      const items = ch.map((r) => ({ row_id: r.id, email: f[`email-${r.id}`].value.trim() }));
+      const { data, error } = await sb.functions.invoke("paypal-payouts", { body: { action: "send", campaign_id: cid, items } });
+      if (error || data?.error) {
+        let msg = data?.error;
+        if (!msg && error?.context?.json) msg = (await error.context.json().catch(() => ({}))).error;
+        errEl.textContent = msg ?? "Couldn't reach PayPal. Nothing was sent; try again.";
+        btn.disabled = false; btn.textContent = "Try again";
+        reloadPayments();
+        return;
+      }
+      d.close();
+      for (const it of items) { const r = rows.find((x) => x.id === it.row_id); if (r) r.paypal_email = it.email; st.sel.delete(it.row_id); }
+      toast(data?.note ?? `Sent to PayPal: ${ch.length} payment${ch.length === 1 ? "" : "s"}. Creators show as Paid once PayPal confirms.`);
+      await reloadPayments(); poll();
+    };
+    d.showModal();
+    (blockers.length ? d.querySelector("[type=submit]") : cand.map((r) => f[`email-${r.id}`]).find((i) => !i.value) ?? btn).focus();
+  }
+
   // Paste rows copied from the Google payout sheet (one creator per line, columns in the sheet's order).
   function pasteDialog() {
     const d = document.createElement("dialog");
@@ -469,6 +639,7 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
   }
 
   draw();
+  poll();
 }
 
 // What an empty campaign shows: how to start, and an example of a filled-in payout sheet.
@@ -527,10 +698,12 @@ export function parseSheet(text) {
 // ---------- the Payouts page (sidebar): what to pay across campaigns ----------
 export async function renderPayoutsHome(app, sb, { isCurrent, go }) {
   app.innerHTML = `<p class="muted pad">Loading payouts…</p>`;
-  const [rowRes, campRes, secRes] = await Promise.all([
+  const [rowRes, campRes, secRes, payRes, batchRes] = await Promise.all([
     sb.from("payout_rows").select("id,campaign_id,section_id,handle,handled_by,videos,price_per_video,amount,status,paid_on"),
-    sb.from("campaign_summary").select("id,artist,song,budget,currency,status"),
+    sb.from("campaign_summary").select("id,artist,song,budget,currency,status,po_number"),
     sb.from("payout_sections").select("id,name"),
+    sb.from("payout_payments").select("id,batch_id,campaign_id,handle,recipient,amount,currency,po_number,status,error,env,sent_by,created_at").order("created_at", { ascending: false }).limit(1000),
+    sb.from("payout_batches").select("id,invoices"),
   ]);
   if (!isCurrent()) return;
   const err = rowRes.error ?? campRes.error;
@@ -542,7 +715,12 @@ export async function renderPayoutsHome(app, sb, { isCurrent, go }) {
   const secName = Object.fromEntries((secRes.data ?? []).map((s) => [s.id, s.name]));
   const rows = rowRes.data;
   const people = [...new Set(rows.map((r) => r.handled_by).filter(Boolean))].sort();
-  const st = { who: (() => { try { return localStorage.getItem("po-who") ?? ""; } catch { return ""; } })() };
+  const st = { who: (() => { try { return localStorage.getItem("po-who") ?? ""; } catch { return ""; } })(), q: "" };
+  const payments = payRes.data ?? [];
+  const invOf = Object.fromEntries((batchRes.data ?? []).map((b) => [b.id, (b.invoices ?? []).map((i) => (i.invoice_number ? `Invoice ${i.invoice_number}` : `Request #${i.ref}`)).join(", ")]));
+  const PAY_LABEL = { queued: "Sending…", pending: "Sending…", unclaimed: "Waiting for them to claim it", onhold: "On hold", success: "Paid", failed: "Failed", returned: "Money came back",
+    blocked: "Blocked", refunded: "Refunded", reversed: "Reversed", denied: "Refused", canceled: "Taken back" };
+  const tone = (x) => (x === "success" ? "good" : ["queued", "pending", "unclaimed", "onhold"].includes(x) ? "wait" : "bad");
   if (st.who && !people.includes(st.who)) st.who = "";
 
   const draw = () => {
@@ -569,6 +747,7 @@ export async function renderPayoutsHome(app, sb, { isCurrent, go }) {
             <td class="muted">${esc(secName[r.section_id] ?? "")}</td><td>${esc(r.handled_by ?? "")}</td><td class="num">${r.videos ?? ""}</td><td class="num">${money(rowTotal(r), cur(r.campaign_id))}</td></tr>`).join("")}</tbody></table></div>`
           : `<p class="muted" style="margin:0">Nobody has finished posting and is waiting to be paid${st.who ? ` for ${esc(st.who)}` : ""}.</p>`}
       </section>
+      ${paymentsHtml()}
       <section class="panel">
         <h2>Campaigns</h2>
         ${byCamp.size ? `<div class="table-wrap"><table>
@@ -584,8 +763,34 @@ export async function renderPayoutsHome(app, sb, { isCurrent, go }) {
               <td class="num">${pct != null ? `<span class="po-pct ${pct > cap ? "bad" : "good"}">${pct}% / ${cap}%</span>` : "–"}</td></tr>`;
           }).join("")}</tbody></table></div>` : `<p class="muted" style="margin:0">No payout sheets yet. Open a campaign and use its Payouts tab.</p>`}
       </section>`;
+    const q = app.querySelector("#pp-q");
+    if (q) q.oninput = () => { st.q = q.value; const box = app.querySelector("#pp-rows"); if (box) { box.innerHTML = payRows(); bindGo(box); } };
     app.querySelector("#po-who").onchange = (e) => { st.who = e.target.value; try { localStorage.setItem("po-who", st.who); } catch { /* ignore */ } draw(); };
-    app.querySelectorAll("[data-go]").forEach((tr) => (tr.onclick = () => go(tr.dataset.go)));
+    bindGo(app);
   };
+  const bindGo = (root) => root.querySelectorAll("[data-go]").forEach((tr) => (tr.onclick = () => go(tr.dataset.go)));
+  // Every PayPal payment, with the PO and the invoice(s) whose budget it comes out of.
+  function payRows() {
+    const q = st.q.trim().toLowerCase();
+    const list = payments.filter((p) => !q || [p.handle, p.recipient, p.po_number, camps[p.campaign_id]?.artist, camps[p.campaign_id]?.song, invOf[p.batch_id]].some((v) => String(v ?? "").toLowerCase().includes(q)));
+    if (!list.length) return `<tr><td colspan="8" class="muted">No payments match.</td></tr>`;
+    return list.map((p) => { const c = camps[p.campaign_id] ?? {}; return `<tr class="row-link" data-go="#/c/${p.campaign_id}/payouts">
+      <td>${esc(new Date(p.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }))}</td>
+      <td><b>${esc(p.handle ?? p.recipient)}</b></td>
+      <td>${esc(c.artist ?? "")} <span class="muted">${esc(c.song ?? "")}</span></td>
+      <td><b>${esc(p.po_number)}</b></td><td class="muted">${esc(invOf[p.batch_id] || "No invoice yet")}</td>
+      <td class="muted">${esc((capOf[p.campaign_id]?.client_market ?? "").replace(/^Stellar /, ""))}</td>
+      <td class="num">${money(Number(p.amount), p.currency)}</td>
+      <td><span class="pp-st ${tone(p.status)}"${p.error ? ` title="${esc(p.error)}"` : ""}>${esc(PAY_LABEL[p.status] ?? p.status)}</span>${p.env === "sandbox" ? ' <span class="pp-test">Test</span>' : ""}</td></tr>`; }).join("");
+  }
+  function paymentsHtml() {
+    if (!payments.length) return "";
+    return `<section class="panel" style="margin-bottom:20px">
+      <div class="page-head" style="margin-bottom:8px"><h2 style="margin:0">Sent with PayPal</h2>
+        <input type="search" id="pp-q" class="pp-q" placeholder="Search PO, invoice, creator, campaign…" aria-label="Search payments" value="${esc(st.q)}"></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Sent</th><th>Creator</th><th>Campaign</th><th>PO</th><th>Invoice</th><th>Region</th><th class="num">Amount</th><th>Status</th></tr></thead>
+        <tbody id="pp-rows">${payRows()}</tbody></table></div></section>`;
+  }
   draw();
 }
