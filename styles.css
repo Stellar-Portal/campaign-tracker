@@ -2141,6 +2141,7 @@ tr:hover .po-manual, .po-manual:focus { opacity: 1; }
 .dk-up:focus-within span { outline: 2px solid var(--accent-focus); outline-offset: 2px; }
 .dk-tbl td { vertical-align: middle; }
 .dk-tbl input[type=date] { width: auto; min-width: 140px; padding: 6px 8px; font-size: 13px; }
+.dk-tbl .dk-gate { width: auto; min-width: 138px; padding: 6px 28px 6px 8px; font-size: 13px; background-position: right 8px center; }
 .dk-tbl tr.dk-off td:not(:nth-last-child(-n+2)) { opacity: 0.45; }
 .dk-acts { text-align: right; white-space: nowrap; }
 .dk-slides { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }

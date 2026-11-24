@@ -2,10 +2,13 @@
 // Decks come in from Figma Slides through the "Send to Stellar OS" Figma button (figma-plugin/), which
 // calls the deck-import function. Here the team makes links, switches them off, sees who viewed what,
 // adds videos the import couldn't fetch, and keeps an eye on the Figma connection's expiry date.
-import { confirmDialog } from "./dialog.js?v=20261124b";
-import { loadClients } from "./clients.js?v=20261124b";
+import { confirmDialog } from "./dialog.js?v=20261124c";
+import { loadClients } from "./clients.js?v=20261124c";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// What a link asks for before showing the deck.
+const GATES = [["none", "No email", "anyone with the link can open it"], ["email", "Email", "viewers type their email"], ["code", "Email + code", "viewers confirm their email with a 6-digit code"]];
+const gateOf = (l) => (l.verify_email ? "code" : l.require_email ? "email" : "none");
 const day = (d) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "");
 const ago = (iso) => {
   if (!iso) return "";
@@ -326,7 +329,7 @@ async function renderDeck(app, sb, ctx, id) {
         ${!L.length ? `<p class="muted" style="margin:0">No links yet. <button type="button" class="linkish" id="dk-new2">Make the first link</button></p>` : `
         <div class="table-wrap dk-tbl"><table><thead><tr><th>Name</th><th>Views</th><th>Email asked</th><th>Expires</th><th>On</th><th></th></tr></thead><tbody>
           ${L.map((l) => `<tr class="${l.enabled ? "" : "dk-off"}"><td><b>${esc(l.label || "Link")}</b><br><span class="muted small">made ${esc(day(l.created_at))}</span></td>
-            <td>${viewsBy[l.id] ?? 0}</td><td>${l.verify_email ? "Yes, with a code" : l.require_email ? "Yes" : "No"}</td>
+            <td>${viewsBy[l.id] ?? 0}</td><td><select class="dk-gate" data-gate="${l.id}" aria-label="Email asked for ${esc(l.label || "this link")}">${GATES.map(([k, t]) => `<option value="${k}"${k === gateOf(l) ? " selected" : ""}>${t}</option>`).join("")}</select></td>
             <td><input type="date" value="${esc(l.expires_at ? l.expires_at.slice(0, 10) : "")}" data-exp="${l.id}" aria-label="Expiry date"></td>
             <td><label class="switch"><input type="checkbox" data-on="${l.id}" ${l.enabled ? "checked" : ""} aria-label="Link on"><span></span></label></td>
             <td class="dk-acts"><button type="button" data-link="${esc(l.token)}">Copy link</button></td></tr>`).join("")}
@@ -371,6 +374,17 @@ async function renderDeck(app, sb, ctx, id) {
       i.closest("tr").classList.toggle("dk-off", !i.checked);
       ctx.toast?.(i.checked ? "Link is on" : "Link switched off: it now shows \"This link isn't active\"");
     }));
+    // Change what a link asks for, any time. Stricter takes effect at once: people who only typed an email
+    // are asked for a code on their next visit. Looser lets everyone in more easily from now on.
+    app.querySelectorAll("[data-gate]").forEach((sel) => (sel.onchange = async () => {
+      const l = L.find((x) => x.id === sel.dataset.gate), prev = gateOf(l), v = sel.value;
+      const patch = { require_email: v !== "none", verify_email: v === "code" };
+      const { error } = await sb.from("deck_links").update(patch).eq("id", l.id);
+      if (error) { ctx.toast?.(error.message); sel.value = prev; return; }
+      Object.assign(l, patch);
+      ctx.toast?.(v === "code" ? "Viewers now confirm their email with a code (people who only typed an email get asked for one next time)"
+        : v === "email" ? "Viewers now type their email, no code" : "Anyone with the link can open it, no email asked: views show as \"No email\"");
+    }));
     app.querySelectorAll("[data-exp]").forEach((i) => (i.onchange = async () => {
       const v = i.value ? new Date(`${i.value}T23:59:59`).toISOString() : null;
       const { error } = await sb.from("deck_links").update({ expires_at: v }).eq("id", i.dataset.exp);
@@ -390,8 +404,8 @@ async function renderDeck(app, sb, ctx, id) {
       <h2>New link</h2>
       <p class="muted small">One link per company or person tells you exactly who's viewing.</p>
       <label>Who is it for? <input name="label" placeholder="e.g. Universal Music · A&amp;R team" required maxlength="120"></label>
-      <label class="check"><input type="checkbox" name="email" checked> <span>Ask for an email before showing the deck</span></label>
-      <label class="check"><input type="checkbox" name="verify"> <span>Check the email with a code <span class="muted small" style="font-weight:400">(viewers get a 6-digit code by email, so the address is real)</span></span></label>
+      <label>Before showing the deck <select name="gate">${GATES.map(([k, t, hint]) => `<option value="${k}"${k === "email" ? " selected" : ""}>${t}: ${hint}</option>`).join("")}</select>
+        <span class="muted small" style="font-weight:400">You can change this later in the Links table.</span></label>
       <label>Expires <input type="date" name="exp"> <span class="muted small">Leave empty to keep it open.</span></label>
       <div class="actions"><button type="submit" value="ok" class="primary">Make link</button><button type="submit" value="cancel" formnovalidate>Cancel</button></div></form>`;
     document.body.append(d);
@@ -399,7 +413,7 @@ async function renderDeck(app, sb, ctx, id) {
       if (d.returnValue === "ok") {
         const f = d.querySelector("form");
         const exp = f.exp.value ? new Date(`${f.exp.value}T23:59:59`).toISOString() : null;
-        const { data, error } = await sb.from("deck_links").insert({ deck_id: id, label: f.label.value.trim(), require_email: f.email.checked || f.verify.checked, verify_email: f.verify.checked, expires_at: exp, created_by: await myEmail(sb) }).select("token").single();
+        const { data, error } = await sb.from("deck_links").insert({ deck_id: id, label: f.label.value.trim(), require_email: f.gate.value !== "none", verify_email: f.gate.value === "code", expires_at: exp, created_by: await myEmail(sb) }).select("token").single();
         if (error) ctx.toast?.(error.message);
         else { await copy(deckUrl(data.token), ctx.toast, "Link made and copied"); reload(); }
       }
