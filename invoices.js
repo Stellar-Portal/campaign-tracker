@@ -1,8 +1,8 @@
 // Invoicing: campaign managers request an invoice from the campaign page; finance works through the
 // requests here, sends the invoice from e-conomic and records it; payment is recorded when the label pays.
 // Statuses: requested → invoiced → paid (or returned to the requester / cancelled).
-import { confirmDialog } from "./dialog.js?v=20261125b";
-import { entitiesOf, loadMoney, flagsFor } from "./money.js?v=20261125b";
+import { confirmDialog } from "./dialog.js?v=20261125c";
+import { entitiesOf, loadMoney, flagsFor } from "./money.js?v=20261125c";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const money = (v, cur) => {

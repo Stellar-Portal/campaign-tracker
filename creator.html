@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Your campaign · Stellar</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#0626c7">
+  <link rel="icon" type="image/png" href="assets/favicon.png?v=4">
+  <link rel="stylesheet" href="assets/fonts/inter.css?v=20261114a">
+  <!-- A creator's personal campaign page: drafts, approval, posted links, payment details. No outside fonts or scripts: nothing goes anywhere but Stellar's own backend. -->
+  <style>
+    :root { --blue: #0626c7; --ink: #1d1d1f; --muted: #6e6e73; --line: #e5e5ea; color-scheme: light; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body { font-family: Inter, -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif; background: var(--blue); color: var(--ink); -webkit-font-smoothing: antialiased; }
+    [hidden] { display: none !important; }
+    .wrap { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; padding: 40px 20px calc(40px + env(safe-area-inset-bottom)); }
+    .wm { width: 130px; height: auto; margin: 8px 0 32px; }
+    .card { width: 100%; max-width: 560px; background: #fff; border-radius: 24px; padding: 32px 28px; box-shadow: 0 20px 60px rgba(0,0,0,.18); }
+    h1 { font-size: 26px; line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 8px; }
+    p.sub { margin: 0 0 24px; color: var(--muted); font-size: 15px; line-height: 1.5; }
+    label, .lbl { display: block; font-size: 13px; font-weight: 600; margin: 0 0 16px; }
+    label .hint, .lbl .hint { display: block; font-weight: 400; color: var(--muted); margin-top: 4px; }
+    input, select { display: block; width: 100%; margin-top: 6px; font: inherit; font-size: 16px; font-weight: 400; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink); }
+    input:focus, select:focus { outline: 2px solid var(--blue); outline-offset: 1px; border-color: transparent; }
+    .bad-in { border-color: #c9302c; }
+    button { width: 100%; font: inherit; font-size: 16px; font-weight: 600; padding: 14px; border: 0; border-radius: 999px; background: var(--blue); color: #fff; cursor: pointer; margin-top: 6px; }
+    button:disabled { opacity: .55; cursor: default; }
+    .err { color: #c9302c; font-size: 14px; min-height: 20px; margin: 4px 0 8px; }
+    .fine { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 18px 0 0; }
+    .fine a, .done a { color: var(--blue); }
+    .done { text-align: center; padding: 12px 0; }
+    .done .tick { width: 56px; height: 56px; border-radius: 50%; background: rgba(6,38,199,.1); color: var(--blue); display: grid; place-items: center; margin: 0 auto 16px; font-size: 28px; }
+    .handle { font-weight: 600; color: var(--blue); }
+    h2 { font-size: 15px; margin: 28px 0 12px; padding-top: 20px; border-top: 1px solid var(--line); }
+    h2:first-of-type { border-top: 0; padding-top: 0; margin-top: 8px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+    @media (max-width: 520px) { .row { grid-template-columns: 1fr; } .card { padding: 26px 20px; } }
+    .sig { position: relative; margin-top: 6px; border: 1px solid var(--line); border-radius: 12px; height: 160px; touch-action: none; background: #fafafc; }
+    .sig canvas { width: 100%; height: 100%; display: block; border-radius: 12px; cursor: crosshair; }
+    .sig .ph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; font-weight: 400; pointer-events: none; }
+    .sig-tools { display: flex; justify-content: space-between; margin-top: 6px; font-weight: 400; font-size: 12px; color: var(--muted); }
+    .linkbtn { width: auto; background: none; color: var(--blue); padding: 0; margin: 0; font-size: 13px; font-weight: 600; border-radius: 0; }
+    textarea { display: block; width: 100%; margin-top: 6px; font: inherit; font-size: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; min-height: 84px; resize: vertical; }
+    textarea:focus { outline: 2px solid var(--blue); outline-offset: 1px; border-color: transparent; }
+    .brief { background: #f5f5f7; border-radius: 14px; padding: 14px 16px; font-size: 14px; line-height: 1.55; white-space: pre-line; margin: 0 0 8px; }
+    .steps { display: flex; gap: 6px; margin: 0 0 22px; flex-wrap: wrap; }
+    .steps span { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: #f0f0f5; color: var(--muted); }
+    .steps span.on { background: rgba(6,38,199,.1); color: var(--blue); }
+    .steps span.ok { background: #e6f4ea; color: #1a7f37; }
+    .item { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 0 0 10px; font-size: 14px; }
+    .item-h { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+    .item-h b { overflow-wrap: anywhere; font-weight: 600; }
+    .pill { flex: none; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: #f0f0f5; color: var(--muted); }
+    .pill.ok { background: #e6f4ea; color: #1a7f37; } .pill.fix { background: #fff4e0; color: #9a5b00; } .pill.wait { background: rgba(6,38,199,.08); color: var(--blue); } .pill.bad { background: #fdecea; color: #c9302c; }
+    .note { margin: 8px 0 0; padding: 8px 10px; background: #fff8ec; border-radius: 10px; font-size: 13px; line-height: 1.45; }
+    .note.client { background: #eef1fd; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .item .linkbtn { margin-top: 8px; }
+    .drop { display: block; border: 2px dashed var(--line); border-radius: 14px; padding: 20px; text-align: center; font-weight: 600; font-size: 14px; color: var(--blue); cursor: pointer; margin: 6px 0 12px; }
+    .drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    .drop:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .bar { height: 8px; border-radius: 999px; background: #f0f0f5; overflow: hidden; margin: 8px 0; }
+    .bar i { display: block; height: 100%; width: 0; background: var(--blue); transition: width .2s; }
+    .inline { display: flex; gap: 8px; } .inline input { margin-top: 0; } .inline button { width: auto; margin: 0; padding: 12px 18px; flex: none; }
+    .locked { color: var(--muted); font-size: 14px; background: #f5f5f7; border-radius: 12px; padding: 12px 14px; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <img class="wm" src="assets/stellar-white.png" alt="Stellar">
+    <div class="card" id="card" aria-live="polite"><p class="sub" style="margin:0">Loading…</p></div>
+  </main>
+  <script type="module" src="creator.js?v=20261125c"></script>
+</body>
+</html>

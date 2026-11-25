@@ -12,6 +12,10 @@
 //
 // It never returns budgets, spend, margins, creator prices or creators' payment details.
 // There is deliberately no setting that could turn those on.
+//
+// Draft review (client links only, and only for campaigns with portal_client_review on):
+//   { drafts: true }                                  -> drafts Stellar approved that wait for the client, and past decisions
+//   { draft_decide: id, decision: approve|changes, note } -> the client's answer, which the creator sees on their page
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
@@ -85,7 +89,7 @@ async function scopeFor(req: Request, body: any) {
     const { data: link } = await db.from("share_links").select("artist,campaign_id,folder_id,expires_at,revoked,settings").eq("token", token).maybeSingle();
     if (!link || link.revoked || (link.expires_at && new Date(link.expires_at) < new Date())) return null;
     const settings = readSettings(link.settings);
-    let q = db.from("campaigns").select("id,artist,song,start_date,end_date,status,created_at").neq("status", "draft");
+    let q = db.from("campaigns").select("id,artist,song,start_date,end_date,status,created_at,portal_client_review").neq("status", "draft");
     q = link.artist ? q.ilike("artist", likeEscape(link.artist)) : q.eq("id", link.campaign_id);
     const { data } = await q.order("created_at");
     const all = data ?? [];
@@ -97,7 +101,7 @@ async function scopeFor(req: Request, body: any) {
       folder = { id: f.id, name: f.name };
       settings.folders = false;   // a folder link is already one folder
     }
-    return { mode: "client" as const, artist: link.artist ?? all[0]?.artist ?? "", campaigns, settings, folder };
+    return { mode: "client" as const, artist: link.artist ?? all[0]?.artist ?? "", campaigns, settings, folder, token };
   }
   if (body?.campaign_id) {
     const email = await teamMember(req);
@@ -135,6 +139,43 @@ Deno.serve(async (req) => {
   if (!scope) return json({ error: "This link isn't active. Ask Stellar for a new one." }, 404);
   const s = scope.settings;
   const ids = scope.campaigns.map((c) => c.id);
+
+  // Drafts the client reviews (client links only; campaigns with client review switched on; never hidden folders).
+  const reviewIds = scope.mode === "client" ? scope.campaigns.filter((c: any) => c.portal_client_review).map((c) => c.id) : [];
+  const draftScope = async () => {
+    if (!reviewIds.length) return [];
+    let q = db.from("creator_drafts").select("id,campaign_id,folder_id,file_path,status,team_note,client_note,client_reviewed_at,created_at,creator:creators(username,display_name,avatar_url)")
+      .in("campaign_id", reviewIds).in("status", ["team_ok", "approved", "client_changes"]).order("created_at", { ascending: false }).limit(200);
+    if (scope.folder) q = q.eq("folder_id", scope.folder.id);
+    const rows = (await q).data ?? [];
+    const { data: hidden } = await db.from("campaign_folders").select("id").in("campaign_id", reviewIds).eq("hidden", true);
+    const hid = new Set((hidden ?? []).map((f) => f.id));
+    return rows.filter((d) => !d.folder_id || !hid.has(d.folder_id));
+  };
+  if (body.drafts) {
+    const rows = await draftScope();
+    const signed = rows.length ? (await db.storage.from("drafts").createSignedUrls(rows.map((d) => d.file_path), 2 * 3600)).data ?? [] : [];
+    const urlOf = Object.fromEntries(signed.filter((x) => x.signedUrl).map((x) => [x.path, x.signedUrl]));
+    const { data: fs } = rows.length ? await db.from("campaign_folders").select("id,name").in("id", [...new Set(rows.map((d) => d.folder_id).filter(Boolean))]) : { data: [] };
+    const fname = Object.fromEntries((fs ?? []).map((f) => [f.id, f.name]));
+    const song = Object.fromEntries(scope.campaigns.map((c) => [c.id, c.song]));
+    return json({ drafts: rows.map((d) => ({ id: d.id, song: song[d.campaign_id] ?? null, folder: d.folder_id ? fname[d.folder_id] ?? null : null, status: d.status,
+      stellar_note: d.team_note, client_note: d.client_note, decided_at: d.client_reviewed_at, sent_at: d.created_at, video: urlOf[d.file_path] ?? null,
+      creator: d.creator ? { username: d.creator.username, name: d.creator.display_name, avatar: d.creator.avatar_url } : null })) });
+  }
+  if (body.draft_decide) {
+    if (!(await db.rpc("deck_rate_ok", { p_key: "sd:" + (scope as any).token.slice(0, 24), p_limit: 120, p_seconds: 600 })).data) return json({ error: "Too many tries. Please wait a few minutes." }, 429);
+    const rows = await draftScope();
+    const d = rows.find((x) => x.id === String(body.draft_decide));
+    if (!d) return json({ error: "That draft isn't on this link." }, 404);
+    if (d.status !== "team_ok") return json({ error: "This draft was already answered." }, 409);
+    const note = String(body.note ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 1000);
+    const approve = body.decision === "approve";
+    if (!approve && !note) return json({ error: "Tell the creator what to change." }, 400);
+    const { error } = await db.from("creator_drafts").update({ status: approve ? "approved" : "client_changes", client_note: note || null, client_reviewed_at: new Date().toISOString() }).eq("id", d.id).eq("status", "team_ok");
+    if (error) return json({ error: "Couldn't save. Please try again." }, 500);
+    return json({ ok: true });
+  }
 
   // One video's day-by-day numbers, for the post preview window.
   if (body.post) {
@@ -273,6 +314,7 @@ Deno.serve(async (req) => {
     sounds: scope.mode === "client" && !s.sounds ? [] : sounds,
     covers,
     settings: publicSettings,
+    drafts_review: reviewIds.length > 0,
     generated_at: new Date().toISOString(),
   });
 });

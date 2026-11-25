@@ -1,19 +1,20 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261125b";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261125b";
-import { renderRoster } from "./roster.js?v=20261125b";
-import { renderDiscover } from "./discover.js?v=20261125b";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261125b";
-import { renderTrending } from "./trending.js?v=20261125b";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261125b";
-import { mountMoneyFlags, vendorFormDialog } from "./money.js?v=20261125b";
-import { renderDecks, figmaReminder } from "./decks.js?v=20261125b";
-import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261125b";
-import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261125b";
-import { confirmDialog } from "./dialog.js?v=20261125b";
-import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261125b";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261125b";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261125b";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261125c";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261125c";
+import { renderRoster } from "./roster.js?v=20261125c";
+import { renderDiscover } from "./discover.js?v=20261125c";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261125c";
+import { renderTrending } from "./trending.js?v=20261125c";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261125c";
+import { mountMoneyFlags, vendorFormDialog } from "./money.js?v=20261125c";
+import { renderDecks, figmaReminder } from "./decks.js?v=20261125c";
+import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261125c";
+import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261125c";
+import { confirmDialog } from "./dialog.js?v=20261125c";
+import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261125c";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261125c";
+import { renderCampaignCreators } from "./creators.js?v=20261125c";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261125c";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -82,7 +83,7 @@ function depthOf(hash) {
     return (base[1] === "list" ? 1 : 0) + (base.length !== p.length ? 1 : 0);
   }
   if (p[0] === "creator") return 2;
-  if (p[0] === "c") return p[2] && p[2] !== "payouts" ? 2 : 1;
+  if (p[0] === "c") return p[2] && !["payouts", "creators"].includes(p[2]) ? 2 : 1;
   if (p[0] === "new" || p[0] === "report") return 1;
   if (p[0] === "trending") return p[1] === "artist" ? 1 : 0;
   if (p[0] === "analytics") return Math.floor((p.length - 1) / 2);
@@ -106,7 +107,7 @@ function trackHistory() {
 function parentOf(hash) {
   const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   if (!p.length) return null;
-  if (p[0] === "c" && p[1]) return p[2] && p[2] !== "payouts" ? `#/c/${p[1]}` : "#/campaigns";
+  if (p[0] === "c" && p[1]) return p[2] && !["payouts", "creators"].includes(p[2]) ? `#/c/${p[1]}` : "#/campaigns";
   if (p[0] === "new" || p[0] === "report") return "#/campaigns";
   if (p[0] === "creator") return "#/roster";
   if (p[0] === "roster" && p.length > 1) {
@@ -474,7 +475,7 @@ async function renderOverview(token) {
   app.innerHTML = `<p class="muted pad">Loading the campaign overview…</p>`;
   const [snap, camps, syncs, fx, prefs] = await Promise.all([
     sb.from("overview_snapshot").select("*").eq("id", 1).maybeSingle(),
-    fetchAll(() => sb.from("campaign_summary").select("id,artist,song,po_number,status,total_plays,live_posts").order("created_at")).catch(() => []),
+    fetchAll(() => sb.from("campaign_summary").select("id,artist,song,po_number,status,total_plays,live_posts,budget,currency,spend").order("created_at")).catch(() => []),
     sb.from("campaign_sheet_sync").select("campaign_id,sheet_row,last_error"),
     sb.from("fx_rates").select("currency,per_usd"),
     loadPrefs().catch(() => ({})),
@@ -728,6 +729,22 @@ async function renderOverview(token) {
     if (status === "Active") return { text: `Live${r.camp.live_posts ? ` · ${compact(r.camp.total_plays)} plays from ${n(r.camp.live_posts)} post${r.camp.live_posts === 1 ? "" : "s"}` : " · no posts tracked yet"}.`, btn: `<a class="btn" href="#/c/${esc(r.camp.id)}/add">Add links</a>` };
     return { text: status === "On Hold" ? "On hold." : "Not started yet." };
   }
+  // Budget vs what was actually spent: the tracker's creator payouts and costs when the campaign is in the
+  // tracker, otherwise the sheet's Campaign Cost.
+  function spentBox(r, price) {
+    const tracked = r.camp && Number(r.camp.spend) > 0;
+    const cur = tracked ? (r.camp.currency || v(r, "Currency")) : v(r, "Currency");
+    const budget = tracked && Number(r.camp.budget) > 0 ? Number(r.camp.budget) : price;
+    const spent = tracked ? Number(r.camp.spend) : sheetNumber(v(r, "Campaign Cost"));
+    const fmt = (x) => `${Math.round(x).toLocaleString("en-GB")} <small>${esc(cur)}</small>`;
+    if (!budget && spent == null) return "";
+    if (spent == null) return `<div class="ov2-spent"><div class="ov2-spent-h"><b>Budget vs spent</b></div><p class="muted small">Nothing spent recorded yet: add creators on the Payouts tab or the Campaign Cost in the sheet.</p></div>`;
+    const pct = budget ? Math.round((spent / budget) * 100) : null, over = budget && spent > budget;
+    return `<div class="ov2-spent${over ? " over" : ""}"><div class="ov2-spent-h"><b>Budget vs spent</b><span class="muted small">${tracked ? "from the Payouts tab" : "from the sheet's Campaign Cost"}</span></div>
+      ${budget ? `<div class="ov2-spent-bar" role="img" aria-label="${pct}% of the budget spent"><i style="width:${Math.min(100, pct)}%"></i></div>` : ""}
+      <div class="ov2-spent-n"><div><span>Budget</span><b>${budget ? fmt(budget) : "–"}</b></div><div><span>Spent</span><b>${fmt(spent)}${pct != null ? ` <small>${pct}%</small>` : ""}</b></div>
+        <div><span>${over ? "Over by" : "Left"}</span><b>${budget ? fmt(Math.abs(budget - spent)) : "–"}</b></div></div></div>`;
+  }
   function openPanel(r) {
     openRow = r.row;
     listEl.querySelectorAll(".ov2-row").forEach((x) => x.classList.toggle("sel", Number(x.dataset.row) === r.row));
@@ -736,7 +753,9 @@ async function renderOverview(token) {
     const at = paid ? 3 : inv ? 2 : status === "Active" || status === "Completed" ? 1 : 0;
     const steps = ["Booked", "Live", "Invoiced", "Paid"];
     const price = sheetNumber(v(r, "Price")), cost = sheetNumber(v(r, "Campaign Cost"));
-    const margin = v(r, "Margin") || (price && cost != null ? `${Math.round(((price - cost) / price) * 100)}%` : "–");
+    // Margin follows what was actually spent when the tracker has payouts; otherwise the sheet's.
+    const tb = Number(r.camp?.budget) || price, ts = Number(r.camp?.spend);
+    const margin = ts > 0 && tb ? `${Math.round(((tb - ts) / tb) * 100)}%` : v(r, "Margin") || (price && cost != null ? `${Math.round(((price - cost) / price) * 100)}%` : "–");
     const ns = nextStep(r);
     const contact = v(r, "Client Contact Name") || v(r, "Client Contact eMail");
     panel.innerHTML = `
@@ -750,6 +769,7 @@ async function renderOverview(token) {
         <div><b>${esc(margin)}</b><span>Margin</span></div>
         <div><b>${r.camp?.total_plays ? compact(r.camp.total_plays) : "–"}</b><span>Plays</span></div>
       </div>
+      ${spentBox(r, price)}
       <dl class="ov2-facts">
         <div><dt>Client</dt><dd>${esc(v(r, "Client") || "–")}</dd></div>
         <div><dt>Invoicing entity</dt><dd>${esc(v(r, "Invoicing Entity") || "–")}</dd></div>
@@ -1535,8 +1555,13 @@ async function renderCampaign(token, id, tab = "report") {
           <span class="ws-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18M16 14.5h2"/></svg></span>
           <span class="ws-t"><b>Payouts</b><small>Creators, costs and margin · team only</small></span>
         </button>
+        <button type="button" role="tab" data-ctab="creators" aria-selected="${tab === "creators"}">
+          <span class="ws-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6.5h16v10H9l-4 3.5v-3.5H4z"/><path d="M8 10.5h8M8 13h5"/></svg></span>
+          <span class="ws-t"><b>Creators</b><small>Their pages, drafts and messages · team only</small></span>
+        </button>
       </div>
-      <section id="camp-payouts" class="camp-payouts"${tab === "payouts" ? "" : " hidden"}></section>`,
+      <section id="camp-payouts" class="camp-payouts"${tab === "payouts" ? "" : " hidden"}></section>
+      <section id="camp-creators" class="camp-payouts"${tab === "creators" ? "" : " hidden"}></section>`,
     postsHtml: `
       <div class="camp-posts">
       <div class="section-head">
@@ -1567,13 +1592,16 @@ async function renderCampaign(token, id, tab = "report") {
     onPosts: (root, data) => {
       if (token !== routeToken) return;
       // Report / Payouts switch in place: no reload, and the address follows so a refresh keeps the tab.
-      let payoutsDrawn = false;
+      let payoutsDrawn = false, creatorsDrawn = false;
       const showTab = (t) => {
-        app.classList.toggle("camp-on-payouts", t === "payouts");
+        app.classList.toggle("camp-on-payouts", t !== "report");
+        app.dataset.campView = t;
         document.getElementById("camp-payouts").hidden = t !== "payouts";
+        document.getElementById("camp-creators").hidden = t !== "creators";
         app.querySelectorAll("[data-ctab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.ctab === t)));
-        history.replaceState(history.state, "", `#/c/${id}${t === "payouts" ? "/payouts" : ""}`);
+        history.replaceState(history.state, "", `#/c/${id}${t === "report" ? "" : `/${t}`}`);
         if (t === "payouts" && !payoutsDrawn) { payoutsDrawn = true; renderCampaignPayouts(document.getElementById("camp-payouts"), sb, { campaign: c, toast, isCurrent: () => token === routeToken }); }
+        if (t === "creators" && !creatorsDrawn) { creatorsDrawn = true; renderCampaignCreators(document.getElementById("camp-creators"), sb, { campaign: c, toast, isCurrent: () => token === routeToken }); }
       };
       app.querySelectorAll("[data-ctab]").forEach((b) => (b.onclick = () => showTab(b.dataset.ctab)));
       showTab(tab);
@@ -1622,7 +1650,7 @@ async function renderCampaign(token, id, tab = "report") {
         toast(ok || gone
           ? `Updated ${ok} post${ok === 1 ? "" : "s"}${gone ? `, ${gone} no longer available` : ""}${r.skipped_recent ? `. ${r.skipped_recent} were already up to date` : ""}`
           : "Everything was updated in the last hour already");
-        renderCampaign(newToken(), id, app.classList.contains("camp-on-payouts") ? "payouts" : "report");
+        renderCampaign(newToken(), id, app.dataset.campView || "report");
       };
     },
     onError: (e) => { app.innerHTML = fail(e); },
@@ -2444,14 +2472,14 @@ async function route() {
     return;
   }
   document.body.classList.remove("signin");
-  app.classList.remove("camp-on-payouts");
+  app.classList.remove("camp-on-payouts"); delete app.dataset.campView;
   figmaReminder(sb).catch(() => {});
   // Personal to-do: floating button bottom-right, only for people the beta is switched on for (todo.js).
   mountTodoInOS(sb, user).catch(() => {});
   renderWho(user);
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   // The campaign chat belongs to one campaign page (Report or Payouts); anywhere else it closes.
-  if (!(parts[0] === "c" && parts[1] && (!parts[2] || parts[2] === "payouts"))) unmountCampaignChat();
+  if (!(parts[0] === "c" && parts[1] && (!parts[2] || ["payouts", "creators"].includes(parts[2])))) unmountCampaignChat();
   trackHistory(); updateBack(); rememberTitle(normHash(location.hash));
   // Opening or closing a creator's side panel on the roster keeps the page where it is.
   const pageKey = parts[0] === "roster" && parts[parts.length - 2] === "c" ? `#/${parts.slice(0, -2).join("/")}` : normHash(location.hash);
@@ -2478,7 +2506,7 @@ async function route() {
   if (parts[0] === "c" && parts[1]) {
     if (parts[2] === "edit") return renderForm(token, parts[1]);
     if (parts[2] === "add") return renderAdd(token, parts[1], parts[3]);
-    return renderCampaign(token, parts[1], parts[2] === "payouts" ? "payouts" : "report");
+    return renderCampaign(token, parts[1], ["payouts", "creators"].includes(parts[2]) ? parts[2] : "report");
   }
   return renderList(token);
 }
