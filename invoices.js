@@ -1,8 +1,8 @@
 // Invoicing: campaign managers request an invoice from the campaign page; finance works through the
 // requests here, sends the invoice from e-conomic and records it; payment is recorded when the label pays.
 // Statuses: requested → invoiced → paid (or returned to the requester / cancelled).
-import { confirmDialog } from "./dialog.js?v=20261125a";
-import { entitiesOf, loadMoney, flagsFor } from "./money.js?v=20261125a";
+import { confirmDialog } from "./dialog.js?v=20261125b";
+import { entitiesOf, loadMoney, flagsFor } from "./money.js?v=20261125b";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const money = (v, cur) => {
@@ -49,7 +49,7 @@ export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
     ${already ? `<p class="small inv-warn">${money(already, c.currency)} of this campaign's ${money(budget, c.currency)} budget is already requested or invoiced.</p>` : ""}
     <div class="inv-form">
       <label>Client <input name="client" value="${esc(c.client ?? "")}" required></label>
-      ${ents.length ? `<label>Invoicing company <select name="entity_id"><option value="">Not sure yet: pick it later, or send the vendor form</option>${ents.map((e) => `<option value="${e.id}"${e.id === c.client_entity_id ? " selected" : ""}>${esc(e.legal_name)}${e.country ? ` (${esc(e.country)})` : ""}</option>`).join("")}</select></label>`
+      ${ents.length ? `<label>Invoicing company <select name="entity_id"><option value="">Not sure yet: pick it later, or send the vendor form</option>${ents.map((e) => `<option value="${e.id}"${e.id === c.client_entity_id ? " selected" : ""}>${esc(e.legal_name)}${[e.city, e.country].filter(Boolean).length ? ` (${esc([e.city, e.country].filter(Boolean).join(", "))})` : ""}${(e.economic_numbers ?? []).length ? ` · e-conomic ${esc(e.economic_numbers.join(", "))}` : ""}</option>`).join("")}</select></label>`
         : `<label>Invoicing company <input name="entity" value="${esc(c.invoicing_entity ?? "")}" placeholder="Not sure? Leave empty and send the vendor form"></label>`}
       <label>PO number <input name="po" value="${esc(c.po_number ?? "")}" placeholder="If the client gave one"></label>
       <label>Amount <span class="inv-amt"><input name="amount" inputmode="decimal" value="${left ?? ""}" required><select name="cur">${["USD", "EUR", "GBP", "DKK", "SEK", "JPY", "AUD", "SGD", "BRL", "MXN"].map((x) => `<option${x === (c.currency || "USD") ? " selected" : ""}>${x}</option>`).join("")}</select></span></label>
@@ -97,7 +97,7 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
     me(sb),
     sb.from("invoice_requests").select("*").order("requested_at", { ascending: false }),
     sb.from("campaigns").select("id,artist,song,client_market,client_id,client_entity_id"),
-    sb.from("client_entities").select("id,client_id,legal_name,vat_number,address,country,invoice_email"),
+    sb.from("client_entities").select("id,client_id,also_clients,legal_name,vat_number,address,city,country,invoice_email,economic_numbers"),
     loadMoney(sb),
   ]);
   if (!isCurrent()) return;
@@ -159,9 +159,9 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
       <dl class="inv-dl">
         ${(() => {
           const e = entOf(r.client_entity_id);
-          if (e) return field("Invoicing company", `${esc(e.legal_name)}${e.vat_number ? `<br><span class="muted small">ID ${esc(e.vat_number)}</span>` : ""}${e.address ? `<br><span class="muted small">${esc(e.address)}</span>` : ""}${e.invoice_email ? `<br><span class="muted small">${esc(e.invoice_email)}</span>` : ""}`);
-          const opts = ents.filter((x) => x.client_id && x.client_id === c?.client_id);
-          if ((canFin || mine) && r.status !== "cancelled" && opts.length) return field("Invoicing company", `<select id="inv-ent" aria-label="Invoicing company"><option value="">Pick the company${r.invoicing_entity ? ` (they wrote: ${esc(r.invoicing_entity)})` : ""}</option>${opts.map((x) => `<option value="${x.id}">${esc(x.legal_name)}${x.country ? ` (${esc(x.country)})` : ""}</option>`).join("")}</select>`);
+          if (e) return field("Invoicing company", `<a href="#/clients/co/${esc(e.id)}">${esc(e.legal_name)}</a>${(e.economic_numbers ?? []).length ? `<br><span class="muted small">e-conomic ${esc(e.economic_numbers.join(", "))}</span>` : ""}${e.vat_number ? `<br><span class="muted small">ID ${esc(e.vat_number)}</span>` : ""}${e.address ? `<br><span class="muted small">${esc(e.address)}</span>` : ""}${e.invoice_email ? `<br><span class="muted small">${esc(e.invoice_email)}</span>` : ""}`);
+          const opts = ents.filter((x) => c?.client_id && (x.client_id === c.client_id || (x.also_clients ?? []).includes(c.client_id)));
+          if ((canFin || mine) && r.status !== "cancelled" && opts.length) return field("Invoicing company", `<select id="inv-ent" aria-label="Invoicing company"><option value="">Pick the company${r.invoicing_entity ? ` (they wrote: ${esc(r.invoicing_entity)})` : ""}</option>${opts.map((x) => `<option value="${x.id}">${esc(x.legal_name)}${[x.city, x.country].filter(Boolean).length ? ` (${esc([x.city, x.country].filter(Boolean).join(", "))})` : ""}${(x.economic_numbers ?? []).length ? ` · e-conomic ${esc(x.economic_numbers.join(", "))}` : ""}</option>`).join("")}</select>`);
           return field("Invoicing company", r.invoicing_entity ? esc(r.invoicing_entity) : `<span class="inv-warn">Not known yet: send the vendor form from the campaign page</span>`);
         })()}
         ${field("PO number", esc(r.po_number))}

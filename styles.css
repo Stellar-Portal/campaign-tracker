@@ -2513,3 +2513,17 @@ body.nav-collapsed:not(.nav-peek) .nav-label { color: transparent; }
 .vf-past > div { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .vf-ok { color: var(--good); font-weight: 600; }
 .vf-dialog textarea { font: inherit; height: auto; min-height: 0; resize: vertical; }
+
+/* Clients, company first */
+.cl-grp { margin-top: 28px; }
+.cl-grp h2 { font-size: 18px; margin: 0 0 10px; display: flex; align-items: baseline; gap: 8px; }
+.cl-mail { max-width: 220px; overflow-wrap: anywhere; font-size: 13px; }
+.inv-warn-text { color: var(--warn); }
+.cl-chip-warn { background: #fff4e0; color: var(--warn); }
+.cl-facts { padding: 18px 20px; }
+.cl-facts dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px 24px; margin: 0; }
+.cl-facts dt { font-size: 12px; color: var(--muted); margin: 0 0 2px; }
+.cl-facts dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.cl-facts-note { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--divider); font-size: 14px; }
+.cl-facts-src { margin: 12px 0 0; }
+.pp-links { width: 100%; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; white-space: pre; overflow-x: auto; }

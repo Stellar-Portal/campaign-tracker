@@ -128,6 +128,7 @@ export async function vendorFormDialog(sb, c, { toast, onDone } = {}) {
 // Pick the exact invoicing company among a client's companies (used on invoice requests).
 export async function entitiesOf(sb, clientId) {
   if (!clientId) return [];
-  const { data } = await sb.from("client_entities").select("id,legal_name,vat_number,country,address,invoice_email").eq("client_id", clientId).order("legal_name");
+  const { data } = await sb.from("client_entities").select("id,legal_name,vat_number,country,city,address,invoice_email,economic_numbers")
+    .or(`client_id.eq.${clientId},also_clients.cs.{${clientId}}`).order("legal_name");
   return data ?? [];
 }

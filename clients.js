@@ -1,11 +1,14 @@
-// Clients: one list of client companies (per team, e.g. "Warner Brasil", grouped under "Warner Music Group"),
-// their people, their invoicing companies, and everything Stellar has done with them: campaigns in the OS,
-// campaigns in the Campaign Overview sheet, invoices and deck views (viewers matched by email).
-// Routes: #/clients, #/clients/<id>. Team only; the client-facing share function never reads these tables.
-import { confirmDialog } from "./dialog.js?v=20261125a";
-import { esc, flag, regionName } from "./report.js?v=20261125a";
-import { statusPill } from "./invoices.js?v=20261125a";
-import { statusLabel } from "./sheet-lists.js?v=20261125a";
+// Clients, company first (rebuilt 2026-11-25 from the e-conomic customer list).
+// The list is every company Stellar invoices (client_entities: e-conomic numbers, address, invoice email, VAT, terms,
+// portal), grouped by label group. Each company belongs to a client team (clients, e.g. "Warner Brasil"), which keeps
+// the sheet spellings, people and deck-view matching. Revenue per company = tracker campaigns linked to it + sheet rows
+// whose "Invoicing Entity" is its name or another spelling.
+// Routes: #/clients (companies), #/clients/co/<company id>, #/clients/<client id> (team). Team only; the client-facing
+// share function never reads these tables.
+import { confirmDialog } from "./dialog.js?v=20261125b";
+import { esc, flag, regionName } from "./report.js?v=20261125b";
+import { statusPill } from "./invoices.js?v=20261125b";
+import { statusLabel } from "./sheet-lists.js?v=20261125b";
 
 export const MARKETS = ["West", "Central", "East"];
 const TYPES = ["Major", "Indie", "Other"];
@@ -49,12 +52,15 @@ export async function loadClients(sb) {
   const clients = c.data, groups = g.data, byId = new Map(clients.map((x) => [x.id, x])), groupById = new Map(groups.map((x) => [x.id, x]));
   for (const x of clients) { x.people = []; x.entities = []; x.group = groupById.get(x.group_id) ?? null; }
   for (const x of p.data) byId.get(x.client_id)?.people.push(x);
-  for (const x of e.data) byId.get(x.client_id)?.entities.push(x);
+  for (const x of e.data) {
+    byId.get(x.client_id)?.entities.push(x);
+    for (const o of x.also_clients ?? []) byId.get(o)?.entities.push(x);
+  }
   // Names and other spellings → client; email → person/client; domains → client or group.
   const byName = new Map(), byEntity = new Map(), byEmail = new Map(), byDomain = new Map(), groupByDomain = new Map();
   for (const x of clients) {
     for (const n of [x.name, ...x.aliases]) if (!byName.has(low(n))) byName.set(low(n), x);
-    for (const en of x.entities) { const k = low(en.legal_name); byEntity.set(k, [...(byEntity.get(k) ?? []), x]); }
+    for (const en of x.entities) for (const nm of [en.legal_name, ...(en.aliases ?? [])]) { const k = low(nm); if (!(byEntity.get(k) ?? []).includes(x)) byEntity.set(k, [...(byEntity.get(k) ?? []), x]); }
     for (const d of x.email_domains) byDomain.set(low(d), x);
     for (const pp of x.people) if (pp.email) byEmail.set(low(pp.email), { client: x, person: pp });
   }
@@ -79,7 +85,15 @@ export async function loadClients(sb) {
     const gr = groupByDomain.get(d);
     return gr ? { client: null, person: null, group: gr } : null;
   };
-  return { clients, groups, byId, groupById, findByName, matchRow, matchEmail };
+  const companies = e.data, companyById = new Map(companies.map((x) => [x.id, x]));
+  // A sheet row's "Invoicing Entity" → the company (its name or another spelling; the row's client breaks ties).
+  const companyByName = new Map();
+  for (const x of companies) for (const nm of [x.legal_name, ...(x.aliases ?? [])]) { const k = low(nm); companyByName.set(k, [...(companyByName.get(k) ?? []), x]); }
+  const matchCompany = (entity, client = null) => {
+    const hits = companyByName.get(low(entity)) ?? [];
+    return hits.find((x) => client && (x.client_id === client.id || (x.also_clients ?? []).includes(client.id))) ?? hits[0] ?? null;
+  };
+  return { clients, groups, byId, groupById, findByName, matchRow, matchEmail, companies, companyById, matchCompany };
 }
 
 // The Campaign Overview sheet's rows, read from the last sync.
@@ -187,69 +201,161 @@ async function clientDialog(sb, data, client = null) {
   });
 }
 
-// ---------- #/clients ----------
-const st = { q: "", market: "", group: "" };
+// ---------- money per company (tracker campaigns + sheet rows), in USD ----------
+async function loadMoneyData(sb) {
+  const [camps, inv, fx, sheet] = await Promise.all([
+    sb.from("campaigns").select("id,client_id,client_entity_id,po_number,artist,song,status,start_date,budget,currency,invoiced"),
+    sb.from("invoice_requests").select("id,ref,campaign_id,client_entity_id,status,amount,currency,invoice_number,due_date,paid_at,requested_at"),
+    sb.from("fx_rates").select("currency,per_usd"),
+    loadSheetRows(sb),
+  ]);
+  const rate = Object.fromEntries((fx.data ?? []).map((r) => [r.currency, Number(r.per_usd)]));
+  const usd = (v, cur) => { const n = Number(v); if (!Number.isFinite(n)) return 0; const c = String(cur || "USD").toUpperCase().replace("JYP", "JPY"); return c === "USD" ? n : rate[c] ? n / rate[c] : 0; };
+  return { camps: camps.data ?? [], inv: inv.data ?? [], sheet, usd };
+}
+// Everything one company sold, invoiced and was paid (USD).
+function companyMoney(co, data, md) {
+  const os = md.camps.filter((c) => c.client_entity_id === co.id);
+  const dupe = inTracker(md.camps);
+  const fromSheet = md.sheet.filter((r) => r.entity && !dupe(r) && data.matchCompany(r.entity, data.matchRow(r.client, r.entity)) === co);
+  const inv = md.inv.filter((r) => r.client_entity_id === co.id && r.status !== "cancelled");
+  const sum = (xs, f) => xs.reduce((t, x) => t + f(x), 0);
+  const sold = sum(os, (c) => md.usd(c.budget, c.currency)) + sum(fromSheet, (r) => md.usd(r.price, r.currency));
+  const billed = inv.filter((r) => ["invoiced", "paid"].includes(r.status));
+  return { os, fromSheet, inv, n: os.length + fromSheet.length, sold,
+    invoiced: sum(billed, (r) => md.usd(r.amount, r.currency)), paid: sum(inv.filter((r) => r.status === "paid"), (r) => md.usd(r.amount, r.currency)),
+    open: sum(inv.filter((r) => r.status === "invoiced"), (r) => md.usd(r.amount, r.currency)),
+    sheetInvoiced: fromSheet.filter((r) => low(r.invoice) === "invoiced").length };
+}
+const usdShort = (v) => (v ? money(v, "USD") : "–");
+const nos = (co) => (co.economic_numbers ?? []).join(", ");
+const addrLines = (co) => [co.street, [co.zip, co.city].filter(Boolean).join(" "), co.country ? regionName(co.country) : ""].filter(Boolean);
+
+// ---------- add / edit a company ----------
+async function companyDialog(sb, data, co = null, { clientId = null } = {}) {
+  const clientOpts = [["", "Choose the client"], ...data.clients.map((x) => [x.id, x.group ? `${x.name} (${x.group.name})` : x.name]), ["__new", "New client…"]];
+  return formDialog({
+    title: co ? `Edit ${co.legal_name}` : "New company",
+    intro: co ? "" : "A company Stellar sends invoices to, as it's written in e-conomic. It belongs to a client (the team you work with).",
+    values: co ? { ...co, economic_numbers: nos(co), aliases: (co.aliases ?? []).join(", ") } : { client_id: clientId ?? "" },
+    fields: [
+      { k: "legal_name", label: "Legal name", required: true, wide: true, placeholder: "e.g. Warner Music Brasil Ltda." },
+      { k: "client_id", label: "Client", type: "select", options: clientOpts, onChange: (v, d) => { d.querySelector('[data-row="client_name"]').hidden = v !== "__new"; } },
+      { k: "client_name", label: "Name of the new client", placeholder: "e.g. Warner Brasil", hidden: true },
+      { k: "economic_numbers", label: "e-conomic customer number", placeholder: "e.g. 277", hint: "More than one? Separate with commas." },
+      { k: "vat_number", label: "VAT or company ID" },
+      { k: "street", label: "Street", wide: true }, { k: "zip", label: "Zip code" }, { k: "city", label: "City" },
+      { k: "country", label: "Country", type: "select", options: countryOpts },
+      { k: "invoice_email", label: "Send invoices to", type: "email" },
+      { k: "attention", label: "Attention" }, { k: "their_ref", label: "Their reference" },
+      { k: "phone", label: "Phone" },
+      { k: "payment_terms", label: "Payment terms (days)", type: "number", placeholder: "e.g. 30" }, { k: "currency", label: "Currency", placeholder: "e.g. USD" },
+      { k: "uses_portal", label: "Invoices are uploaded to their own portal", type: "check" }, { k: "portal_name", label: "Portal name", placeholder: "e.g. Coupa" },
+      { k: "aliases", label: "Other spellings", wide: true, hint: "How the Campaign Overview sheet writes it in Invoicing Entity. Rows with these names count for this company." },
+      { k: "notes", label: "Notes", type: "textarea" },
+    ],
+    onSubmit: async (v) => {
+      const cur = v.currency.toUpperCase();
+      if (cur && !/^[A-Z]{3}$/.test(cur)) throw new Error("Currency must be a three-letter code, such as EUR or USD.");
+      const terms = v.payment_terms === "" ? null : Number(v.payment_terms);
+      if (terms != null && !(Number.isInteger(terms) && terms >= 0 && terms <= 365)) throw new Error("Payment terms must be a number of days.");
+      const numbers = list(v.economic_numbers).map(Number);
+      if (numbers.some((n) => !Number.isInteger(n) || n <= 0)) throw new Error("e-conomic numbers are whole numbers, e.g. 277.");
+      if (v.invoice_email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.invoice_email)) throw new Error("That email doesn't look right.");
+      let client_id = v.client_id || null;
+      if (client_id === "__new") {
+        if (!v.client_name) throw new Error("Give the new client a name.");
+        const me = (await sb.auth.getUser()).data.user?.email ?? null;
+        const { data: nc, error } = await sb.from("clients").insert({ name: v.client_name, country: v.country || null, market: marketOf(v.country), created_by: me }).select("id").single();
+        if (error) throw error;
+        client_id = nc.id;
+      }
+      if (!client_id) throw new Error("Choose the client this company belongs to.");
+      const row = { legal_name: v.legal_name, client_id, economic_numbers: numbers, vat_number: v.vat_number || null, street: v.street || null, zip: v.zip || null, city: v.city || null,
+        country: v.country || null, address: [v.street, [v.zip, v.city].filter(Boolean).join(" ")].filter(Boolean).join(", ") || null, invoice_email: v.invoice_email ? low(v.invoice_email) : null,
+        attention: v.attention || null, their_ref: v.their_ref || null, phone: v.phone || null, payment_terms: terms, currency: cur || null, uses_portal: v.uses_portal,
+        portal_name: v.portal_name || null, aliases: list(v.aliases).filter((a) => low(a) !== low(v.legal_name)), notes: v.notes || null, updated_at: new Date().toISOString() };
+      if (co) { throwIf(await sb.from("client_entities").update(row).eq("id", co.id)); return { id: co.id }; }
+      const { data: ne, error } = await sb.from("client_entities").insert({ ...row, source: "added in the OS" }).select("id").single();
+      if (error) throw error;
+      return { id: ne.id };
+    },
+  });
+}
+// West = the Americas, East = Asia and Oceania, Central = the rest (same map as the vendor form).
+const WEST = new Set("AG AI AR AW BB BL BM BO BQ BR BS BZ CA CL CO CR CU CW DM DO EC FK GD GF GL GP GT GY HN HT JM KN KY LC MF MQ MS MX NI PA PE PM PR PY SR SV SX TC TT US UY VC VE VG VI".split(" "));
+const EAST = new Set("AF AS AU BD BN BT CC CK CN CX FJ FM GU HK ID IN JP KG KH KI KP KR KZ LA LK MH MM MN MO MP MV MY NC NF NP NR NU NZ PF PG PH PK PN PW SB SG TH TJ TK TL TM TO TV TW UZ VN VU WF WS".split(" "));
+const marketOf = (cc) => (!cc ? null : WEST.has(cc) ? "West" : EAST.has(cc) ? "East" : "Central");
+
+// ---------- #/clients : every company, grouped by label group ----------
+const st = { q: "", market: "", group: "", sort: "sold" };
 export async function renderClients(app, sb, ctx) {
+  if (ctx.parts[1] === "co" && ctx.parts[2]) return renderCompany(app, sb, ctx, ctx.parts[2]);
   if (ctx.parts[1]) return renderClient(app, sb, ctx, ctx.parts[1]);
   const { isCurrent, go, toast } = ctx;
   app.innerHTML = `<p class="muted pad">Loading clients…</p>`;
-  let data;
-  const [cl, sheet, camps, views] = await Promise.all([
-    loadClients(sb).catch((e) => ({ error: e })), loadSheetRows(sb),
-    sb.from("campaigns").select("id,client_id,po_number,artist,song"),
-    sb.from("deck_sessions").select("email").not("email", "is", null).limit(5000),
-  ]);
+  const [cl, md] = await Promise.all([loadClients(sb).catch((e) => ({ error: e })), loadMoneyData(sb)]);
   if (!isCurrent()) return;
   if (cl.error) { app.innerHTML = `<div class="panel"><p class="warn-note">${esc(cl.error.message)}</p></div>`; return; }
-  data = cl;
-  const dupe = inTracker(camps.data ?? []);
-  const count = {};
-  for (const c of camps.data ?? []) if (c.client_id) count[c.client_id] = (count[c.client_id] ?? 0) + 1;
-  const unmatched = new Map();
-  for (const r of sheet) {
-    if (dupe(r)) continue;
-    const m = data.matchRow(r.client, r.entity);
-    if (m) count[m.id] = (count[m.id] ?? 0) + 1;
-    else if (r.client) unmatched.set(r.client, (unmatched.get(r.client) ?? 0) + 1);
-  }
-  const viewsBy = {};
-  for (const v of views.data ?? []) { const m = data.matchEmail(v.email); if (m?.client) viewsBy[m.client.id] = (viewsBy[m.client.id] ?? 0) + 1; }
-  const groupsUsed = data.groups.filter((g) => data.clients.some((c) => c.group_id === g.id));
+  const data = cl;
+  for (const co of data.companies) { co.client = data.byId.get(co.client_id) ?? null; co.m = companyMoney(co, data, md); }
+  // Sheet clients nobody has a company or client for yet.
+  const unmatched = new Map(), dupe = inTracker(md.camps);
+  for (const r of md.sheet) if (!dupe(r) && !data.matchRow(r.client, r.entity) && r.client) unmatched.set(r.client, (unmatched.get(r.client) ?? 0) + 1);
+  const groupsUsed = data.groups.filter((g) => data.companies.some((co) => co.client?.group_id === g.id));
+  const total = (f) => data.companies.reduce((t, co) => t + f(co), 0);
 
   app.innerHTML = `
     <div class="page-head"><div><h1>Clients</h1>
-      <p class="muted small" style="margin:6px 0 0">The teams Stellar works with, their people and invoicing details. Campaigns pick their client from here.</p></div>
-      <button type="button" class="primary" id="cl-new">New client</button></div>
+      <p class="muted small" style="margin:6px 0 0">Every company Stellar invoices, as in e-conomic, grouped by label. Campaigns and invoice requests pick their company here.</p></div>
+      <button type="button" class="primary" id="cl-new">New company</button></div>
+    <div class="stats cl-stats">
+      <div class="stat"><div class="n">${data.companies.length}</div><div class="l">Companies</div></div>
+      <div class="stat"><div class="n">${data.companies.filter((co) => co.m.n).length}</div><div class="l">With campaigns</div></div>
+      <div class="stat"><div class="n">${usdShort(total((co) => co.m.sold))}</div><div class="l">Sold (USD)</div></div>
+      <div class="stat"><div class="n">${usdShort(total((co) => co.m.open))}</div><div class="l">Invoiced, not paid</div></div>
+    </div>
     ${unmatched.size ? `<details class="panel cl-unmatched"><summary><b>${[...unmatched.values()].reduce((a, b) => a + b, 0)} campaigns in the sheet</b> have a client name that isn't in the list yet</summary>
       <p class="small muted">Add the name as a new client, or open the right client and add it under <b>Other spellings</b>.</p>
       <ul class="cl-um">${[...unmatched].map(([n, k]) => `<li><span>${esc(n)} <span class="muted small">· ${k} campaign${k === 1 ? "" : "s"}</span></span><button type="button" class="link-btn" data-add="${esc(n)}">Add as client</button></li>`).join("")}</ul></details>` : ""}
     <div class="ov-bar cl-bar">
-      <label class="ov-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input id="cl-q" type="search" placeholder="Search clients, people or emails" aria-label="Search clients" value="${esc(st.q)}"></label>
+      <label class="ov-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><input id="cl-q" type="search" placeholder="Search company, e-conomic number, client, email, city" aria-label="Search companies" value="${esc(st.q)}"></label>
       <select id="cl-market" class="ov-pill" aria-label="Market"><option value="">All markets</option>${MARKETS.map((m) => `<option${st.market === m ? " selected" : ""}>${m}</option>`).join("")}</select>
-      ${groupsUsed.length ? `<select id="cl-group" class="ov-pill" aria-label="Group"><option value="">All groups</option>${groupsUsed.map((g) => `<option value="${esc(g.id)}"${st.group === g.id ? " selected" : ""}>${esc(g.name)}</option>`).join("")}<option value="none"${st.group === "none" ? " selected" : ""}>No group</option></select>` : ""}
+      <select id="cl-group" class="ov-pill" aria-label="Group"><option value="">All groups</option>${groupsUsed.map((g) => `<option value="${esc(g.id)}"${st.group === g.id ? " selected" : ""}>${esc(g.name)}</option>`).join("")}<option value="none"${st.group === "none" ? " selected" : ""}>Independent</option></select>
+      <select id="cl-sort" class="ov-pill" aria-label="Sort"><option value="sold"${st.sort === "sold" ? " selected" : ""}>Most sold first</option><option value="name"${st.sort === "name" ? " selected" : ""}>A–Z</option><option value="no"${st.sort === "no" ? " selected" : ""}>e-conomic number</option></select>
     </div>
     <div id="cl-list"></div>`;
 
+  const marketOfCo = (co) => co.client?.market ?? marketOf(co.country);
   const draw = () => {
     const q = low(st.q);
-    const rows = data.clients.filter((c) => (!st.market || c.market === st.market) && (!st.group || (st.group === "none" ? !c.group_id : c.group_id === st.group))
-      && (!q || [c.name, ...c.aliases, c.group?.name, ...c.people.flatMap((p) => [p.name, p.email]), ...c.entities.map((e) => e.legal_name)].some((x) => low(x).includes(q))));
-    document.getElementById("cl-list").innerHTML = rows.length ? `<div class="table-wrap"><table class="cl-table"><thead><tr><th>Client</th><th class="cl-m">Group</th><th>Market</th><th class="cl-m">Country</th><th class="cl-m">Type</th><th class="num cl-m">People</th><th class="num">Campaigns</th><th class="num">Deck views</th></tr></thead><tbody>
-      ${rows.map((c) => `<tr class="row-link" data-go="#/clients/${esc(c.id)}"><td><a href="#/clients/${esc(c.id)}"><b>${esc(c.name)}</b></a>${c.group ? `<div class="muted small cl-g">${esc(c.group.name)}</div>` : ""}${c.aliases.length ? `<div class="muted small">also ${esc(c.aliases.join(", "))}</div>` : ""}</td>
-        <td class="cl-m">${esc(c.group?.name ?? "–")}</td><td>${esc(c.market ?? "–")}</td><td class="cl-m">${place(c.country)}</td><td class="cl-m">${esc(c.label_type ?? "–")}</td>
-        <td class="num cl-m">${c.people.length}</td><td class="num">${count[c.id] ?? 0}</td><td class="num">${viewsBy[c.id] ?? 0}</td></tr>`).join("")}
-      </tbody></table></div>` : `<section class="panel"><p class="muted">No clients match.</p></section>`;
+    const rows = data.companies.filter((co) => (!st.market || marketOfCo(co) === st.market)
+      && (!st.group || (st.group === "none" ? !co.client?.group_id : co.client?.group_id === st.group))
+      && (!q || [co.legal_name, ...(co.aliases ?? []), nos(co), co.client?.name, co.client?.group?.name, co.invoice_email, co.vat_number, co.city, co.attention, co.their_ref, co.country && regionName(co.country)].some((x) => low(x).includes(q))));
+    const order = st.sort === "name" ? (a, b) => a.legal_name.localeCompare(b.legal_name)
+      : st.sort === "no" ? (a, b) => (a.economic_numbers?.[0] ?? 1e9) - (b.economic_numbers?.[0] ?? 1e9)
+      : (a, b) => b.m.sold - a.m.sold || b.m.n - a.m.n || a.legal_name.localeCompare(b.legal_name);
+    const sections = [...groupsUsed.map((g) => ({ name: g.name, rows: rows.filter((co) => co.client?.group_id === g.id) })), { name: "Independent", rows: rows.filter((co) => !co.client?.group_id) }]
+      .filter((x) => x.rows.length).sort((a, b) => (a.name === "Independent") - (b.name === "Independent") || b.rows.reduce((t, co) => t + co.m.sold, 0) - a.rows.reduce((t, co) => t + co.m.sold, 0));
+    document.getElementById("cl-list").innerHTML = sections.length ? sections.map((sec) => `
+      <section class="cl-grp"><h2>${esc(sec.name)} <span class="muted small">${sec.rows.length} compan${sec.rows.length === 1 ? "y" : "ies"}</span></h2>
+      <div class="table-wrap"><table class="cl-table"><thead><tr><th>Company</th><th class="cl-m">Client</th><th class="cl-m">Country</th><th>Market</th><th class="cl-m">Invoices to</th><th class="num">Campaigns</th><th class="num">Sold</th></tr></thead><tbody>
+      ${sec.rows.sort(order).map((co) => `<tr class="row-link" data-go="#/clients/co/${esc(co.id)}"><td><a href="#/clients/co/${esc(co.id)}"><b>${esc(co.legal_name)}</b></a>
+          <div class="muted small">${nos(co) ? `e-conomic ${esc(nos(co))}` : `<span class="inv-warn-text">Not in e-conomic yet</span>`}<span class="cl-g"> · ${esc(co.client?.name ?? "")}</span></div></td>
+        <td class="cl-m">${co.client ? esc(co.client.name) : "–"}</td><td class="cl-m">${place(co.country)}</td><td>${esc(marketOfCo(co) ?? "–")}</td>
+        <td class="cl-m cl-mail">${co.invoice_email ? esc(co.invoice_email) : "–"}</td><td class="num">${co.m.n || "–"}</td><td class="num">${usdShort(co.m.sold)}</td></tr>`).join("")}
+      </tbody></table></div></section>`).join("") : `<section class="panel"><p class="muted">No companies match.</p></section>`;
     document.querySelectorAll("#cl-list tr[data-go]").forEach((tr) => (tr.onclick = (e) => { if (!e.target.closest("a")) go(tr.dataset.go); }));
   };
   draw();
-  document.getElementById("cl-q").oninput = (e) => { st.q = e.target.value; draw(); };
+  let t; document.getElementById("cl-q").oninput = (e) => { st.q = e.target.value; clearTimeout(t); t = setTimeout(draw, 120); };
   document.getElementById("cl-market").onchange = (e) => { st.market = e.target.value; draw(); };
-  const gs = document.getElementById("cl-group"); if (gs) gs.onchange = (e) => { st.group = e.target.value; draw(); };
-  const create = async () => {
-    const r = await clientDialog(sb, data, null);
-    if (r?.id) { toast("Client added"); go(`#/clients/${r.id}`); }
+  document.getElementById("cl-group").onchange = (e) => { st.group = e.target.value; draw(); };
+  document.getElementById("cl-sort").onchange = (e) => { st.sort = e.target.value; draw(); };
+  document.getElementById("cl-new").onclick = async () => {
+    const r = await companyDialog(sb, data, null);
+    if (r?.id) { toast("Company added"); go(`#/clients/co/${r.id}`); }
   };
-  document.getElementById("cl-new").onclick = () => create();
   app.querySelectorAll("[data-add]").forEach((b) => (b.onclick = async () => {
     const name = b.dataset.add;
     const { data: nc, error } = await sb.from("clients").insert({ name, created_by: (await sb.auth.getUser()).data.user?.email ?? null }).select("id").single();
@@ -257,6 +363,104 @@ export async function renderClients(app, sb, ctx) {
     await sb.rpc("link_campaign_clients");
     toast(`${name} added: fill in its details`); go(`#/clients/${nc.id}`);
   }));
+}
+
+// ---------- #/clients/co/<id> : one company ----------
+async function renderCompany(app, sb, ctx, id) {
+  const { isCurrent, go, toast } = ctx;
+  app.innerHTML = `<p class="muted pad">Loading…</p>`;
+  const [cl, md] = await Promise.all([loadClients(sb).catch((e) => ({ error: e })), loadMoneyData(sb)]);
+  if (!isCurrent()) return;
+  if (cl.error) { app.innerHTML = `<div class="panel"><p class="warn-note">${esc(cl.error.message)}</p></div>`; return; }
+  const data = cl, co = data.companyById.get(id);
+  if (!co) { app.innerHTML = `<div class="panel"><p>This company doesn't exist any more. It may have been merged into another one.</p><p><a href="#/clients">All clients</a></p></div>`; return; }
+  const c = data.byId.get(co.client_id) ?? null, m = companyMoney(co, data, md);
+  const teams = [c, ...(co.also_clients ?? []).map((x) => data.byId.get(x))].filter(Boolean);
+  const siblings = data.companies.filter((x) => x !== co && (x.client_id === co.client_id || (x.also_clients ?? []).includes(co.client_id)));
+  const campName = Object.fromEntries(md.camps.map((x) => [x.id, `${x.artist}${x.song ? ` · ${x.song}` : ""}`]));
+  const invBy = {}; for (const r of md.inv) if (r.status !== "cancelled") (invBy[r.campaign_id] ??= []).push(r);
+  const invState = (cid) => { const rs = invBy[cid] ?? []; return !rs.length ? "Not invoiced" : rs.every((r) => r.status === "paid") ? "Paid" : rs.some((r) => ["invoiced", "paid"].includes(r.status)) ? "Invoiced" : "Requested"; };
+  const field = (label, val) => `<div><dt>${esc(label)}</dt><dd>${val || "–"}</dd></div>`;
+  const people = c ? c.people : [];
+
+  app.innerHTML = `
+    <div class="page-head cl-head"><div>
+      <p class="muted small" style="margin:0"><a href="#/clients">Clients</a>${c?.group ? ` · ${esc(c.group.name)}` : ""}</p>
+      <h1>${esc(co.legal_name)}</h1>
+      <div class="cl-chips">${teams.map((x) => `<a class="cl-chip" href="#/clients/${esc(x.id)}">${esc(x.name)}</a>`).join("")}${c?.market ? `<span class="cl-chip">${esc(c.market)}</span>` : ""}${co.country ? `<span class="cl-chip">${place(co.country)}</span>` : ""}${nos(co) ? `<span class="cl-chip">e-conomic ${esc(nos(co))}</span>` : `<span class="cl-chip cl-chip-warn">Not in e-conomic yet</span>`}</div>
+      ${(co.aliases ?? []).length ? `<p class="muted small" style="margin:8px 0 0">Also written as ${esc(co.aliases.join(", "))}</p>` : ""}
+    </div>
+    <div class="cl-actions"><button type="button" id="co-edit">Edit</button>
+      <details class="ro-more cl-more"><summary aria-label="More options" title="More options">⋯</summary>
+        <div class="ro-more-pop"><button type="button" id="co-merge">Merge into another company</button><button type="button" id="co-del" class="danger-lite">Delete company</button></div></details></div></div>
+    <div class="stats cl-stats">
+      <div class="stat"><div class="n">${m.n}</div><div class="l">Campaigns</div></div>
+      <div class="stat"><div class="n">${usdShort(m.sold)}</div><div class="l">Sold (USD)</div></div>
+      <div class="stat"><div class="n">${usdShort(m.invoiced)}</div><div class="l">Invoiced in the OS</div></div>
+      <div class="stat"><div class="n">${usdShort(m.open)}</div><div class="l">Waiting for payment</div></div>
+    </div>
+
+    <section class="cl-sec"><div class="cl-sec-head"><h2>Invoicing details</h2></div>
+      <div class="panel cl-facts"><dl>
+        ${field("Legal name", esc(co.legal_name))}
+        ${field("VAT or company ID", esc(co.vat_number ?? ""))}
+        ${field("Address", addrLines(co).map(esc).join("<br>"))}
+        ${field("Send invoices to", co.invoice_email ? `<a href="mailto:${esc(co.invoice_email)}">${esc(co.invoice_email)}</a>` : "")}
+        ${field("Attention", esc(co.attention ?? ""))}
+        ${field("Their reference", esc(co.their_ref ?? ""))}
+        ${field("Phone", esc(co.phone ?? ""))}
+        ${field("Payment terms", co.payment_terms != null ? `${co.payment_terms} days${co.currency ? ` · ${esc(co.currency)}` : ""}` : co.currency ? esc(co.currency) : "")}
+        ${field("Invoice portal", co.uses_portal ? `Upload to ${esc(co.portal_name || "their portal")}` : "Email")}
+        ${field("e-conomic customer", esc(nos(co)))}
+      </dl>${co.notes ? `<p class="cl-facts-note">${esc(co.notes).replace(/\n/g, "<br>")}</p>` : ""}
+      <p class="muted small cl-facts-src">${co.source === "vendor form" ? "Filled in by the client on the vendor form." : co.source === "e-conomic" ? "From the e-conomic customer list." : ""}${co.updated_at ? ` Last changed ${day(co.updated_at)}.` : ""}</p></div></section>
+
+    <section class="cl-sec"><div class="cl-sec-head"><h2>Campaigns</h2>${c ? `<a class="btn" href="#/new">New campaign</a>` : ""}</div>
+      ${m.n ? `<div class="table-wrap"><table><thead><tr><th>Artist</th><th>Song or project</th><th>Status</th><th>Start</th><th class="num">Price</th><th>Invoice</th><th>PO</th></tr></thead><tbody>
+        ${m.os.map((x) => `<tr class="row-link" data-go="#/c/${esc(x.id)}"><td><a href="#/c/${esc(x.id)}"><b>${esc(x.artist)}</b></a></td><td>${esc(x.song || "–")}</td><td>${esc(statusLabel(x.status) || "–")}</td><td>${day(x.start_date)}</td><td class="num">${money(x.budget, x.currency)}</td><td>${esc(invState(x.id))}</td><td>${esc(x.po_number || "–")}</td></tr>`).join("")}
+        ${m.fromSheet.map((r) => `<tr><td><b>${esc(r.artist || "–")}</b></td><td>${esc(r.song || "–")}</td><td>${esc(r.status || "–")}</td><td>${esc(r.start || "–")}</td><td class="num">${money(r.price, r.currency)}</td><td>${esc(r.invoice || "–")}</td><td>${esc(r.po || "–")} <span class="muted small">· sheet row ${esc(r.row)}</span></td></tr>`).join("")}
+      </tbody></table></div>` : `<p class="muted small">No campaigns invoiced through ${esc(co.legal_name)} yet. Campaigns count here when their invoicing company is this one (or the sheet writes it one of its spellings).</p>`}</section>
+
+    <section class="cl-sec"><div class="cl-sec-head"><h2>Invoices</h2></div>
+      ${m.inv.length ? `<div class="table-wrap"><table><thead><tr><th>Request</th><th>Campaign</th><th class="num">Amount</th><th>Status</th><th>Invoice</th><th>Due</th></tr></thead><tbody>
+        ${m.inv.map((r) => `<tr class="row-link" data-go="#/invoices"><td>REQ-${String(r.ref).padStart(4, "0")}</td><td>${esc(campName[r.campaign_id] ?? "–")}</td><td class="num">${money(r.amount, r.currency)}</td><td>${statusPill(r)}</td><td>${esc(r.invoice_number || "–")}</td><td>${day(r.due_date)}</td></tr>`).join("")}
+      </tbody></table></div>` : `<p class="muted small">No invoice requests for this company in the OS yet.${m.sheetInvoiced ? ` The sheet marks ${m.sheetInvoiced} of its campaigns as invoiced.` : ""}</p>`}</section>
+
+    <section class="cl-sec"><div class="cl-sec-head"><h2>People at ${esc(c?.name ?? co.legal_name)}</h2>${c ? `<a class="btn" href="#/clients/${esc(c.id)}">Manage people</a>` : ""}</div>
+      ${people.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th></tr></thead><tbody>
+        ${people.map((p) => `<tr><td><b>${esc(p.name || "–")}</b></td><td>${p.email ? `<a href="mailto:${esc(p.email)}">${esc(p.email)}</a>` : "–"}</td><td>${esc(p.role || "–")}</td></tr>`).join("")}
+      </tbody></table></div>` : `<p class="muted small">No people saved yet.</p>`}</section>
+    ${siblings.length ? `<section class="cl-sec"><h2>Other companies of ${esc(c?.name ?? "this client")}</h2><p class="cl-sibs">${siblings.map((x) => `<a class="cl-chip" href="#/clients/co/${esc(x.id)}">${esc(x.legal_name)}${x.city ? ` · ${esc(x.city)}` : ""}</a>`).join("")}</p></section>` : ""}`;
+
+  const reload = () => renderCompany(app, sb, ctx, id);
+  app.querySelectorAll("tr[data-go]").forEach((tr) => (tr.onclick = (e) => { if (!e.target.closest("a,button")) go(tr.dataset.go); }));
+  document.getElementById("co-edit").onclick = async () => { if (await companyDialog(sb, data, co)) { toast("Saved"); reload(); } };
+  document.getElementById("co-merge").onclick = async () => {
+    app.querySelector(".cl-more").open = false;
+    const others = data.companies.filter((x) => x !== co).sort((a, b) => a.legal_name.localeCompare(b.legal_name));
+    const v = await formDialog({
+      title: `Merge ${co.legal_name} into…`, submit: "Continue",
+      intro: `Pick the company to keep. Its campaigns, invoice requests and e-conomic numbers move there, and "${esc(co.legal_name)}" becomes one of its other spellings.`,
+      fields: [{ k: "into", label: "Company to keep", type: "select", wide: true, options: [["", "Choose a company"], ...others.map((x) => [x.id, `${x.legal_name}${nos(x) ? ` · e-conomic ${nos(x)}` : ""}${x.city ? ` · ${x.city}` : ""}`])] }],
+      onSubmit: async (val) => { if (!val.into) throw new Error("Choose a company."); },
+    });
+    if (!v?.into) return;
+    const into = data.companyById.get(v.into);
+    if (!(await confirmDialog({ title: `Merge into ${into.legal_name}?`, body: `${esc(co.legal_name)} disappears from the list and everything moves to ${esc(into.legal_name)}. This can't be undone.`, confirm: "Merge" }))) return;
+    const { error } = await sb.rpc("merge_client_entities", { p_from: co.id, p_into: into.id });
+    if (error) return toast(error.message);
+    toast(`Merged into ${into.legal_name}`); go(`#/clients/co/${into.id}`);
+  };
+  document.getElementById("co-del").onclick = async () => {
+    app.querySelector(".cl-more").open = false;
+    if (m.os.length || m.inv.length) {
+      return toast("This company has campaigns or invoices, so it can't be deleted. If it's a duplicate, use Merge into another company.");
+    }
+    if (!(await confirmDialog({ title: `Delete ${co.legal_name}?`, body: "It's removed from Clients. e-conomic isn't changed.", confirm: "Delete" }))) return;
+    const { error } = await sb.from("client_entities").delete().eq("id", co.id);
+    if (error) return toast(error.message);
+    toast("Company deleted"); go("#/clients");
+  };
 }
 
 // ---------- #/clients/<id> ----------
@@ -311,10 +515,9 @@ async function renderClient(app, sb, ctx, id) {
       </tbody></table></div>` : `<p class="muted small">No people yet.</p>`}</section>
 
     <section class="cl-sec"><div class="cl-sec-head"><h2>Invoicing companies</h2><button type="button" id="cl-adde">Add company</button></div>
-      ${c.entities.length ? `<div class="table-wrap"><table><thead><tr><th>Legal name</th><th>Country</th><th>VAT number</th><th>Invoice email</th><th>Terms</th><th></th></tr></thead><tbody>
-        ${c.entities.map((e) => `<tr><td><b>${esc(e.legal_name)}</b>${e.address ? `<div class="muted small cl-addr">${esc(e.address)}</div>` : ""}${e.uses_portal ? `<div class="small">Upload to ${esc(e.portal_name || "their portal")}</div>` : ""}${e.notes ? `<div class="muted small">${esc(e.notes)}</div>` : ""}</td>
-          <td>${place(e.country)}</td><td>${esc(e.vat_number || "–")}</td><td>${e.invoice_email ? `<a href="mailto:${esc(e.invoice_email)}">${esc(e.invoice_email)}</a>` : "–"}</td><td>${e.payment_terms != null ? `${e.payment_terms} days` : "–"}${e.currency ? `<div class="muted small">${esc(e.currency)}</div>` : ""}</td>
-          <td class="cl-row-act"><button type="button" class="link-btn" data-edite="${esc(e.id)}">Edit</button> <button type="button" class="link-btn danger" data-dele="${esc(e.id)}">Remove</button></td></tr>`).join("")}
+      ${c.entities.length ? `<div class="table-wrap"><table><thead><tr><th>Legal name</th><th>Country</th><th>VAT number</th><th>Invoice email</th><th>Terms</th></tr></thead><tbody>
+        ${c.entities.map((e) => `<tr class="row-link" data-go="#/clients/co/${esc(e.id)}"><td><a href="#/clients/co/${esc(e.id)}"><b>${esc(e.legal_name)}</b></a><div class="muted small">${(e.economic_numbers ?? []).length ? `e-conomic ${esc(e.economic_numbers.join(", "))}` : "Not in e-conomic yet"}${e.client_id !== c.id ? " · shared with another team" : ""}</div>${e.address ? `<div class="muted small cl-addr">${esc(e.address)}</div>` : ""}${e.uses_portal ? `<div class="small">Upload to ${esc(e.portal_name || "their portal")}</div>` : ""}</td>
+          <td>${place(e.country)}</td><td>${esc(e.vat_number || "–")}</td><td>${e.invoice_email ? `<a href="mailto:${esc(e.invoice_email)}">${esc(e.invoice_email)}</a>` : "–"}</td><td>${e.payment_terms != null ? `${e.payment_terms} days` : "–"}${e.currency ? `<div class="muted small">${esc(e.currency)}</div>` : ""}</td></tr>`).join("")}
       </tbody></table></div>` : `<p class="muted small">No invoicing company yet.</p>`}</section>
 
     <section class="cl-sec"><div class="cl-sec-head"><h2>Campaigns</h2><a class="btn" href="#/new">New campaign</a></div>
@@ -350,38 +553,13 @@ async function renderClient(app, sb, ctx, id) {
       throwIf(p ? await sb.from("client_contacts").update(row).eq("id", p.id) : await sb.from("client_contacts").insert({ ...row, client_id: c.id }));
     },
   });
-  const entityDialog = (e = null) => formDialog({
-    title: e ? "Edit invoicing company" : "Add invoicing company", values: e ?? { country: c.country ?? "" },
-    intro: e ? "" : "The legal company Stellar sends the invoice to.",
-    fields: [{ k: "legal_name", label: "Legal name", required: true, wide: true }, { k: "country", label: "Country", type: "select", options: countryOpts },
-      { k: "vat_number", label: "VAT or tax number" }, { k: "address", label: "Address", type: "textarea" }, { k: "invoice_email", label: "Send invoices to", type: "email" },
-      { k: "payment_terms", label: "Payment terms (days)", type: "number", placeholder: "e.g. 30" }, { k: "currency", label: "Currency", placeholder: "e.g. USD" },
-      { k: "uses_portal", label: "Invoices are uploaded to their own portal", type: "check" }, { k: "portal_name", label: "Portal name", placeholder: "e.g. Coupa" }, { k: "notes", label: "Notes", type: "textarea" }],
-    onSubmit: async (v) => {
-      const cur = v.currency.toUpperCase();
-      if (cur && !/^[A-Z]{3}$/.test(cur)) throw new Error("Currency must be a three-letter code, such as EUR or USD.");
-      const terms = v.payment_terms === "" ? null : Number(v.payment_terms);
-      if (terms != null && !(Number.isInteger(terms) && terms >= 0 && terms <= 365)) throw new Error("Payment terms must be a number of days.");
-      const row = { legal_name: v.legal_name, country: v.country || null, vat_number: v.vat_number || null, address: v.address || null, invoice_email: v.invoice_email || null,
-        payment_terms: terms, currency: cur || null, uses_portal: v.uses_portal, portal_name: v.portal_name || null, notes: v.notes || null };
-      throwIf(e ? await sb.from("client_entities").update(row).eq("id", e.id) : await sb.from("client_entities").insert({ ...row, client_id: c.id }));
-    },
-  });
   document.getElementById("cl-addp").onclick = async () => { if (await personDialog()) reload(); };
-  document.getElementById("cl-adde").onclick = async () => { if (await entityDialog()) reload(); };
+  document.getElementById("cl-adde").onclick = async () => { const r = await companyDialog(sb, data, null, { clientId: c.id }); if (r?.id) { toast("Company added"); reload(); } };
   app.querySelectorAll("[data-editp]").forEach((b) => (b.onclick = async () => { if (await personDialog(c.people.find((p) => p.id === b.dataset.editp))) reload(); }));
-  app.querySelectorAll("[data-edite]").forEach((b) => (b.onclick = async () => { if (await entityDialog(c.entities.find((e) => e.id === b.dataset.edite))) reload(); }));
   app.querySelectorAll("[data-delp]").forEach((b) => (b.onclick = async () => {
     const p = c.people.find((x) => x.id === b.dataset.delp);
     if (!(await confirmDialog({ title: `Remove ${p.name || p.email}?`, body: `They're removed from ${esc(c.name)}'s people. Campaigns keep the contact details they already have.`, confirm: "Remove" }))) return;
     const { error } = await sb.from("client_contacts").delete().eq("id", p.id);
-    if (error) return toast(error.message);
-    reload();
-  }));
-  app.querySelectorAll("[data-dele]").forEach((b) => (b.onclick = async () => {
-    const e = c.entities.find((x) => x.id === b.dataset.dele);
-    if (!(await confirmDialog({ title: `Remove ${e.legal_name}?`, body: "Campaigns and invoices keep the company name they already have.", confirm: "Remove" }))) return;
-    const { error } = await sb.from("client_entities").delete().eq("id", e.id);
     if (error) return toast(error.message);
     reload();
   }));

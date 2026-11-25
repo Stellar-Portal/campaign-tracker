@@ -1,7 +1,7 @@
 // Payouts: the PayPal payout sheet, built into each campaign (team only; clients never see it).
 // "Pay with PayPal" sends the ticked "Posted · to pay" creators as one PayPal batch through the paypal-payouts function;
 // every payment carries the campaign's PO number, and payout_payments keeps where each one stands.
-import { confirmDialog } from "./dialog.js?v=20261125a";
+import { confirmDialog } from "./dialog.js?v=20261125b";
 // A campaign has sections (a set of deliverables, e.g. "20x Edits" at $50 each) and one row per creator:
 // who sources and pays them, videos, price, status (contacted → waiting for draft → drafted →
 // waiting to post → posted (to pay) → paid) and their posting progress, read from the tracker's posts.
@@ -21,6 +21,32 @@ export async function copyDetailsLink(sb, creatorId, toast) {
   const url = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}payment-details.html#t=${data}`;
   try { await navigator.clipboard.writeText(url); toast?.("Link copied. Send it to the creator: it works once, for 30 days."); }
   catch { toast?.(url); }
+}
+// One personal link per creator still missing payment details, as "@handle: link" lines to paste to them.
+async function bulkDetailsLinks(sb, people, toast) {
+  if (!people.length) return;
+  const ok = await confirmDialog({ title: `Make links for ${people.length} creator${people.length === 1 ? "" : "s"}?`, danger: false, confirm: "Make links",
+    body: `Each creator gets their own one-time link to fill in their PayPal details (30 days). An older unused link for the same creator stops working.` });
+  if (!ok) return;
+  const base = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}payment-details.html#t=`, lines = [], failed = [];
+  for (const p of people) {
+    const { data, error } = await sb.rpc("make_creator_details_link", { p_creator: p.id });
+    if (error || !data) failed.push(p.handle); else lines.push(`${p.handle}: ${base}${data}`);
+  }
+  const text = lines.join("\n");
+  let copied = false;
+  try { await navigator.clipboard.writeText(text); copied = true; } catch { /* shown below */ }
+  const d = document.createElement("dialog");
+  d.className = "po-dialog";
+  d.innerHTML = `<form method="dialog"><h2>${lines.length} link${lines.length === 1 ? "" : "s"} ready</h2>
+    <p class="muted small" style="margin:0 0 10px">${copied ? "Copied. " : ""}Send each creator their own line. Their details land on their roster card as soon as they fill it in.${failed.length ? ` Couldn't make a link for ${esc(failed.join(", "))}.` : ""}</p>
+    <textarea readonly rows="${Math.min(10, lines.length + 1)}" class="pp-links" aria-label="Links">${esc(text)}</textarea>
+    <div class="actions"><button type="button" class="primary" id="bl-copy">Copy again</button><button type="submit" value="close">Close</button></div></form>`;
+  document.body.append(d);
+  d.querySelector("#bl-copy").onclick = async () => { try { await navigator.clipboard.writeText(text); toast?.("Copied"); } catch { d.querySelector("textarea").select(); } };
+  d.addEventListener("click", (e) => { if (e.target === d) d.close(); });
+  d.onclose = () => d.remove();
+  d.showModal();
 }
 const SEND_ICON = `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h11M10 5l5 5-5 5"/></svg>`;
 const dayLabel = (d) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "");
@@ -108,6 +134,16 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
   const payable = (r) => r.status === "posted" && rowTotal(r) > 0 && !onTheWay(r);
   // The roster card wins (it's what the creator last told us), then whatever was used on this sheet before.
   const emailOf = (r) => (r.creator_id && creatorPay.get(r.creator_id)?.paypal_email) || r.paypal_email || "";
+  // Creators on this sheet (not paid yet) with no PayPal email anywhere and no Wise details.
+  const missingDetails = () => {
+    const seen = new Map();
+    for (const r of rows) {
+      const cp = creatorPay.get(r.creator_id);
+      if (!r.creator_id || r.status === "paid" || emailOf(r) || (cp?.payout_method === "wise" && cp?.wise_email)) continue;
+      if (!seen.has(r.creator_id)) seen.set(r.creator_id, { id: r.creator_id, handle: `@${handleKey(r.handle)}` });
+    }
+    return [...seen.values()];
+  };
   const PAY_LABEL = { queued: "Sending to PayPal…", pending: "Sending to PayPal…", unclaimed: "Waiting for them to claim it", onhold: "On hold at PayPal",
     success: "Paid through PayPal", failed: "PayPal payment failed", returned: "Money came back", blocked: "Blocked by PayPal", refunded: "Refunded",
     reversed: "Reversed", denied: "Refused by PayPal", canceled: "Taken back" };
@@ -271,6 +307,7 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
         </div>
         <span class="po-tools-r">
           ${rows.some(payable) ? `<button type="button" class="primary small-btn pp-btn" id="pp-open">${SEND_ICON}Pay with PayPal${st.sel.size ? ` · ${st.sel.size}` : ""}</button>` : ""}
+          ${missingDetails().length ? `<button type="button" class="link-btn" id="po-links" title="One personal link per creator who hasn't given their PayPal details">Links for missing details · ${missingDetails().length}</button>` : ""}
           <button type="button" class="link-btn" id="po-paste">Paste from sheet</button>
           <button type="button" class="link-btn" id="po-newsec">+ New section</button>
         </span>
@@ -358,6 +395,7 @@ export async function renderCampaignPayouts(el, sb, { campaign, toast, isCurrent
   function bind() {
     bindCap();
     el.querySelector("#pp-open")?.addEventListener("click", () => payDialog());
+    el.querySelector("#po-links")?.addEventListener("click", () => bulkDetailsLinks(sb, missingDetails(), toast));
     el.querySelectorAll("[data-ppcancel]").forEach((b) => (b.onclick = () => takeBack(b.dataset.ppcancel)));
     el.querySelectorAll("[data-filter]").forEach((b) => (b.onclick = () => { st.filter = b.dataset.filter; draw(); }));
     el.querySelector("#po-newsec").onclick = async () => {
