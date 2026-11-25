@@ -1,7 +1,8 @@
 // Invoicing: campaign managers request an invoice from the campaign page; finance works through the
 // requests here, sends the invoice from e-conomic and records it; payment is recorded when the label pays.
 // Statuses: requested → invoiced → paid (or returned to the requester / cancelled).
-import { confirmDialog } from "./dialog.js?v=20261124d";
+import { confirmDialog } from "./dialog.js?v=20261125a";
+import { entitiesOf, loadMoney, flagsFor } from "./money.js?v=20261125a";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const money = (v, cur) => {
@@ -27,10 +28,11 @@ async function me(sb) {
 
 // ---------- the request form (from a campaign page) ----------
 export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
-  if (c.invoicing_entity === undefined) {
-    const { data } = await sb.from("campaigns").select("invoicing_entity,client").eq("id", c.id).maybeSingle();
-    c = { ...c, invoicing_entity: data?.invoicing_entity ?? null, client: c.client ?? data?.client };
+  if (c.invoicing_entity === undefined || c.client_entity_id === undefined) {
+    const { data } = await sb.from("campaigns").select("invoicing_entity,client,client_id,client_entity_id").eq("id", c.id).maybeSingle();
+    c = { ...c, invoicing_entity: data?.invoicing_entity ?? null, client: c.client ?? data?.client, client_id: data?.client_id ?? null, client_entity_id: data?.client_entity_id ?? null };
   }
+  const ents = await entitiesOf(sb, c.client_id);
   const [mk, open] = await Promise.all([
     sb.from("campaign_markets").select("market,share_percent,amount").eq("campaign_id", c.id),
     sb.from("invoice_requests").select("amount,status").eq("campaign_id", c.id).in("status", ["requested", "returned", "invoiced", "paid"]),
@@ -47,7 +49,8 @@ export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
     ${already ? `<p class="small inv-warn">${money(already, c.currency)} of this campaign's ${money(budget, c.currency)} budget is already requested or invoiced.</p>` : ""}
     <div class="inv-form">
       <label>Client <input name="client" value="${esc(c.client ?? "")}" required></label>
-      <label>Invoicing entity <input name="entity" value="${esc(c.invoicing_entity ?? "")}" placeholder="Company name on the invoice"></label>
+      ${ents.length ? `<label>Invoicing company <select name="entity_id"><option value="">Not sure yet: pick it later, or send the vendor form</option>${ents.map((e) => `<option value="${e.id}"${e.id === c.client_entity_id ? " selected" : ""}>${esc(e.legal_name)}${e.country ? ` (${esc(e.country)})` : ""}</option>`).join("")}</select></label>`
+        : `<label>Invoicing company <input name="entity" value="${esc(c.invoicing_entity ?? "")}" placeholder="Not sure? Leave empty and send the vendor form"></label>`}
       <label>PO number <input name="po" value="${esc(c.po_number ?? "")}" placeholder="If the client gave one"></label>
       <label>Amount <span class="inv-amt"><input name="amount" inputmode="decimal" value="${left ?? ""}" required><select name="cur">${["USD", "EUR", "GBP", "DKK", "SEK", "JPY", "AUD", "SGD", "BRL", "MXN"].map((x) => `<option${x === (c.currency || "USD") ? " selected" : ""}>${x}</option>`).join("")}</select></span></label>
       <label class="inv-check"><input type="checkbox" name="portal"> The client uses its own supplier portal</label>
@@ -70,14 +73,18 @@ export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
     const ls = lines.map((l, i) => ({ market: l.market, amount: num(d.querySelector(`[data-line="${i}"]`)?.value) })).filter((l) => l.amount);
     if (ls.length > 1 && Math.abs(ls.reduce((t, l) => t + l.amount, 0) - amount) > 0.5) { err.hidden = false; err.textContent = `The market lines add up to ${money(ls.reduce((t, l) => t + l.amount, 0), f.cur.value)}, not ${money(amount, f.cur.value)}.`; return; }
     const btn = f.querySelector("[value=ok]"); btn.disabled = true;
+    const ent = f.entity_id ? ents.find((x) => x.id === f.entity_id.value) ?? null : null;
     const { error } = await sb.from("invoice_requests").insert({
       campaign_id: c.id, amount, currency: f.cur.value, po_number: f.po.value.trim() || null,
-      client: f.client.value.trim() || null, invoicing_entity: f.entity.value.trim() || null, lines: ls.length > 1 ? ls : [],
+      client: f.client.value.trim() || null, client_entity_id: ent?.id ?? null,
+      invoicing_entity: ent ? ent.legal_name : (f.entity?.value.trim() || null), lines: ls.length > 1 ? ls : [],
       uses_portal: f.portal.checked, portal_name: f.portal.checked ? f.portalname.value.trim() || null : null, notes: f.notes.value.trim() || null,
     });
     btn.disabled = false;
     if (error) { err.hidden = false; err.textContent = error.message; return; }
-    d.close(); d.remove(); toast("Invoice request sent to finance"); onDone?.();
+    // The campaign learns the company too (it syncs to the sheet's Invoicing Entity column).
+    if (ent && !c.client_entity_id) await sb.from("campaigns").update({ client_entity_id: ent.id }).eq("id", c.id);
+    d.close(); d.remove(); toast(ent || f.entity?.value.trim() ? "Invoice request sent to finance" : "Invoice request sent. Pick the invoicing company when you know it (or send the vendor form)."); onDone?.();
   };
   d.onclose = () => d.remove();
   d.showModal();
@@ -86,14 +93,24 @@ export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
 // ---------- the Invoices page ----------
 export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
   app.innerHTML = `<p class="muted pad">Loading invoices…</p>`;
-  const [who, reqRes, campRes] = await Promise.all([
+  const [who, reqRes, campRes, entRes, moneyRes] = await Promise.all([
     me(sb),
     sb.from("invoice_requests").select("*").order("requested_at", { ascending: false }),
-    sb.from("campaigns").select("id,artist,song,client_market"),
+    sb.from("campaigns").select("id,artist,song,client_market,client_id,client_entity_id"),
+    sb.from("client_entities").select("id,client_id,legal_name,vat_number,address,country,invoice_email"),
+    loadMoney(sb),
   ]);
   if (!isCurrent()) return;
   if (reqRes.error) { app.innerHTML = `<p class="error">${esc(reqRes.error.message)}</p>`; return; }
   const camps = Object.fromEntries((campRes.data ?? []).map((c) => [c.id, c]));
+  const ents = entRes.data ?? [], entOf = (id) => ents.find((e) => e.id === id) ?? null;
+  // Every campaign's open money flags (money.js), finance's first.
+  const attention = moneyRes.campaigns.flatMap((c) => flagsFor(c, moneyRes.invoices[c.id], moneyRes.vendors[c.id]).map((f) => ({ ...f, c })))
+    .sort((a, b) => (a.who === b.who ? 0 : a.who === (who.finance ? "finance" : "dri") ? -1 : 1));
+  const attentionHtml = () => !attention.length ? "" : `<details class="panel inv-att"${attention.some((a) => a.who === "finance") && who.finance ? " open" : ""}>
+    <summary><b>Needs attention</b> <span class="inv-count">${attention.length}</span><span class="muted small"> · flags the OS raises by itself; they clear when the numbers line up</span></summary>
+    <div class="inv-att-list">${attention.map((a) => `<a href="#/c/${esc(a.c.id)}" class="inv-att-row"><span class="mf-who ${a.who}">${a.who === "finance" ? "Finance" : "DRI"}</span><b>${esc(a.c.artist ?? "Untitled")}${a.c.song ? ` – ${esc(a.c.song)}` : ""}</b><span>${a.text}</span><span class="muted small">${esc(a.c.comms_owner ?? "")}</span></a>`).join("")}</div>
+  </details>`;
   const rows = reqRes.data;
   const tabs = [["review", "To review"], ["invoiced", "Invoiced"], ["paid", "Paid"], ["mine", "My requests"], ["all", "All"]];
   const st = { tab: (() => { try { return localStorage.getItem("inv-tab") || (who.finance ? "review" : "mine"); } catch { return who.finance ? "review" : "mine"; } })(), sel: null };
@@ -116,6 +133,7 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
         <div class="an-hero-card"><div class="l">Outstanding</div><div class="n inv-n">${sum(out)}</div><div class="d">${out.length} invoice${out.length === 1 ? "" : "s"} awaiting payment</div></div>
         <div class="an-hero-card${late.length ? " inv-late" : ""}"><div class="l">Overdue</div><div class="n">${late.length}</div><div class="d">${late.length ? `${sum(late)} past the due date` : "Nothing overdue"}</div></div>
       </div>
+      ${attentionHtml()}
       <div class="tabs an-tabs" role="tablist">${tabs.map(([k, l]) => `<button type="button" role="tab" data-itab="${k}" aria-selected="${st.tab === k}">${l}${k === "review" && review.length ? ` <span class="inv-count">${review.length}</span>` : ""}</button>`).join("")}</div>
       ${!list.length ? `<div class="panel" style="margin-top:18px"><p class="muted" style="margin:0">${st.tab === "review" ? "No requests waiting. Campaign managers request invoices from a campaign's page (<b>Request invoice</b>)." : "Nothing here yet."}</p></div>` : `
       <div class="inv-split">
@@ -139,7 +157,13 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
       <div class="inv-d-head"><div><span class="muted small">${refOf(r)}</span><h2>${esc(r.client || "No client")}</h2><a href="#/c/${esc(r.campaign_id)}" class="small">${esc(name(r))}</a></div>${statusPill(r)}</div>
       <div class="inv-amount">${money(r.amount, r.currency)}</div>
       <dl class="inv-dl">
-        ${field("Invoicing entity", esc(r.invoicing_entity))}
+        ${(() => {
+          const e = entOf(r.client_entity_id);
+          if (e) return field("Invoicing company", `${esc(e.legal_name)}${e.vat_number ? `<br><span class="muted small">ID ${esc(e.vat_number)}</span>` : ""}${e.address ? `<br><span class="muted small">${esc(e.address)}</span>` : ""}${e.invoice_email ? `<br><span class="muted small">${esc(e.invoice_email)}</span>` : ""}`);
+          const opts = ents.filter((x) => x.client_id && x.client_id === c?.client_id);
+          if ((canFin || mine) && r.status !== "cancelled" && opts.length) return field("Invoicing company", `<select id="inv-ent" aria-label="Invoicing company"><option value="">Pick the company${r.invoicing_entity ? ` (they wrote: ${esc(r.invoicing_entity)})` : ""}</option>${opts.map((x) => `<option value="${x.id}">${esc(x.legal_name)}${x.country ? ` (${esc(x.country)})` : ""}</option>`).join("")}</select>`);
+          return field("Invoicing company", r.invoicing_entity ? esc(r.invoicing_entity) : `<span class="inv-warn">Not known yet: send the vendor form from the campaign page</span>`);
+        })()}
         ${field("PO number", esc(r.po_number))}
         ${field("Client market", esc((c?.client_market ?? "").replace(/^Stellar /, "")))}
         ${field("Delivery", r.uses_portal ? `Supplier portal${r.portal_name ? `: ${esc(r.portal_name)}` : ""}` : "Email from e-conomic")}
@@ -182,6 +206,14 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
   }
 
   function bindDetail(r) {
+    app.querySelector("#inv-ent")?.addEventListener("change", async (e) => {
+      const ent = entOf(e.target.value);
+      if (!ent) return;
+      if (await save(r, { client_entity_id: ent.id, invoicing_entity: ent.legal_name }, `Invoicing company: ${ent.legal_name}`)) {
+        const c = camps[r.campaign_id];
+        if (c && !c.client_entity_id) { await sb.from("campaigns").update({ client_entity_id: ent.id }).eq("id", c.id); c.client_entity_id = ent.id; }
+      }
+    });
     const mark = app.querySelector("#inv-mark");
     if (mark) {
       // The due date comes from the invoice in e-conomic; it starts at 30 days after the invoice date.

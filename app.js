@@ -1,18 +1,19 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261124d";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261124d";
-import { renderRoster } from "./roster.js?v=20261124d";
-import { renderDiscover } from "./discover.js?v=20261124d";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261124d";
-import { renderTrending } from "./trending.js?v=20261124d";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261124d";
-import { renderDecks, figmaReminder } from "./decks.js?v=20261124d";
-import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261124d";
-import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261124d";
-import { confirmDialog } from "./dialog.js?v=20261124d";
-import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261124d";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261124d";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261124d";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261125a";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261125a";
+import { renderRoster } from "./roster.js?v=20261125a";
+import { renderDiscover } from "./discover.js?v=20261125a";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261125a";
+import { renderTrending } from "./trending.js?v=20261125a";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261125a";
+import { mountMoneyFlags, vendorFormDialog } from "./money.js?v=20261125a";
+import { renderDecks, figmaReminder } from "./decks.js?v=20261125a";
+import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261125a";
+import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261125a";
+import { confirmDialog } from "./dialog.js?v=20261125a";
+import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261125a";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261125a";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261125a";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -1510,6 +1511,7 @@ async function renderCampaign(token, id, tab = "report") {
       <button type="button" id="req-inv">Request invoice</button>
       <details class="camp-menu"><summary aria-label="More actions">⋯</summary><div>
         <a href="#/c/${esc(id)}/edit">Edit campaign</a>
+        <button type="button" id="vendor-form">Vendor form…</button>
         <button type="button" id="del-camp" class="danger">Delete campaign…</button>
       </div></details>`,
     afterHero: `
@@ -1523,6 +1525,7 @@ async function renderCampaign(token, id, tab = "report") {
         </dl>
         ${sheetLine(sync.data, c)}
       </section>
+      <div id="mflags"></div>
       <div class="ws-switch" role="tablist" aria-label="Campaign views">
         <button type="button" role="tab" data-ctab="report" aria-selected="${tab === "report"}">
           <span class="ws-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19h16M7 16V10M12 16V5M17 16v-4"/></svg></span>
@@ -1597,7 +1600,12 @@ async function renderCampaign(token, id, tab = "report") {
         box.addEventListener("click", (e) => { if (e.target.closest("a,button")) menu.open = false; });
         window.addEventListener("scroll", place, { passive: true });
       }
-      document.getElementById("req-inv").onclick = () => requestInvoiceDialog(sb, c, { toast, onDone: () => renderCampaign(newToken(), id, tab) });
+      const askInvoice = () => requestInvoiceDialog(sb, c, { toast, onDone: () => renderCampaign(newToken(), id, tab) });
+      document.getElementById("req-inv").onclick = askInvoice;
+      // Money flags (money.js): not invoiced, which company, budget vs invoices, overdue. They clear by themselves.
+      const flagsBox = document.getElementById("mflags");
+      mountMoneyFlags(flagsBox, sb, c, { toast, requestInvoice: askInvoice });
+      document.getElementById("vendor-form").onclick = () => vendorFormDialog(sb, c, { toast, onDone: () => mountMoneyFlags(flagsBox, sb, c, { toast, requestInvoice: askInvoice }) });
       document.getElementById("del-camp").onclick = () => deleteCampaignFlow(c);
       document.getElementById("refresh").onclick = async (e) => {
         const btn = e.currentTarget;
@@ -2414,6 +2422,7 @@ function restorePage(h, from) {
 let teamOk = null;   // whether this user is on the team list, checked once per sign-in
 
 async function route() {
+  closePopups(); // a menu left open (e.g. back button, typed address) never follows you to the next page
   const target = normHash(location.hash);
   const prevShown = shown.hash;
   keepShownPage(target);
