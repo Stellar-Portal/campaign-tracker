@@ -1,8 +1,8 @@
 // Payment details page (payment-details.html#t=<token>): a creator tells Stellar, once, how to pay them.
 // The one-time link comes from their roster card in Stellar OS; the `creator-details` function checks it and saves
 // the details on the card, where every future payment picks them up.
-import { SUPABASE_URL } from "./config.js?v=20261126a";
-import { COUNTRIES as countries } from "./countries.js?v=20261126a";
+import { SUPABASE_URL } from "./config.js?v=20261126b";
+import { COUNTRIES as countries } from "./countries.js?v=20261126b";
 
 const FN = `${SUPABASE_URL}/functions/v1/creator-details`;
 const card = document.getElementById("card");

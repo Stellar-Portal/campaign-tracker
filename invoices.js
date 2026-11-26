@@ -1,8 +1,9 @@
 // Invoicing: campaign managers request an invoice from the campaign page; finance works through the
 // requests here, sends the invoice from e-conomic and records it; payment is recorded when the label pays.
 // Statuses: requested → invoiced → paid (or returned to the requester / cancelled).
-import { confirmDialog } from "./dialog.js?v=20261126a";
-import { entitiesOf, loadMoney, flagsFor } from "./money.js?v=20261126a";
+import { confirmDialog } from "./dialog.js?v=20261126b";
+import { entitiesOf, loadMoney, flagsFor } from "./money.js?v=20261126b";
+import { loadPlan, isOpen } from "./invoice-plan.js?v=20261126b";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const money = (v, cur) => {
@@ -32,7 +33,7 @@ const VIA = ["UNIPORT", "ARIBA", "FIT", "E-MAIL"];
 const LABELS = ["Major", "Indie", "Other"];
 const plainNum = (v) => Number(v).toLocaleString("en", { maximumFractionDigits: 2 });
 const r2 = (v) => Math.round(v * 100) / 100;
-export const byWho = (s) => (/^Stellar OS \(monthly\)/i.test(String(s ?? "")) ? "Automatic (monthly)" : s);
+export const byWho = (s) => (/^Stellar OS \(plan\)/i.test(String(s ?? "")) ? "Automatic (invoice plan)" : /^Stellar OS \(monthly\)/i.test(String(s ?? "")) ? "Automatic (monthly)" : s);
 
 // The client's own PO lives in client_po (po_number is Stellar's PO).
 export const splitNotes = (r) => ({ clientPo: r?.client_po ?? "", notes: String(r?.notes ?? "").trim() });
@@ -81,15 +82,16 @@ const viaFrom = (ent) => {
 };
 
 // ---------- the request form (from a campaign page) ----------
-export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
-  const { data: cr } = await sb.from("campaigns").select("artist,song,client,client_id,client_entity_id,invoicing_entity,po_number,budget,currency,comms_owner,campaign_runner,label_type,client_market,client_contact_name,client_contact_email,retainer_amount,retainer_day,retainer_until").eq("id", c.id).maybeSingle();
+export async function requestInvoiceDialog(sb, c, { toast, onDone, partId = null }) {
+  const { data: cr } = await sb.from("campaigns").select("artist,song,client,client_id,client_entity_id,invoicing_entity,po_number,budget,currency,comms_owner,campaign_runner,label_type,client_market,client_contact_name,client_contact_email").eq("id", c.id).maybeSingle();
   c = { ...c, ...(cr ?? {}) };
-  const [ents, mk, mkts, open, cl] = await Promise.all([
+  const [ents, mk, mkts, open, cl, plan] = await Promise.all([
     entitiesOf(sb, c.client_id),
     sb.from("campaign_markets").select("market,share_percent,amount").eq("campaign_id", c.id),
     sb.from("markets").select("name,region"),
     sb.from("invoice_requests").select("amount,currency,status").eq("campaign_id", c.id).in("status", ["requested", "returned", "invoiced", "paid"]),
     c.client_id ? sb.from("clients").select("market").eq("id", c.client_id).maybeSingle() : { data: null },
+    loadPlan(sb, c.id),
   ]);
   const regionOf = Object.fromEntries((mkts.data ?? []).map((m) => [m.name, m.region]));
   const cur0 = c.currency || "USD", budget = c.budget != null ? Number(c.budget) : null;
@@ -100,8 +102,14 @@ export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
   const terr0 = String(c.client_market ?? "").replace(/^Stellar\s+/i, ""), terrClient = String(cl.data?.market ?? "");
   const via0 = viaFrom(ent0);
   const who = [...new Set([c.comms_owner, ...String(c.campaign_runner ?? "").split(",")].map((x) => String(x ?? "").trim()).filter(Boolean))].join(", ");
+  // The invoice plan: parts that have no live request yet. The one asked for (or the next one) is preselected.
+  const CURS = ["USD", "EUR", "GBP", "DKK", "SEK", "JPY", "AUD", "SGD", "BRL", "MXN"];
+  const openParts = (plan?.parts ?? []).filter(isOpen);
+  const part0 = openParts.find((p) => p.id === partId) ?? openParts.find((p) => p.id === plan?.next_part_id) ?? null;
+  const partCur = (p) => (CURS.includes(p?.currency) ? p.currency : cur0);
+  const noPartAmount = already ? (left || null) : budget;
   const st = {
-    amount: already ? (left || null) : budget, cur: cur0,
+    amount: part0 ? Number(part0.amount) : noPartAmount, cur: part0 ? partCur(part0) : cur0, partId: part0?.id ?? null,
     po: c.po_number ?? "", client_po: "", project: "", notes: "",
     responsible: who, entity_id: ent0?.id ?? "", entity: ents.length ? "" : (c.invoicing_entity ?? ""),
     label: LABELS.includes(c.label_type) ? c.label_type : "", territory: REGIONS.includes(terr0) ? terr0 : REGIONS.includes(terrClient) ? terrClient : "",
@@ -154,20 +162,14 @@ export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
   d.innerHTML = `<form method="dialog">
     <h2>Request an invoice</h2>
     <p class="muted small" style="margin:0 0 10px">${esc(c.artist)}${c.song ? ` – ${esc(c.song)}` : ""}</p>
-    <label>Budget <span class="inv-amt"><input name="amount" inputmode="decimal" value="${st.amount ?? ""}" required><select name="cur">${["USD", "EUR", "GBP", "DKK", "SEK", "JPY", "AUD", "SGD", "BRL", "MXN"].map((x) => `<option${x === st.cur ? " selected" : ""}>${x}</option>`).join("")}</select></span></label>
+    ${openParts.length ? `<label>For <select name="plan_part" aria-label="Part of the invoice plan">${openParts.map((p) => `<option value="${esc(p.id)}"${p.id === st.partId ? " selected" : ""}>${esc(p.label || "Part")} · ${esc(money(p.amount, p.currency || cur0))}${p.due_on ? ` · ${esc(day(p.due_on))}` : ""}</option>`).join("")}<option value=""${st.partId ? "" : " selected"}>Not part of the plan</option></select></label>` : ""}
+    <label>Budget <span class="inv-amt"><input name="amount" inputmode="decimal" value="${st.amount ?? ""}" required><select name="cur">${CURS.map((x) => `<option${x === st.cur ? " selected" : ""}>${x}</option>`).join("")}</select></span></label>
     ${already && budget != null ? `<p class="inv-quiet" id="inv-already">${esc(money(already, cur0))} of ${esc(money(budget, cur0))} already requested</p>` : ""}
     ${otherCur ? `<p class="inv-quiet">${otherCur} earlier request${otherCur > 1 ? "s are" : " is"} in another currency: check what's left by hand.</p>` : ""}
     <div class="inv-sum-head"><b class="small">Details for finance</b><button type="button" class="link-btn small" id="inv-edit">Edit</button></div>
     <dl class="inv-sum" id="inv-fields"></dl>
     <div class="inv-opt"><label>Client PO <span class="muted small" style="font-weight:400">if any</span><input name="client_po" autocomplete="off"></label><label>Project <span class="muted small" style="font-weight:400">if any</span><input name="project" autocomplete="off"></label></div>
     <label>Notes for finance <textarea name="notes" rows="2" placeholder="Anything finance should know"></textarea></label>
-    <details class="inv-ret"><summary id="inv-ret-sum"></summary>
-      <div class="inv-ret-body">
-        <label class="inv-check"><input type="checkbox" name="ret_on"> Invoice every month</label>
-        <div class="inv-ret-row"><label>Amount <input name="ret_amt" inputmode="decimal"></label><label>Day of the month <input name="ret_day" type="number" min="1" max="28" step="1"></label><label>Until <input name="ret_until" type="date"></label></div>
-        <div class="actions" style="margin:10px 0 0"><button type="button" id="inv-ret-save">Save monthly invoicing</button></div>
-      </div>
-    </details>
     <p class="small error" id="inv-err" hidden></p>
     <div class="actions"><button type="submit" value="ok" class="primary">Send to finance</button><button type="button" id="inv-copy">Copy as email</button><button type="submit" value="cancel" formnovalidate>Cancel</button></div>
   </form>`;
@@ -216,26 +218,15 @@ export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
   };
   d.querySelector("#inv-copy").onclick = () => copyText(emailText(asRequest()), toast, "Copied. Paste it into an email.");
 
-  // Monthly retainer: saved on the campaign; a daily job makes the request on that day.
-  const ret = { on: c.retainer_amount > 0 && c.retainer_day > 0 };
-  const retSum = () => { d.querySelector("#inv-ret-sum").textContent = ret.on ? `Monthly retainer · ${money(c.retainer_amount, cur0)} on day ${c.retainer_day}${c.retainer_until ? ` until ${day(c.retainer_until)}` : ""}` : "Monthly retainer…"; };
-  f.ret_on.checked = ret.on; f.ret_amt.value = c.retainer_amount ?? ""; f.ret_day.value = c.retainer_day ?? ""; f.ret_until.value = c.retainer_until ?? "";
-  if (ret.on) d.querySelector(".inv-ret").open = true;
-  retSum();
-  d.querySelector(".inv-ret").addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); d.querySelector("#inv-ret-save").click(); } });
-  d.querySelector("#inv-ret-save").onclick = async () => {
-    const on = f.ret_on.checked, amt = num(f.ret_amt.value), dayN = parseInt(f.ret_day.value, 10);
-    if (on && (!(amt > 0) || !(dayN >= 1 && dayN <= 28))) { fail("For a monthly invoice, enter the amount and a day from 1 to 28."); return; }
-    fail("");
-    if (on && !(await confirmDialog({ title: "Invoice every month?", body: `On day ${dayN} of each month the OS sends finance a request for ${money(amt, cur0)} while the campaign is active${f.ret_until.value ? ` (until ${day(f.ret_until.value)})` : ""}.`, confirm: "Turn on" }))) return;
-    const patch = on ? { retainer_amount: amt, retainer_day: dayN, retainer_until: f.ret_until.value || null } : { retainer_amount: null, retainer_day: null, retainer_until: null };
-    const b = d.querySelector("#inv-ret-save"); b.disabled = true;
-    const { error } = await sb.from("campaigns").update(patch).eq("id", c.id);
-    b.disabled = false;
-    if (error) { fail(error.message); return; }
-    Object.assign(c, patch); ret.on = on; retSum();
-    toast(on ? `Monthly invoice set: ${money(amt, cur0)} on day ${dayN} of each month while the campaign is active` : "Monthly invoicing is off");
-  };
+  // Choosing a part fills in its amount; "Not part of the plan" goes back to the usual amount.
+  f.elements.plan_part?.addEventListener("change", () => {
+    const p = openParts.find((x) => x.id === f.elements.plan_part.value) ?? null;
+    st.partId = p?.id ?? null;
+    f.amount.value = (p ? Number(p.amount) : noPartAmount) ?? "";
+    f.cur.value = p ? partCur(p) : cur0; st.cur = f.cur.value;
+    st.amount = num(f.amount.value);
+    if (!st.allocTouched) { autoAlloc(); drawFields(); } else sumLine();
+  });
 
   let sending = false;
   f.onsubmit = async (e) => {
@@ -251,7 +242,8 @@ export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
     const ent = entOf(), x = asRequest();
     const lines = st.allocTouched ? [] : splitByMarket(mrows, regionOf, budget, amount).lines;
     const viaName = x.send_via, portal = viaName && viaName !== "E-MAIL";
-    const { error } = await sb.from("invoice_requests").insert({
+    const part = openParts.find((p) => p.id === st.partId) ?? null;
+    const ins = sb.from("invoice_requests").insert({
       campaign_id: c.id, amount, currency: f.cur.value, po_number: st.po.trim() || null,
       client: c.client || x.client || null, client_entity_id: ent?.id ?? null,
       invoicing_entity: ent ? ent.legal_name : (st.entity.trim() || null), lines: lines.length > 1 ? lines : [],
@@ -260,8 +252,21 @@ export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
       responsible: x.responsible || null, artist: c.artist ?? null, song: c.song ?? null, label_type: x.label_type || null, territory: x.territory || null, project: x.project || null,
       contact_name: x.contact_name || null, contact_email: x.contact_email || null, allocation: alloc.length ? alloc : null,
     });
+    const { data: made, error } = part ? await ins.select("id").single() : await ins;
     // Stays disabled after a success (the dialog closes), so a second click can't send a second request.
     if (error) { btn.disabled = false; sending = false; fail(error.message); return; }
+    if (part) {
+      // Tie the request to its part. If that fails (someone got there first), the new request is cancelled again.
+      let link = sb.from("invoice_plan_parts").update({ request_id: made?.id }).eq("id", part.id);
+      link = part.request_id ? link.eq("request_id", part.request_id) : link.is("request_id", null);
+      const { data: linked, error: le } = await link.select("id");
+      if (le || !linked?.length) {
+        if (made?.id) await sb.from("invoice_requests").update({ status: "cancelled" }).eq("id", made.id);
+        btn.disabled = false; sending = false;
+        fail(`The request wasn't sent. ${le ? le.message : "Someone already requested this part."} Close this and look at the invoice plan.`);
+        return;
+      }
+    }
     // The campaign learns what was filled in here (company, label, market, contact); it syncs to the sheet's columns.
     const learn = {};
     if (ent && !c.client_entity_id) learn.client_entity_id = ent.id;
@@ -270,7 +275,7 @@ export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
     if (st.touched.has("contact_name") && st.contact_name.trim() && !c.client_contact_name) learn.client_contact_name = st.contact_name.trim();
     if (st.touched.has("contact_email") && st.contact_email.trim() && !c.client_contact_email) learn.client_contact_email = st.contact_email.trim();
     if (Object.keys(learn).length) await sb.from("campaigns").update(learn).eq("id", c.id);
-    d.close(); d.remove(); toast(ent || st.entity.trim() ? "Invoice request sent to finance" : "Invoice request sent. Pick the invoicing company when you know it (or send the vendor form)."); onDone?.();
+    d.close(); d.remove(); toast(ent || st.entity.trim() ? (part ? `Invoice request sent to finance for ${part.label || "the part"}` : "Invoice request sent to finance") : "Invoice request sent. Pick the invoicing company when you know it (or send the vendor form)."); onDone?.();
   };
   d.onclose = () => d.remove();
   d.showModal();
@@ -291,7 +296,7 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
   const camps = Object.fromEntries((campRes.data ?? []).map((c) => [c.id, c]));
   const ents = entRes.data ?? [], entOf = (id) => ents.find((e) => e.id === id) ?? null;
   // Every campaign's open money flags (money.js), finance's first.
-  const attention = moneyRes.campaigns.flatMap((c) => flagsFor(c, moneyRes.invoices[c.id], moneyRes.vendors[c.id]).map((f) => ({ ...f, c })))
+  const attention = moneyRes.campaigns.flatMap((c) => flagsFor(c, moneyRes.invoices[c.id], moneyRes.vendors[c.id], moneyRes.plans[c.id]).map((f) => ({ ...f, c })))
     .sort((a, b) => (a.who === b.who ? 0 : a.who === (who.finance ? "finance" : "dri") ? -1 : 1));
   const attentionHtml = () => !attention.length ? "" : `<details class="panel inv-att"${attention.some((a) => a.who === "finance") && who.finance ? " open" : ""}>
     <summary><b>Needs attention</b> <span class="inv-count">${attention.length}</span><span class="muted small"> · flags the OS raises by itself; they clear when the numbers line up</span></summary>

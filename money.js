@@ -18,14 +18,19 @@ export async function loadMoney(sb, campaignId = null) {
   let cq = sb.from("campaigns").select("id,artist,song,status,budget,currency,client,client_id,client_entity_id,client_contact_email,comms_owner,created_at,start_date");
   let iq = sb.from("invoice_requests").select("id,campaign_id,status,amount,currency,client_entity_id,invoice_number,due_date,finance_note");
   let vq = sb.from("vendor_requests").select("id,campaign_id,sent_to,emailed,email_error,created_at,expires_at,opened_at,submitted_at,sent_by").order("created_at", { ascending: false });
-  if (campaignId) { cq = cq.eq("id", campaignId); iq = iq.eq("campaign_id", campaignId); vq = vq.eq("campaign_id", campaignId); }
-  const [c, i, v] = await Promise.all([cq, iq, vq]);
+  // The invoice plan (invoice-plan.js): which campaigns invoice later, what is still planned, and which parts are due.
+  let pq = sb.from("campaign_invoice_plan_state").select("campaign_id,parts,due_parts,next_due_on,upcoming_total,total,invoice_later");
+  let dq = sb.from("invoice_plan_part_status").select("campaign_id,label,amount,effective_currency,due_on,position").eq("status", "due").order("due_on").order("position");
+  if (campaignId) { cq = cq.eq("id", campaignId); iq = iq.eq("campaign_id", campaignId); vq = vq.eq("campaign_id", campaignId); pq = pq.eq("campaign_id", campaignId); dq = dq.eq("campaign_id", campaignId); }
+  const [c, i, v, p, d] = await Promise.all([cq, iq, vq, pq, dq]);
   const by = (rows) => { const m = {}; for (const r of rows ?? []) (m[r.campaign_id] ??= []).push(r); return m; };
-  return { campaigns: c.data ?? [], invoices: by(i.data), vendors: by(v.data) };
+  const due = by(d.data), plans = {};
+  for (const r of p.data ?? []) plans[r.campaign_id] = { ...r, due: due[r.campaign_id] ?? [] };
+  return { campaigns: c.data ?? [], invoices: by(i.data), vendors: by(v.data), plans };
 }
 
 // The flags for one campaign: { key, who: "dri" | "finance", text, act }.
-export function flagsFor(c, invs = [], vendors = []) {
+export function flagsFor(c, invs = [], vendors = [], plan = null) {
   const out = [];
   const live = invs.filter((r) => LIVE.includes(r.status));
   const billed = live.filter((r) => ["invoiced", "paid"].includes(r.status));
@@ -39,8 +44,9 @@ export function flagsFor(c, invs = [], vendors = []) {
       ? { key: "company", who: "dri", text: `Vendor form ${openForm.sent_to ? `sent to ${esc(openForm.sent_to)}` : "link made"} ${esc(day(openForm.created_at))}${openForm.opened_at ? ", opened" : ""}, not filled in yet.`, act: "vendor" }
       : { key: "company", who: "dri", text: c.client_entity_id ? "An invoice request doesn't say which company to invoice yet." : "We don't know which company to invoice yet.", act: c.client_entity_id ? "invoices" : "vendor" });
   }
-  // 2. Not invoiced yet (active or a week old, has a budget, no request).
-  if (budget > 0 && !live.length && (c.status !== "draft" || old)) {
+  // 2. Not invoiced yet (active or a week old, has a budget, no request). Not when the plan says "later" or has a part due (flag 6).
+  const planDue = plan?.due ?? [];
+  if (budget > 0 && !live.length && (c.status !== "draft" || old) && !plan?.invoice_later && !planDue.length) {
     out.push({ key: "invoice", who: "dri", text: "Not invoiced yet.", act: "request" });
   }
   // 3. Finance sent a request back.
@@ -49,10 +55,15 @@ export function flagsFor(c, invs = [], vendors = []) {
   if (budget != null && billed.length && billed.every((r) => r.currency === (c.currency || "USD"))) {
     const inv = billed.reduce((t, r) => t + Number(r.amount), 0), pending = live.filter((r) => ["requested", "returned"].includes(r.status)).reduce((t, r) => t + Number(r.amount), 0);
     if (inv - budget > 1) out.push({ key: "credit", who: "finance", text: `Invoiced ${money(inv, c.currency)}, but the budget is now ${money(budget, c.currency)}: needs a credit note of ${money(inv - budget, c.currency)}.`, act: "invoices" });
-    else if (budget - inv - pending > 1) out.push({ key: "more", who: "dri", text: `Only ${money(inv, c.currency)} of the ${money(budget, c.currency)} budget is invoiced${pending ? ` (${money(pending, c.currency)} more requested)` : ""}.`, act: "request" });
+    else if (budget - inv - pending - Number(plan?.upcoming_total ?? 0) > 1) out.push({ key: "more", who: "dri", text: `Only ${money(inv, c.currency)} of the ${money(budget, c.currency)} budget is invoiced${pending ? ` (${money(pending, c.currency)} more requested)` : ""}.`, act: "request" });
   }
   // 5. Client hasn't paid by the due date.
   for (const r of live.filter((x) => x.status === "invoiced" && x.due_date && x.due_date < today())) out.push({ key: "overdue", who: "finance", text: `Invoice ${r.invoice_number ? `#${esc(r.invoice_number)} ` : ""}was due ${esc(day(r.due_date))} and isn't marked paid.`, act: "invoices" });
+  // 6. A part of the invoice plan is due and has no request yet.
+  if (planDue.length) {
+    const names = planDue.map((x) => x.label || "a part");
+    out.push({ key: "plan", who: "dri", text: `Invoice due: ${esc(names.length > 2 ? `${names[0]} and ${names.length - 1} more` : names.join(", "))}.`, act: "plan" });
+  }
   return out;
 }
 
@@ -62,15 +73,17 @@ export async function mountMoneyFlags(box, sb, c, { toast, requestInvoice, refre
   const m = await loadMoney(sb, c.id);
   const camp = m.campaigns[0];
   if (!box.isConnected || !camp) return;
-  const flags = flagsFor(camp, m.invoices[c.id], m.vendors[c.id]);
+  const flags = flagsFor(camp, m.invoices[c.id], m.vendors[c.id], m.plans[c.id]);
   if (!flags.length) { box.innerHTML = ""; return; }
   const btn = (f) => f.act === "vendor" ? `<button type="button" data-mf="vendor">Vendor form</button>`
     : f.act === "request" ? `<button type="button" data-mf="request">Request invoice</button>`
+    : f.act === "plan" ? `<button type="button" data-mf="plan">Invoice plan</button>`
     : `<a href="#/invoices" class="mf-link">Open in Invoices</a>`;
   box.innerHTML = `<div class="mflags" role="status">${flags.map((f) => `<div class="mflag ${f.who}">
     <span class="mf-who">${f.who === "finance" ? "Finance" : "To do"}</span><span class="mf-text">${f.text}</span>${btn(f)}</div>`).join("")}</div>`;
   box.querySelectorAll('[data-mf="vendor"]').forEach((b) => (b.onclick = () => vendorFormDialog(sb, camp, { toast, onDone: () => mountMoneyFlags(box, sb, c, { toast, requestInvoice, refresh }) })));
   box.querySelectorAll('[data-mf="request"]').forEach((b) => (b.onclick = () => requestInvoice?.()));
+  box.querySelectorAll('[data-mf="plan"]').forEach((b) => (b.onclick = () => document.getElementById("invplan")?.scrollIntoView({ behavior: "smooth", block: "nearest" })));
 }
 
 // "Vendor form": email the client a one-time form from invoice@stellarmusic.dk, or copy the link.

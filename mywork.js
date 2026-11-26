@@ -1,7 +1,7 @@
 // My work (#/me): what needs the signed-in person right now, on the campaigns they run (DRI or runner).
 // Sections only appear when they have something in them. Everything links to the exact place.
-import { loadMoney, flagsFor, money } from "./money.js?v=20261126a";
-import { ago, safeLink, openBell } from "./notify.js?v=20261126a";
+import { loadMoney, flagsFor, money } from "./money.js?v=20261126b";
+import { ago, safeLink, openBell } from "./notify.js?v=20261126b";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -38,7 +38,7 @@ export async function renderMyWork(app, sb, { isCurrent }) {
     ids.length ? sb.from("creator_drafts").select("id,campaign_id").eq("status", "submitted").in("campaign_id", ids) : { data: [] },
     ids.length ? sb.from("payout_rows").select("campaign_id,status,amount,videos,price_per_video").in("campaign_id", ids) : { data: [] },
     sb.from("invoice_requests").select("id,ref,campaign_id,status,amount,currency,client,requested_by,requested_at,finance_note").in("status", ["requested", "returned"]),
-    ids.length ? loadMoney(sb) : { invoices: {}, vendors: {} },
+    ids.length ? loadMoney(sb) : { invoices: {}, vendors: {}, plans: {} },
     sb.from("notifications").select("*").is("read_at", null).order("created_at", { ascending: false }).limit(5),
     sb.from("notifications").select("id", { count: "exact", head: true }).is("read_at", null),
     deckIds.length ? sb.from("deck_access_requests").select("id,deck_id,email,created_at").eq("status", "pending").in("deck_id", deckIds) : { data: [] },
@@ -63,9 +63,15 @@ export async function renderMyWork(app, sb, { isCurrent }) {
     if (r.status !== "returned" || !(c || r.requested_by === email)) continue;
     need.push(row("#/invoices", ["back", "Sent back"], `${esc(refOf(r))} was sent back`, `${c ? `${esc(label(c))}` : esc(r.client ?? "")}${r.finance_note ? ` · “${esc(r.finance_note)}”` : ""}`, esc(money(r.amount, r.currency))));
   }
+  // Parts of an invoice plan that are due and have no request yet (invoice-plan.js).
   for (const c of live) {
-    for (const f of flagsFor(c, moneyData.invoices[c.id], moneyData.vendors[c.id])) {
-      if (f.key === "returned" || (f.who === "finance" && !finance)) continue;   // sent-back requests have their own row
+    for (const p of moneyData.plans?.[c.id]?.due ?? []) {
+      need.push(row(`#/c/${c.id}`, ["todo", "Invoice due"], `Invoice due: ${esc(p.label || "a part")}`, esc(label(c)), esc(money(p.amount, p.effective_currency || c.currency))));
+    }
+  }
+  for (const c of live) {
+    for (const f of flagsFor(c, moneyData.invoices[c.id], moneyData.vendors[c.id], moneyData.plans?.[c.id])) {
+      if (f.key === "returned" || f.key === "plan" || (f.who === "finance" && !finance)) continue;   // sent-back requests and due plan parts have their own rows
       need.push(row(f.act === "invoices" ? "#/invoices" : `#/c/${c.id}`, [f.who === "finance" ? "fin" : "todo", f.who === "finance" ? "Finance" : "To do"], f.text, esc(label(c))));
     }
   }

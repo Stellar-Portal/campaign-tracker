@@ -2698,10 +2698,54 @@ body.nav-collapsed .bell-n { box-shadow: 0 0 0 2px var(--parchment); }
 .inv-alloc input { width: 104px; }
 .inv-via { display: grid; gap: 6px; }
 .inv-opt { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
-.inv-ret { margin-top: 14px; border-top: 1px solid var(--divider); padding-top: 10px; font-size: 14px; }
-.inv-ret > summary { cursor: pointer; color: var(--muted); font-weight: 500; }
-.inv-ret[open] > summary { color: var(--ink); }
-.inv-ret-body { padding-top: 4px; }
-.inv-ret-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0 12px; }
-@media (max-width: 700px) { .inv-sr { grid-template-columns: 1fr; gap: 3px; } .inv-opt, .inv-ret-row { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .inv-sr { grid-template-columns: 1fr; gap: 3px; } .inv-opt { grid-template-columns: 1fr; } }
 .inv-dialog textarea { min-height: 0; height: 60px; resize: vertical; }
+/* Analytics: reset filters (same look as the Home button, sits at the end of the filter row) */
+.an-reset { cursor: pointer; background: #fff; box-shadow: none; border-color: rgba(0,0,0,0.12); white-space: nowrap; }
+.an-reset[hidden] { display: none; }
+
+/* Invoice plan card on the campaign page (invoice-plan.js) and its dialogs */
+#invplan:empty { display: none; }
+.ip { margin: 10px 0 0; background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--r-md); font-size: 13px; }
+.ip-empty { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 9px 12px; color: var(--muted); }
+.ip-empty .link-btn { font-size: 13px; }
+.ip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 9px 12px; }
+.ip-sum { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ip-warn { color: var(--warn); font-weight: 600; }
+.ip-rows { display: grid; }
+.ip-row { display: grid; grid-template-columns: minmax(110px, 1fr) 104px 84px 150px 200px; gap: 4px 12px; align-items: center; padding: 7px 12px; border-top: 1px solid var(--divider); }
+.ip-label { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.ip-amt { text-align: right; font-variant-numeric: tabular-nums; }
+.ip-date { white-space: nowrap; }
+.ip-state { display: inline-flex; align-items: center; gap: 6px; }
+a.inv-pill { text-decoration: none; }
+a.inv-pill:hover { text-decoration: underline; }
+.inv-pill.s-upcoming { background: var(--parchment); color: var(--muted); }
+.inv-pill.s-due { background: #fff4e0; color: var(--warn); box-shadow: inset 0 0 0 1px #e0a100; }
+.ip-auto { display: inline-grid; place-items: center; color: var(--muted); }
+.ip-auto svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ip-acts { display: inline-flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+.ip-acts .link-btn { font-size: 12px; }
+.ip-req { font-size: 12px; padding: 4px 10px; }
+.ip-foot { display: flex; gap: 16px; padding: 8px 12px 10px; border-top: 1px solid var(--divider); }
+.ip-foot .link-btn { font-size: 12px; }
+@media (max-width: 700px) {
+  .ip-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .ip-amt { grid-column: 2; grid-row: 1; }
+  .ip-date { grid-column: 1; }
+  .ip-state { grid-column: 2; justify-content: flex-end; }
+  .ip-acts { grid-column: 1 / -1; justify-content: flex-start; }
+}
+.ip-dialog .ip-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+.ip-cur { font-size: 12px; color: var(--muted); font-weight: 600; margin-left: 4px; }
+.ip-preview { margin: 14px 0 0; font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; min-height: 1.4em; }
+.ip-quiet { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+.po-dialog .ip-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-weight: 400; margin-top: 14px; cursor: pointer; }
+.ip-dialog textarea { font-family: var(--font); font-size: 14px; min-height: 0; height: 60px; resize: vertical; }
+@media (max-width: 560px) { .ip-dialog .ip-grid { grid-template-columns: 1fr; } }
+/* New campaign form: Invoicing choice */
+.ipf-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ipf-row select, .ipf-row input { width: auto; }
+.ipf-parts { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ipf-parts #ipf_n { width: 72px; }
+.ipf-from { margin: 0; font-weight: 400; color: var(--muted); }

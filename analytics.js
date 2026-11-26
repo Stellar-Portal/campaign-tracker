@@ -1,7 +1,7 @@
 // Analytics: charts across every campaign in the Campaign Overview sheet, plus tracker performance.
 // Money is shown in USD (ECB rates, refreshed daily in fx_rates). Every chart says how many
 // campaigns it is based on, has a hover read-out and a "Show as table" view.
-import { chart, esc } from "./report.js?v=20261126a";
+import { chart, esc } from "./report.js?v=20261126b";
 
 // Validated categorical slots (dataviz palette); cobalt only for single-series charts.
 const SLOT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
@@ -243,6 +243,7 @@ export async function renderAnalytics(app, sb, { isCurrent, go, parts = [] }) {
       <select id="an-period" aria-label="Period"><option value="">Whole year</option>${quarters.map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join("")}${monthsAll.map((m) => `<option value="m:${m}">${MONTHS[Number(m.slice(5)) - 1]} ${m.slice(0, 4)}</option>`).join("")}</select>
       <select id="an-region" aria-label="Client market"><option value="">All client markets</option>${REGIONS.map(([k, l]) => `<option value="${esc(k)}">${esc(l)}</option>`).join("")}</select>
       <select id="an-dri" aria-label="Stellar DRI"><option value="">Everyone</option>${allDris.map((d) => `<option>${esc(d)}</option>`).join("")}</select>
+      <button type="button" class="back-btn an-reset" id="an-reset" title="Back to the overall numbers" aria-label="Reset filters" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 10a5.5 5.5 0 1 0 1.8-4.1M4.5 3.5v3.2h3.2"/></svg><span>Reset filters</span></button>
     </div>
     <div id="an-out"></div>`}`;
   if (!all.length) return;
@@ -526,8 +527,16 @@ export async function renderAnalytics(app, sb, { isCurrent, go, parts = [] }) {
     }));
     out.querySelector("[data-go-inv]")?.addEventListener("click", (e) => { e.preventDefault(); try { sessionStorage.setItem("ov-status", "Completed"); } catch { /* ignore */ } go("#/"); });
   }
-  const bind = (id, key) => { const el = document.getElementById(id); el.value = st[key]; el.onchange = () => { st[key] = el.value; try { sessionStorage.setItem("an-filters", JSON.stringify({ period: st.period, region: st.region, dri: st.dri })); } catch { /* ignore */ } out.style.opacity = "0.55"; requestAnimationFrame(() => { draw(); out.style.opacity = ""; }); }; };
-  bind("an-period", "period"); bind("an-region", "region"); bind("an-dri", "dri");
+  const FILTERS = [["an-period", "period"], ["an-region", "region"], ["an-dri", "dri"]];
+  const resetBtn = document.getElementById("an-reset");
+  const syncReset = () => { resetBtn.hidden = !FILTERS.some(([, key]) => st[key] !== ""); };
+  const bind = (id, key) => { const el = document.getElementById(id); el.value = st[key]; el.onchange = () => { st[key] = el.value; try { sessionStorage.setItem("an-filters", JSON.stringify({ period: st.period, region: st.region, dri: st.dri })); } catch { /* ignore */ } syncReset(); out.style.opacity = "0.55"; requestAnimationFrame(() => { draw(); out.style.opacity = ""; }); }; };
+  resetBtn.onclick = () => {
+    FILTERS.forEach(([id, key]) => { st[key] = ""; document.getElementById(id).value = ""; });
+    try { sessionStorage.removeItem("an-filters"); } catch { /* ignore */ }
+    syncReset(); draw();
+  };
+  FILTERS.forEach(([id, key]) => bind(id, key)); syncReset();
   draw();
   if (drilled) {
     // Grow out of the point that was clicked; arriving any other way (Back from a deeper zoom) zooms out instead.

@@ -5,10 +5,10 @@
 // whose "Invoicing Entity" is its name or another spelling.
 // Routes: #/clients (companies), #/clients/co/<company id>, #/clients/<client id> (team). Team only; the client-facing
 // share function never reads these tables.
-import { confirmDialog } from "./dialog.js?v=20261126a";
-import { esc, flag, regionName } from "./report.js?v=20261126a";
-import { statusPill } from "./invoices.js?v=20261126a";
-import { statusLabel } from "./sheet-lists.js?v=20261126a";
+import { confirmDialog } from "./dialog.js?v=20261126b";
+import { esc, flag, regionName } from "./report.js?v=20261126b";
+import { statusPill } from "./invoices.js?v=20261126b";
+import { statusLabel } from "./sheet-lists.js?v=20261126b";
 
 export const MARKETS = ["West", "Central", "East"];
 const TYPES = ["Major", "Indie", "Other"];

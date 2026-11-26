@@ -1,23 +1,24 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261126a";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261126a";
-import { renderRoster } from "./roster.js?v=20261126a";
-import { renderDiscover } from "./discover.js?v=20261126a";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261126a";
-import { renderTrending } from "./trending.js?v=20261126a";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261126a";
-import { mountMoneyFlags, vendorFormDialog } from "./money.js?v=20261126a";
-import { renderDecks, figmaReminder } from "./decks.js?v=20261126a";
-import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261126a";
-import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261126a";
-import { confirmDialog } from "./dialog.js?v=20261126a";
-import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261126a";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261126a";
-import { renderCampaignCreators } from "./creators.js?v=20261126a";
-import { duplicateCampaignDialog, mountWrapup, wrapupDue } from "./campaign-tools.js?v=20261126a";
-import { mountNotifications, unmountNotifications } from "./notify.js?v=20261126a";
-import { renderMyWork } from "./mywork.js?v=20261126a";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261126a";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261126b";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261126b";
+import { renderRoster } from "./roster.js?v=20261126b";
+import { renderDiscover } from "./discover.js?v=20261126b";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261126b";
+import { renderTrending } from "./trending.js?v=20261126b";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261126b";
+import { mountMoneyFlags, vendorFormDialog } from "./money.js?v=20261126b";
+import { mountInvoicePlan, makePlan, previewSplit } from "./invoice-plan.js?v=20261126b";
+import { renderDecks, figmaReminder } from "./decks.js?v=20261126b";
+import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261126b";
+import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261126b";
+import { confirmDialog } from "./dialog.js?v=20261126b";
+import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261126b";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261126b";
+import { renderCampaignCreators } from "./creators.js?v=20261126b";
+import { duplicateCampaignDialog, mountWrapup, wrapupDue } from "./campaign-tools.js?v=20261126b";
+import { mountNotifications, unmountNotifications } from "./notify.js?v=20261126b";
+import { renderMyWork } from "./mywork.js?v=20261126b";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261126b";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -1072,6 +1073,17 @@ async function renderForm(token, id) {
           <p class="hint">Leave empty for an ongoing campaign.</p></div>
         <div><label for="budget">Price (budget)</label><input id="budget" type="number" min="0" step="0.01" value="${v("budget")}"></div>
         <div><label for="currency">Currency</label><input id="currency" list="currencies" maxlength="3" value="${v("currency")}">${list("currencies", CURRENCIES)}</div>
+        <div class="field-wide ipf">
+          <label for="inv_mode">Invoicing</label>
+          ${id ? `<p style="margin:0"><a href="#/c/${esc(id)}">Invoice plan</a></p>` : `<div class="ipf-row">
+            <select id="inv_mode"><option value="one">One invoice</option><option value="parts">In parts</option></select>
+            <span class="ipf-parts" id="ipf-parts" hidden>
+              <input id="ipf_n" type="number" min="1" max="60" step="1" value="3" aria-label="Number of parts">
+              <select id="ipf_every" aria-label="How often"><option value="month">Every month</option><option value="none">All at once</option></select>
+              <label class="ipf-from" for="ipf_start">from</label><input id="ipf_start" type="date" aria-label="First invoice date" value="${esc(String(c.start_date ?? "").slice(0, 10))}">
+            </span></div>
+          <p class="hint" id="ipf-prev" hidden></p>`}
+        </div>
         <div><label for="comms_owner">Stellar DRI</label><input id="comms_owner" value="${v("comms_owner")}"></div>
         <div class="runner-field"><label id="runner-l">Running the campaign</label>
           <div class="people-pick" id="runner-pick" role="group" aria-labelledby="runner-l">${(() => {
@@ -1205,6 +1217,22 @@ async function renderForm(token, id) {
   if (!id) suggestPO();
   $("po_number").onblur = () => { const po = normalisePO($("po_number").value); if (po) $("po_number").value = po; };
   $("budget").oninput = totals;
+  // Invoicing (new campaigns): one invoice, or the budget split into parts (made right after the campaign is created).
+  if (!id) {
+    let startTouched = false;
+    const planPrev = () => {
+      const on = $("inv_mode").value === "parts";
+      $("ipf-parts").hidden = !on;
+      const t = on ? previewSplit(budget(), parseInt($("ipf_n").value, 10), $("ipf_every").value, $("ipf_start").value || $("start_date").value || new Date().toISOString().slice(0, 10)) : "";
+      $("ipf-prev").hidden = !t; $("ipf-prev").textContent = t;
+    };
+    $("inv_mode").onchange = planPrev;
+    for (const k of ["ipf_n", "ipf_every"]) $(k).oninput = planPrev;
+    $("ipf_start").oninput = () => { startTouched = true; planPrev(); };
+    $("start_date").addEventListener("input", () => { if (!startTouched) $("ipf_start").value = $("start_date").value; planPrev(); });
+    $("budget").addEventListener("input", planPrev);
+    planPrev();
+  }
   $("currency").oninput = totals;
   document.querySelectorAll("#runner-pick [data-pp]").forEach((b) => (b.onclick = () => {
     b.setAttribute("aria-pressed", String(b.getAttribute("aria-pressed") !== "true"));
@@ -1262,6 +1290,10 @@ async function renderForm(token, id) {
     if (mode === "percent" && pct > 100.001) { msg.innerHTML = fail(`Market shares add up to ${fmt(pct)}%. They can't be more than 100%.`); return; }
     if (mode === "amount" && budget() != null && amt > budget() + 0.001) { msg.innerHTML = fail(`Market amounts add up to ${fmt(amt)}, more than the ${fmt(budget())} budget.`); return; }
 
+    const inParts = !id && $("inv_mode").value === "parts";
+    const nParts = inParts ? parseInt($("ipf_n").value, 10) : 0, partsFrom = inParts ? ($("ipf_start").value || val("start_date") || new Date().toISOString().slice(0, 10)) : "";
+    if (inParts && !(budget() > 0)) { msg.innerHTML = fail("Add the price first: the invoice parts add up to it."); $("budget").focus(); return; }
+    if (inParts && !(nParts >= 1 && nParts <= 60)) { msg.innerHTML = fail("Pick between 1 and 60 invoice parts."); $("ipf_n").focus(); return; }
     const record = {
       artist: val("artist"), song: val("song") || null, po_number: normalisePO(val("po_number")),
       status: val("status"), campaign_type: val("campaign_type") || null, release_type: val("release_type") || null,
@@ -1313,7 +1345,12 @@ async function renderForm(token, id) {
       const err = await syncMarketFolders(cid, keep, allMarkets);
       if (err) return failWith(err);
     }
-    toast(id ? "Changes saved" : "Campaign created");
+    let planErr = "";
+    if (inParts) {
+      try { await makePlan(sb, cid, { total: record.budget, parts: nParts, every: $("ipf_every").value, start: partsFrom, label: "Part" }); }
+      catch (x) { planErr = x?.message ?? "Couldn't make the invoice plan."; }
+    }
+    toast(planErr ? `Campaign created, but the invoice plan wasn't made: ${planErr}` : id ? "Changes saved" : "Campaign created");
     go(`#/c/${cid}`);
   });
 
@@ -1557,6 +1594,7 @@ async function renderCampaign(token, id, tab = "report") {
         ${sheetLine(sync.data, c)}
       </section>
       <div id="mflags"></div>
+      <div id="invplan"></div>
       <div id="wrapup"></div>
       <div class="ws-switch" role="tablist" aria-label="Campaign views">
         <button type="button" role="tab" data-ctab="report" aria-selected="${tab === "report"}">
@@ -1640,11 +1678,14 @@ async function renderCampaign(token, id, tab = "report") {
         box.addEventListener("click", (e) => { if (e.target.closest("a,button")) menu.open = false; });
         window.addEventListener("scroll", place, { passive: true });
       }
-      const askInvoice = () => requestInvoiceDialog(sb, c, { toast, onDone: () => renderCampaign(newToken(), id, tab) });
+      // askInvoice(partId): from the invoice plan's "Request now" the part is preselected (the button click passes an event, not an id).
+      const askInvoice = (partId) => requestInvoiceDialog(sb, c, { toast, partId: typeof partId === "string" ? partId : null, onDone: () => renderCampaign(newToken(), id, tab) });
       document.getElementById("req-inv").onclick = askInvoice;
       // Money flags (money.js): not invoiced, which company, budget vs invoices, overdue. They clear by themselves.
       const flagsBox = document.getElementById("mflags");
       mountMoneyFlags(flagsBox, sb, c, { toast, requestInvoice: askInvoice });
+      // Invoice plan (invoice-plan.js): the parts the budget is invoiced in. Changing it re-checks the money flags.
+      mountInvoicePlan(document.getElementById("invplan"), sb, c, { toast, requestInvoice: askInvoice, onChange: () => mountMoneyFlags(flagsBox, sb, c, { toast, requestInvoice: askInvoice }) });
       document.getElementById("vendor-form").onclick = () => vendorFormDialog(sb, c, { toast, onDone: () => mountMoneyFlags(flagsBox, sb, c, { toast, requestInvoice: askInvoice }) });
       // Wrap-up checklist (campaign-tools.js): shows by itself once the campaign has ended; the ⋯ menu opens it any time.
       const wrapBox = document.getElementById("wrapup");

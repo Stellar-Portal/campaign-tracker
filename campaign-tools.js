@@ -1,7 +1,7 @@
 // Campaign page tools: "Duplicate…" (a new draft built from an existing campaign) and the wrap-up checklist
 // (what is still open when a campaign ends). Team pages only; nothing here is ever sent to clients.
-import { money } from "./money.js?v=20261126a";
-import { confirmDialog } from "./dialog.js?v=20261126a";
+import { money } from "./money.js?v=20261126b";
+import { confirmDialog } from "./dialog.js?v=20261126b";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
