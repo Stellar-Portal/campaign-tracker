@@ -10,6 +10,15 @@ Read this first. README.md has the long, human version. This file is the short v
 - Regions are named **West** (Americas), **Central** (Europe, Africa, Middle East up to Russia) and **East** (Asia incl. Japan and Australia). Keep those names.
 - Copy style: plain words, no jargon, in-app dialogs (`dialog.js` `confirmDialog`). Never use `confirm()` or `prompt()`.
 
+## Agents (`.claude/agents/`, set up 2026-11-26 at Sam's ask)
+The main session plans, talks to Sam and commits; it hands work to the cheapest agent that can do it well:
+- **scout** (Haiku, low): read-only lookups in code and live data.
+- **docs-keeper** (Haiku, medium): CLAUDE.md, pending list, Obsidian vault, cache bumps, migration files.
+- **tester** (Sonnet, medium): Playwright at 1440/390 with mocks, CSP smoke, screenshots.
+- **builder** (Sonnet, high): features in existing patterns, automations, the code slim-down.
+- **architect** (Opus, high): schema/RLS/RPCs, money (invoices, PayPal, payouts), sheet sync, security/privacy, plans and reviews of builder's work.
+Rough split of the pending list: builder = 1, 2, 7, 10, 15 and UI parts of 4, 11, 12; architect = 5, 6, 8, 9, 13, 14 and the data side of 4 and 11. Agents never commit or push.
+
 ## Pending fixes (Sam's to-do list)
 Sam asked: keep these until he asks to solve them, and **list them every time he asks to build or fix something else**. Remove an item only once it's done.
 1. **Spot new posts cheaply:** once a day, check the newest videos of the creators on each active campaign's payout sheet through ScrapeCreators (about 1 credit per creator) and add any video that uses the campaign's sound to the right folder. Replaces paying Influencers.club monitoring (0.3 credits per creator per day).
