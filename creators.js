@@ -3,7 +3,7 @@
 // they send drafts there, see Stellar's (and, if switched on, the client's) answer, paste their posted
 // TikTok link (it lands in that folder) and leave payment details. Messages open in the team's own apps
 // (WhatsApp, Instagram, TikTok, email) with the text ready: nothing is sent or stored by the OS.
-import { esc } from "./report.js?v=20261125c";
+import { esc } from "./report.js?v=20261126a";
 
 const day = (d) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "");
 const handleOf = (c) => String(c?.username ?? "").replace(/^@/, "");

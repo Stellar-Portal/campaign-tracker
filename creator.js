@@ -2,8 +2,8 @@
 // Send drafts → see feedback (Stellar's, and the client's if the campaign has client review on) → post →
 // send the posted link (it lands in the campaign folder in Stellar OS) → leave payment details if missing.
 // Talks only to the `creator-portal` function; draft videos upload straight to private storage with a signed link.
-import { SUPABASE_URL } from "./config.js?v=20261125c";
-import { COUNTRIES as countries } from "./countries.js?v=20261125c";
+import { SUPABASE_URL } from "./config.js?v=20261126a";
+import { COUNTRIES as countries } from "./countries.js?v=20261126a";
 
 const FN = `${SUPABASE_URL}/functions/v1/creator-portal`;
 const card = document.getElementById("card");

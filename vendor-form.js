@@ -1,8 +1,8 @@
 // Vendor form (vendor-form.html#t=<token>): a client tells Stellar who to invoice, once per company.
 // The link comes from a campaign in Stellar OS ("Vendor form"); the `vendor-form` function saves the answers in
 // Clients (client, invoicing company, invoice contact) and fills the campaign.
-import { SUPABASE_URL } from "./config.js?v=20261125c";
-import { COUNTRIES as countries } from "./countries.js?v=20261125c";
+import { SUPABASE_URL } from "./config.js?v=20261126a";
+import { COUNTRIES as countries } from "./countries.js?v=20261126a";
 
 const FN = `${SUPABASE_URL}/functions/v1/vendor-form`;
 const W8 = "https://drive.google.com/file/d/1SX9x5W96cZ-voYvt5BHDtHomHS78h352/view?usp=sharing";

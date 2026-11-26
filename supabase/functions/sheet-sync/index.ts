@@ -75,8 +75,8 @@ export function buildFields(c: any): Record<string, unknown> {
     "Currency": sel(c.currency),
     "Stellar PO no.": c.po_number,
   };
-  // Cost and margin only once creator costs are recorded in the tracker; until then the
-  // sheet keeps whatever the team typed there.
+  // Cost and margin only once the tracker knows some spend (payout rows with an amount, or creator
+  // costs; same figure as campaign_summary.spend); until then the sheet keeps whatever the team typed.
   if (Number(c.cost_lines) > 0) {
     f["Campaign Cost"] = num(c.cost);
     f["Margin"] = num(c.budget ? (Number(c.budget) - Number(c.cost)) / Number(c.budget) : null, "0.00%");
@@ -326,11 +326,20 @@ async function syncOne(row: any, cfg: Record<string, string>) {
     return;
   }
   const key = sheetKey(c);
-  const j = await callSheet(cfg, { action: "upsert", campaign_id: row.campaign_id, key, prev_key: row.sheet_key, fields: buildFields(c) });
+  // Only the payout costs changed since the last push: send just Cost and Margin, so a sheet edit made
+  // in the minutes before the next pull isn't overwritten by a full push.
+  let fields = buildFields(c);
+  const costOnly = !!(row.cost_only && row.sheet_row);
+  if (costOnly) {
+    if (!("Campaign Cost" in fields)) return;
+    fields = { "Campaign Cost": fields["Campaign Cost"], "Margin": fields["Margin"] };
+  }
+  const j = await callSheet(cfg, { action: "upsert", campaign_id: row.campaign_id, key, prev_key: row.sheet_key, fields });
   const note = j.missing?.length ? `Columns not found in the sheet: ${j.missing.join(", ")}` : null;
   await db.from("campaign_sheet_sync").update({
     sheet_row: j.row, sheet_key: key, synced_at: new Date().toISOString(), attempts: 0, last_error: note,
-    ...(j.values && j.headers ? { sheet_fields: readSheetFields(j.headers, j.values, j.sheet ?? "") } : {}),
+    // A cost-only push must not refresh the baseline: the row may hold a sheet edit the next pull still has to copy in.
+    ...(j.values && j.headers && !costOnly ? { sheet_fields: readSheetFields(j.headers, j.values, j.sheet ?? "") } : {}),
   }).eq("campaign_id", row.campaign_id);
 }
 
@@ -411,7 +420,7 @@ Deno.serve(async (req) => {
       const wait = Math.min(2 ** attempts, 60);    // minutes
       failures.push(String((e as Error).message));
       await db.from("campaign_sheet_sync").update({
-        attempts, last_error: String((e as Error).message).slice(0, 300),
+        attempts, last_error: String((e as Error).message).slice(0, 300), cost_only: false,
         due_at: attempts <= 8 ? new Date(Date.now() + wait * 60_000).toISOString() : null,
       }).eq("campaign_id", r.campaign_id).is("due_at", null);
     }

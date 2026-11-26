@@ -1,20 +1,23 @@
 import { createClient } from "./vendor/supabase.esm.js";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261125c";
-import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261125c";
-import { renderRoster } from "./roster.js?v=20261125c";
-import { renderDiscover } from "./discover.js?v=20261125c";
-import { renderAnalytics, drillTitle } from "./analytics.js?v=20261125c";
-import { renderTrending } from "./trending.js?v=20261125c";
-import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261125c";
-import { mountMoneyFlags, vendorFormDialog } from "./money.js?v=20261125c";
-import { renderDecks, figmaReminder } from "./decks.js?v=20261125c";
-import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261125c";
-import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261125c";
-import { confirmDialog } from "./dialog.js?v=20261125c";
-import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261125c";
-import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261125c";
-import { renderCampaignCreators } from "./creators.js?v=20261125c";
-import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261125c";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261126a";
+import { mountReport, renderWall, openPostModal, flag, regionName, ago, engagement, ICON, copyLink, pct, isYT, platformName } from "./report.js?v=20261126a";
+import { renderRoster } from "./roster.js?v=20261126a";
+import { renderDiscover } from "./discover.js?v=20261126a";
+import { renderAnalytics, drillTitle } from "./analytics.js?v=20261126a";
+import { renderTrending } from "./trending.js?v=20261126a";
+import { renderInvoices, requestInvoiceDialog, statusPill as invoicePill } from "./invoices.js?v=20261126a";
+import { mountMoneyFlags, vendorFormDialog } from "./money.js?v=20261126a";
+import { renderDecks, figmaReminder } from "./decks.js?v=20261126a";
+import { mountTodoInOS, unmountTodoInOS } from "./todo.js?v=20261126a";
+import { renderClients, loadClients, SHEET_COUNTRY, sheetMarket } from "./clients.js?v=20261126a";
+import { confirmDialog } from "./dialog.js?v=20261126a";
+import { mountCampaignChat, unmountCampaignChat, chatIcon } from "./chat.js?v=20261126a";
+import { splitPeople, renderCampaignPayouts, renderPayoutsHome } from "./payouts.js?v=20261126a";
+import { renderCampaignCreators } from "./creators.js?v=20261126a";
+import { duplicateCampaignDialog, mountWrapup, wrapupDue } from "./campaign-tools.js?v=20261126a";
+import { mountNotifications, unmountNotifications } from "./notify.js?v=20261126a";
+import { renderMyWork } from "./mywork.js?v=20261126a";
+import { INVOICING_ENTITIES, CLIENT_COUNTRIES, CLIENT_MARKETS, CAMPAIGN_TYPES, RELEASE_TYPES, LABEL_TYPES, STATUSES, statusLabel, normalisePO } from "./sheet-lists.js?v=20261126a";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 // Any write (or Edge Function call) means kept pages may be out of date, so they're dropped.
@@ -268,9 +271,11 @@ const NAV_ICON = {
   trending: '<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
   clients: '<path d="M3 21V7l7-3v17M10 21V10l11 3v8M1.5 21h21M6 9h1.5M6 13h1.5M6 17h1.5M14 15h1.5M17.5 15H19M14 18.5h1.5M17.5 18.5H19"/>',
   decks: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M12 16v4M8 20h8M7 8h6M7 11h4"/>',
+  me: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>',
 };
 const NAV = [
   ["Campaigns", [
+    { key: "me", href: "#/me", label: "My work", icon: "me" },
     { key: "overview", href: "#/", label: "Campaign overview", icon: "overview" },
     { key: "campaigns", href: "#/campaigns", label: "Tracker", icon: "tracker" },
     { key: "roster", href: "#/roster", label: "Roster", icon: "roster" },
@@ -783,7 +788,7 @@ async function renderOverview(token) {
       <div class="ov2-pfoot">
         ${r.camp ? `<a class="btn primary" href="#/c/${esc(r.camp.id)}">Open campaign</a>` : `<button type="button" class="primary" data-create="${r.row}">Create in tracker</button>`}
         <details class="ov2-menu"><summary aria-label="More actions">⋯</summary><div>
-          ${r.camp ? `<a href="#/c/${esc(r.camp.id)}/edit">Edit campaign</a>` : ""}
+          ${r.camp ? `<a href="#/c/${esc(r.camp.id)}/edit">Edit campaign</a><button type="button" data-ovdup="${esc(r.camp.id)}">Duplicate…</button>` : ""}
           <a href="${SHEET_URL}&range=A${r.row}" target="_blank" rel="noopener">Row ${r.row} in the sheet ↗</a>
           <button type="button" class="danger" data-ovdel="${r.row}">Delete…</button></div></details>
       </div>`;
@@ -795,6 +800,10 @@ async function renderOverview(token) {
   }
 
   function bindActions(root) {
+    root.querySelectorAll("[data-ovdup]").forEach((b) => (b.onclick = () => {
+      const r = rows.find((x) => x.camp?.id === b.dataset.ovdup);
+      duplicateCampaignDialog(sb, { id: b.dataset.ovdup, artist: r?.camp?.artist }, { toast, onCreated: (nid) => { pageCache.clear(); go(`#/c/${nid}/edit`); } });
+    }));
     root.querySelectorAll("[data-ovdel]").forEach((b) => (b.onclick = async () => {
       const r = rows.find((x) => x.row === Number(b.dataset.ovdel));
       const name = `${v(r, "Artist Name") || "this campaign"}${v(r, "Song Name (s) or Project Name") ? ` – ${v(r, "Song Name (s) or Project Name")}` : ""}`;
@@ -1532,6 +1541,8 @@ async function renderCampaign(token, id, tab = "report") {
       <details class="camp-menu"><summary aria-label="More actions">⋯</summary><div>
         <a href="#/c/${esc(id)}/edit">Edit campaign</a>
         <button type="button" id="vendor-form">Vendor form…</button>
+        <button type="button" id="dup-camp">Duplicate…</button>
+        <button type="button" id="wrapup-open">Wrap-up checklist</button>
         <button type="button" id="del-camp" class="danger">Delete campaign…</button>
       </div></details>`,
     afterHero: `
@@ -1546,6 +1557,7 @@ async function renderCampaign(token, id, tab = "report") {
         ${sheetLine(sync.data, c)}
       </section>
       <div id="mflags"></div>
+      <div id="wrapup"></div>
       <div class="ws-switch" role="tablist" aria-label="Campaign views">
         <button type="button" role="tab" data-ctab="report" aria-selected="${tab === "report"}">
           <span class="ws-ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19h16M7 16V10M12 16V5M17 16v-4"/></svg></span>
@@ -1634,6 +1646,17 @@ async function renderCampaign(token, id, tab = "report") {
       const flagsBox = document.getElementById("mflags");
       mountMoneyFlags(flagsBox, sb, c, { toast, requestInvoice: askInvoice });
       document.getElementById("vendor-form").onclick = () => vendorFormDialog(sb, c, { toast, onDone: () => mountMoneyFlags(flagsBox, sb, c, { toast, requestInvoice: askInvoice }) });
+      // Wrap-up checklist (campaign-tools.js): shows by itself once the campaign has ended; the ⋯ menu opens it any time.
+      const wrapBox = document.getElementById("wrapup");
+      const wrap = (force) => mountWrapup(wrapBox, sb, c, {
+        toast, force, open: force,
+        onJump: (t) => { showTab(t); app.querySelector(".ws-switch")?.scrollIntoView({ behavior: "smooth", block: "start" }); },
+        onShare: () => openShareDialog(c),
+        onFinished: () => renderCampaign(newToken(), id, app.dataset.campView || "report"),
+      });
+      if (wrapupDue(c)) wrap(false);
+      document.getElementById("wrapup-open").onclick = () => wrap(true);
+      document.getElementById("dup-camp").onclick = () => duplicateCampaignDialog(sb, c, { toast, onCreated: (nid) => { pageCache.clear(); go(`#/c/${nid}/edit`); } });
       document.getElementById("del-camp").onclick = () => deleteCampaignFlow(c);
       document.getElementById("refresh").onclick = async (e) => {
         const btn = e.currentTarget;
@@ -2457,11 +2480,11 @@ async function route() {
   const token = newToken();
   const user = await signedInUser();
   if (token !== routeToken) return;
-  if (!user) { teamOk = null; unmountTodoInOS(); unmountCampaignChat(); return renderLogin(); }
+  if (!user) { teamOk = null; unmountTodoInOS(); unmountNotifications(); unmountCampaignChat(); return renderLogin(); }
   if (teamOk?.uid !== user.id) teamOk = { uid: user.id, ok: await isTeamMember() };
   if (token !== routeToken) return;
   if (!teamOk.ok) {
-    unmountTodoInOS();
+    unmountTodoInOS(); unmountNotifications();
     document.body.classList.add("signin");
     app.innerHTML = `<section class="login no-access on-blue">
       <img class="logo" src="assets/stellar-blue.png" alt="Stellar" width="160" height="44">
@@ -2477,6 +2500,7 @@ async function route() {
   // Personal to-do: floating button bottom-right, only for people the beta is switched on for (todo.js).
   mountTodoInOS(sb, user).catch(() => {});
   renderWho(user);
+  mountNotifications(sb, user, { toast }).catch(() => {});   // the bell goes in just above #who
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   // The campaign chat belongs to one campaign page (Report or Payouts); anywhere else it closes.
   if (!(parts[0] === "c" && parts[1] && (!parts[2] || ["payouts", "creators"].includes(parts[2])))) unmountCampaignChat();
@@ -2486,7 +2510,7 @@ async function route() {
   const restoring = KEEPABLE.has(target) && pageCache.has(target);
   if (pageKey !== lastPageKey && !restoring) window.scrollTo(0, 0);
   lastPageKey = pageKey;
-  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover", "payouts", "invoices", "decks", "clients"].includes(parts[0]) ? parts[0] : "campaigns";
+  const section = !parts[0] || parts[0] === "overview" ? "overview" : parts[0] === "creator" ? "roster" : SOON[parts[0]] || ["analytics", "trending", "roster", "discover", "payouts", "invoices", "decks", "clients", "me"].includes(parts[0]) ? parts[0] : "campaigns";
   renderNav(section);
   if (KEEPABLE.has(target) && restorePage(target, prevShown)) { lastPageKey = pageKey; return; }
   shown = { hash: target, token };
@@ -2494,6 +2518,7 @@ async function route() {
   if (section === "analytics") return renderAnalytics(app, sb, { isCurrent: () => token === routeToken, go, parts });
   if (section === "trending") return renderTrending(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
   if (section === "roster") return renderRoster(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });
+  if (section === "me") return renderMyWork(app, sb, { isCurrent: () => token === routeToken });
   if (section === "invoices") return renderInvoices(app, sb, { isCurrent: () => token === routeToken, go, toast });
   if (section === "payouts") return renderPayoutsHome(app, sb, { isCurrent: () => token === routeToken, go });
   if (section === "clients") return renderClients(app, sb, { isCurrent: () => token === routeToken, go, parts, toast });

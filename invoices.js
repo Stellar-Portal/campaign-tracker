@@ -1,8 +1,8 @@
 // Invoicing: campaign managers request an invoice from the campaign page; finance works through the
 // requests here, sends the invoice from e-conomic and records it; payment is recorded when the label pays.
 // Statuses: requested → invoiced → paid (or returned to the requester / cancelled).
-import { confirmDialog } from "./dialog.js?v=20261125c";
-import { entitiesOf, loadMoney, flagsFor } from "./money.js?v=20261125c";
+import { confirmDialog } from "./dialog.js?v=20261126a";
+import { entitiesOf, loadMoney, flagsFor } from "./money.js?v=20261126a";
 
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const money = (v, cur) => {
@@ -26,65 +26,251 @@ async function me(sb) {
   return { email, name: data?.name ?? email, role: data?.role ?? "member", finance: ["admin", "finance"].includes(data?.role) };
 }
 
+// ---------- the request, in the shape of the email template finance has always been sent ----------
+const REGIONS = ["West", "Central", "East"];
+const VIA = ["UNIPORT", "ARIBA", "FIT", "E-MAIL"];
+const LABELS = ["Major", "Indie", "Other"];
+const plainNum = (v) => Number(v).toLocaleString("en", { maximumFractionDigits: 2 });
+const r2 = (v) => Math.round(v * 100) / 100;
+export const byWho = (s) => (/^Stellar OS \(monthly\)/i.test(String(s ?? "")) ? "Automatic (monthly)" : s);
+
+// The client's own PO lives in client_po (po_number is Stellar's PO).
+export const splitNotes = (r) => ({ clientPo: r?.client_po ?? "", notes: String(r?.notes ?? "").trim() });
+
+// The campaign's markets scaled to the amount being invoiced (the last one takes the rounding), and the same grouped by region.
+function splitByMarket(rows, regionOf, budget, amount) {
+  const base = rows.map((m) => ({ market: m.market, v: m.amount != null ? Number(m.amount) : budget != null && m.share_percent != null ? (budget * Number(m.share_percent)) / 100 : 0 })).filter((x) => x.v > 0);
+  const total = base.reduce((t, x) => t + x.v, 0);
+  if (!total || !(amount > 0)) return { lines: [], regions: {} };
+  let used = 0;
+  const lines = base.map((x, i) => { const a = i === base.length - 1 ? r2(amount - used) : r2((amount * x.v) / total); used += a; return { market: x.market, amount: a }; });
+  const regions = {};
+  for (const l of lines) { const k = regionOf[l.market] ?? "Other"; regions[k] = r2((regions[k] ?? 0) + l.amount); }
+  return { lines, regions };
+}
+const regionList = (obj) => [...REGIONS, ...Object.keys(obj).filter((k) => !REGIONS.includes(k))].filter((k) => Number(obj[k]) > 0).map((k) => ({ region: k, amount: Number(obj[k]) }));
+export const allocText = (alloc) => {
+  const a = (Array.isArray(alloc) ? alloc : []).filter((x) => Number(x.amount) > 0);
+  return a.length ? `${a.map((x) => `${plainNum(x.amount)} ${x.region}`).join(" / ")} = ${plainNum(a.reduce((t, x) => t + Number(x.amount), 0))}` : "";
+};
+// Exactly the template's lines. "Client PO" and "Project" are left out when there is none.
+export function emailText(x) {
+  const L = [], add = (k, v, optional) => { if (v || !optional) L.push(`${k}: ${v ?? ""}`.trimEnd()); };
+  add("Campaign responsible", x.responsible);
+  add("Client PO", x.client_po, true);
+  add("Artist", x.artist);
+  add("Song", x.song);
+  add("Client", x.client);
+  add("Major / Indie / Other", x.label_type);
+  add("Budget", x.amount ? `${plainNum(x.amount)} ${x.currency ?? ""}`.trim() : "");
+  add("Client Territory", x.territory);
+  add("Budget Allocation", allocText(x.allocation));
+  add("Project", x.project, true);
+  add("Client contact name", x.contact_name);
+  add("Client contact email", x.contact_email);
+  add("Invoice to be sent through", x.send_via);
+  return L.join("\n");
+}
+async function copyText(text, toast, msg) {
+  try { await navigator.clipboard.writeText(text); toast?.(msg); } catch { toast?.("Couldn't copy. Select the text and copy it yourself."); }
+}
+const viaFrom = (ent) => {
+  if (!ent?.uses_portal) return { via: "E-MAIL", other: "" };
+  const n = String(ent.portal_name ?? "").trim(), hit = VIA.find((v) => v !== "E-MAIL" && n.toUpperCase().includes(v));
+  return hit ? { via: hit, other: "" } : { via: "Other", other: n };
+};
+
 // ---------- the request form (from a campaign page) ----------
 export async function requestInvoiceDialog(sb, c, { toast, onDone }) {
-  if (c.invoicing_entity === undefined || c.client_entity_id === undefined) {
-    const { data } = await sb.from("campaigns").select("invoicing_entity,client,client_id,client_entity_id").eq("id", c.id).maybeSingle();
-    c = { ...c, invoicing_entity: data?.invoicing_entity ?? null, client: c.client ?? data?.client, client_id: data?.client_id ?? null, client_entity_id: data?.client_entity_id ?? null };
-  }
-  const ents = await entitiesOf(sb, c.client_id);
-  const [mk, open] = await Promise.all([
+  const { data: cr } = await sb.from("campaigns").select("artist,song,client,client_id,client_entity_id,invoicing_entity,po_number,budget,currency,comms_owner,campaign_runner,label_type,client_market,client_contact_name,client_contact_email,retainer_amount,retainer_day,retainer_until").eq("id", c.id).maybeSingle();
+  c = { ...c, ...(cr ?? {}) };
+  const [ents, mk, mkts, open, cl] = await Promise.all([
+    entitiesOf(sb, c.client_id),
     sb.from("campaign_markets").select("market,share_percent,amount").eq("campaign_id", c.id),
-    sb.from("invoice_requests").select("amount,status").eq("campaign_id", c.id).in("status", ["requested", "returned", "invoiced", "paid"]),
+    sb.from("markets").select("name,region"),
+    sb.from("invoice_requests").select("amount,currency,status").eq("campaign_id", c.id).in("status", ["requested", "returned", "invoiced", "paid"]),
+    c.client_id ? sb.from("clients").select("market").eq("id", c.client_id).maybeSingle() : { data: null },
   ]);
-  const already = (open.data ?? []).reduce((t, r) => t + Number(r.amount), 0);
-  const budget = c.budget != null ? Number(c.budget) : null;
-  const left = budget != null ? Math.max(0, budget - already) : null;
-  const lines = (mk.data ?? []).map((m) => ({ market: m.market, amount: m.amount != null ? Number(m.amount) : budget != null && m.share_percent != null ? Math.round(budget * m.share_percent) / 100 : null }));
+  const regionOf = Object.fromEntries((mkts.data ?? []).map((m) => [m.name, m.region]));
+  const cur0 = c.currency || "USD", budget = c.budget != null ? Number(c.budget) : null;
+  const already = (open.data ?? []).filter((r) => (r.currency || cur0) === cur0).reduce((t, r) => t + Number(r.amount), 0);
+  const otherCur = (open.data ?? []).filter((r) => (r.currency || cur0) !== cur0).length;
+  const left = budget != null ? Math.max(0, r2(budget - already)) : null;   // "Request the rest"
+  const ent0 = ents.find((e) => e.id === c.client_entity_id) ?? null;
+  const terr0 = String(c.client_market ?? "").replace(/^Stellar\s+/i, ""), terrClient = String(cl.data?.market ?? "");
+  const via0 = viaFrom(ent0);
+  const who = [...new Set([c.comms_owner, ...String(c.campaign_runner ?? "").split(",")].map((x) => String(x ?? "").trim()).filter(Boolean))].join(", ");
+  const st = {
+    amount: already ? (left || null) : budget, cur: cur0,
+    po: c.po_number ?? "", client_po: "", project: "", notes: "",
+    responsible: who, entity_id: ent0?.id ?? "", entity: ents.length ? "" : (c.invoicing_entity ?? ""),
+    label: LABELS.includes(c.label_type) ? c.label_type : "", territory: REGIONS.includes(terr0) ? terr0 : REGIONS.includes(terrClient) ? terrClient : "",
+    contact_name: c.client_contact_name ?? "", contact_email: c.client_contact_email ?? "",
+    via: via0.via, via_other: via0.other, alloc: {}, allocTouched: false, touched: new Set(), shown: new Set(),
+  };
+  const mrows = mk.data ?? [];
+  const autoAlloc = () => { st.alloc = Object.fromEntries(Object.entries(splitByMarket(mrows, regionOf, budget, st.amount).regions).map(([k, v]) => [k, String(v)])); };
+  autoAlloc();
+  const regionKeys = () => [...REGIONS, ...Object.keys(st.alloc).filter((k) => !REGIONS.includes(k))];
+  const entOf = () => ents.find((e) => e.id === st.entity_id) ?? null;
+  const fallback = () => { const e = entOf(); return { name: c.client_contact_name || e?.attention || "", email: c.client_contact_email || e?.invoice_email || "" }; };
+  const sumAlloc = () => regionKeys().reduce((t, k) => t + (num(st.alloc[k]) ?? 0), 0);
+  const miss = (k) => k === "responsible" ? !st.responsible.trim() : k === "entity" ? !(st.entity_id || st.entity.trim()) : k === "label" ? !st.label : k === "territory" ? !st.territory
+    : k === "alloc" ? sumAlloc() <= 0 : k === "contact_name" ? !st.contact_name.trim() : k === "contact_email" ? !st.contact_email.trim() : false;
+  if (!st.contact_name && !st.contact_email) { const fb = fallback(); st.contact_name = fb.name; st.contact_email = fb.email; }
+  const FIELDS = [["responsible", "Campaign responsible"], ["entity", "Client (full legal name)"], ["label", "Major / Indie / Other"], ["territory", "Client territory"], ["alloc", "Budget allocation"],
+    ["contact_name", "Client contact name"], ["contact_email", "Client contact email"], ["via", "Invoice to be sent through"], ["po", "Our PO"]];
+  FIELDS.forEach(([k]) => { if (miss(k)) st.shown.add(k); });
+
+  const sel = (name, opts, val, blank) => `<select name="${name}" aria-label="${name}">${blank ? `<option value="">${esc(blank)}</option>` : ""}${opts.map((o) => `<option${o === val ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  const input = (k) => {
+    if (k === "responsible" || k === "contact_name" || k === "po") return `<input name="${k}" value="${esc(st[k])}" autocomplete="off">`;
+    if (k === "contact_email") return `<input name="contact_email" type="email" value="${esc(st.contact_email)}" autocomplete="off">`;
+    if (k === "entity") return ents.length
+      ? `<select name="entity_id" aria-label="Client"><option value="">Not sure yet: pick it later, or send the vendor form</option>${ents.map((x) => `<option value="${x.id}"${x.id === st.entity_id ? " selected" : ""}>${esc(x.legal_name)}${[x.city, x.country].filter(Boolean).length ? ` (${esc([x.city, x.country].filter(Boolean).join(", "))})` : ""}${(x.economic_numbers ?? []).length ? ` · e-conomic ${esc(x.economic_numbers.join(", "))}` : ""}</option>`).join("")}</select>`
+      : `<input name="entity" value="${esc(st.entity)}" placeholder="Full legal name, no abbreviations" autocomplete="off">`;
+    if (k === "label") return sel("label", LABELS, st.label, "Choose…");
+    if (k === "territory") return sel("territory", REGIONS, st.territory, "Choose…");
+    if (k === "alloc") return `<span class="inv-alloc">${regionKeys().map((r) => `<label><span>${esc(r)}</span><input data-alloc="${esc(r)}" inputmode="decimal" value="${esc(st.alloc[r] ?? "")}" aria-label="${esc(r)} amount"></label>`).join("")}</span><span class="inv-quiet" id="inv-alloc-sum"></span>`;
+    if (k === "via") return `<span class="inv-via">${sel("via", [...VIA, "Other"], st.via)}<input name="via_other" value="${esc(st.via_other)}" placeholder="Which portal?"${st.via === "Other" ? "" : " hidden"}></span>`;
+    return "";
+  };
+  const show = (k) => {
+    const e = entOf();
+    if (k === "entity") return e ? `${esc(e.legal_name)}${[e.city, e.country].filter(Boolean).length ? ` <span class="muted small">${esc([e.city, e.country].filter(Boolean).join(", "))}</span>` : ""}` : esc(st.entity);
+    if (k === "alloc") return esc(allocText(regionList(Object.fromEntries(regionKeys().map((r) => [r, num(st.alloc[r]) ?? 0]))))) || "–";
+    if (k === "via") return esc(st.via === "Other" ? st.via_other || "Other" : st.via);
+    const v = k === "label" ? st.label : st[k];
+    return esc(v) || "–";
+  };
+  const row = ([k, label]) => {
+    if (k === "po" && !st.shown.has("po") && !st.po) return "";
+    const isIn = st.shown.has(k);
+    return `<div class="inv-sr${isIn && miss(k) ? " miss" : ""}" data-k="${k}"><dt>${esc(label)}</dt><dd>${isIn ? input(k) : show(k)}</dd></div>`;
+  };
+
   const d = document.createElement("dialog");
   d.className = "po-dialog inv-dialog";
   d.innerHTML = `<form method="dialog">
     <h2>Request an invoice</h2>
-    <p class="muted small" style="margin:0 0 6px">${esc(c.artist)}${c.song ? ` – ${esc(c.song)}` : ""}. Finance gets it in their review queue and sends the invoice from e-conomic.</p>
-    ${already ? `<p class="small inv-warn">${money(already, c.currency)} of this campaign's ${money(budget, c.currency)} budget is already requested or invoiced.</p>` : ""}
-    <div class="inv-form">
-      <label>Client <input name="client" value="${esc(c.client ?? "")}" required></label>
-      ${ents.length ? `<label>Invoicing company <select name="entity_id"><option value="">Not sure yet: pick it later, or send the vendor form</option>${ents.map((e) => `<option value="${e.id}"${e.id === c.client_entity_id ? " selected" : ""}>${esc(e.legal_name)}${[e.city, e.country].filter(Boolean).length ? ` (${esc([e.city, e.country].filter(Boolean).join(", "))})` : ""}${(e.economic_numbers ?? []).length ? ` · e-conomic ${esc(e.economic_numbers.join(", "))}` : ""}</option>`).join("")}</select></label>`
-        : `<label>Invoicing company <input name="entity" value="${esc(c.invoicing_entity ?? "")}" placeholder="Not sure? Leave empty and send the vendor form"></label>`}
-      <label>PO number <input name="po" value="${esc(c.po_number ?? "")}" placeholder="If the client gave one"></label>
-      <label>Amount <span class="inv-amt"><input name="amount" inputmode="decimal" value="${left ?? ""}" required><select name="cur">${["USD", "EUR", "GBP", "DKK", "SEK", "JPY", "AUD", "SGD", "BRL", "MXN"].map((x) => `<option${x === (c.currency || "USD") ? " selected" : ""}>${x}</option>`).join("")}</select></span></label>
-      <label class="inv-check"><input type="checkbox" name="portal"> The client uses its own supplier portal</label>
-      <label class="inv-portal" hidden>Portal <input name="portalname" placeholder="e.g. Uniport (Universal), Coupa, Ariba"></label>
-    </div>
-    ${lines.length > 1 ? `<div class="inv-lines"><b class="small">Split by market</b> <span class="muted small">one line per market on the invoice</span>
-      ${lines.map((l, i) => `<div class="inv-line"><span>${esc(l.market)}</span><input data-line="${i}" inputmode="decimal" value="${l.amount ?? ""}" aria-label="${esc(l.market)} amount"></div>`).join("")}</div>` : ""}
-    <label>Notes for finance <textarea name="notes" rows="3" placeholder="Anything finance should know: billing contact, deposit, special wording…"></textarea></label>
+    <p class="muted small" style="margin:0 0 10px">${esc(c.artist)}${c.song ? ` – ${esc(c.song)}` : ""}</p>
+    <label>Budget <span class="inv-amt"><input name="amount" inputmode="decimal" value="${st.amount ?? ""}" required><select name="cur">${["USD", "EUR", "GBP", "DKK", "SEK", "JPY", "AUD", "SGD", "BRL", "MXN"].map((x) => `<option${x === st.cur ? " selected" : ""}>${x}</option>`).join("")}</select></span></label>
+    ${already && budget != null ? `<p class="inv-quiet" id="inv-already">${esc(money(already, cur0))} of ${esc(money(budget, cur0))} already requested</p>` : ""}
+    ${otherCur ? `<p class="inv-quiet">${otherCur} earlier request${otherCur > 1 ? "s are" : " is"} in another currency: check what's left by hand.</p>` : ""}
+    <div class="inv-sum-head"><b class="small">Details for finance</b><button type="button" class="link-btn small" id="inv-edit">Edit</button></div>
+    <dl class="inv-sum" id="inv-fields"></dl>
+    <div class="inv-opt"><label>Client PO <span class="muted small" style="font-weight:400">if any</span><input name="client_po" autocomplete="off"></label><label>Project <span class="muted small" style="font-weight:400">if any</span><input name="project" autocomplete="off"></label></div>
+    <label>Notes for finance <textarea name="notes" rows="2" placeholder="Anything finance should know"></textarea></label>
+    <details class="inv-ret"><summary id="inv-ret-sum"></summary>
+      <div class="inv-ret-body">
+        <label class="inv-check"><input type="checkbox" name="ret_on"> Invoice every month</label>
+        <div class="inv-ret-row"><label>Amount <input name="ret_amt" inputmode="decimal"></label><label>Day of the month <input name="ret_day" type="number" min="1" max="28" step="1"></label><label>Until <input name="ret_until" type="date"></label></div>
+        <div class="actions" style="margin:10px 0 0"><button type="button" id="inv-ret-save">Save monthly invoicing</button></div>
+      </div>
+    </details>
     <p class="small error" id="inv-err" hidden></p>
-    <div class="actions"><button type="submit" value="ok" class="primary">Send to finance</button><button type="submit" value="cancel" formnovalidate>Cancel</button></div>
+    <div class="actions"><button type="submit" value="ok" class="primary">Send to finance</button><button type="button" id="inv-copy">Copy as email</button><button type="submit" value="cancel" formnovalidate>Cancel</button></div>
   </form>`;
   document.body.append(d);
-  const f = d.querySelector("form"), err = d.querySelector("#inv-err");
-  f.portal.onchange = () => { d.querySelector(".inv-portal").hidden = !f.portal.checked; };
+  const f = d.querySelector("form"), err = d.querySelector("#inv-err"), box = d.querySelector("#inv-fields");
+  const fail = (m) => { err.hidden = !m; err.textContent = m ?? ""; };
+  const drawFields = () => {
+    box.innerHTML = FIELDS.map(row).join("");
+    d.querySelector("#inv-edit").hidden = FIELDS.every(([k]) => st.shown.has(k));
+    sumLine();
+  };
+  const sumLine = () => {
+    const s = box.querySelector("#inv-alloc-sum"), amt = num(f.amount.value);
+    if (s) s.textContent = sumAlloc() ? `= ${plainNum(sumAlloc())}${amt && Math.abs(sumAlloc() - amt) > 0.5 ? ` (budget is ${plainNum(amt)})` : ""}` : "";
+  };
+  // One listener for every field in the list (the list is redrawn when a choice changes what is known).
+  const take = (el, changed) => {
+    const n = el.name, k = el.dataset.alloc;
+    if (k) { st.alloc[k] = el.value; st.allocTouched = true; st.touched.add("alloc"); }
+    else if (n === "entity_id") {
+      st.entity_id = el.value; st.touched.add("entity");
+      const e = entOf(), v = viaFrom(e);
+      if (!st.touched.has("via")) { st.via = v.via; st.via_other = v.other; }
+      if (!st.touched.has("contact_name") && !st.touched.has("contact_email")) { const fb = fallback(); st.contact_name = fb.name; st.contact_email = fb.email; }
+    } else if (n === "label" || n === "territory" || n === "responsible" || n === "contact_name" || n === "contact_email" || n === "po" || n === "entity") { st[n] = el.value; st.touched.add(n); }
+    else if (n === "via") { st.via = el.value; st.touched.add("via"); }
+    else if (n === "via_other") { st.via_other = el.value; st.touched.add("via"); }
+    else return;
+    if (changed && (n === "entity_id" || n === "via")) { drawFields(); return; }
+    const kk = k ? "alloc" : n === "entity_id" ? "entity" : n === "via_other" ? "via" : n;
+    box.querySelector(`[data-k="${kk}"]`)?.classList.toggle("miss", miss(kk));
+    if (k) sumLine();
+  };
+  box.addEventListener("input", (e) => take(e.target, false));
+  box.addEventListener("change", (e) => take(e.target, true));
+  d.querySelector("#inv-edit").onclick = () => { FIELDS.forEach(([k]) => st.shown.add(k)); drawFields(); };
+  f.amount.addEventListener("input", () => { st.amount = num(f.amount.value); if (!st.allocTouched) { autoAlloc(); drawFields(); } else sumLine(); });
+  f.cur.addEventListener("change", () => { st.cur = f.cur.value; });
+  drawFields();
+
+  const asRequest = () => {
+    const e = entOf();
+    return { responsible: st.responsible.trim(), client_po: f.client_po.value.trim(), artist: c.artist, song: c.song, client: e?.legal_name ?? (st.entity.trim() || c.client || ""), label_type: st.label, amount: num(f.amount.value), currency: f.cur.value,
+      territory: st.territory, allocation: regionList(Object.fromEntries(regionKeys().map((r) => [r, num(st.alloc[r]) ?? 0]))), project: f.project.value.trim(),
+      contact_name: st.contact_name.trim(), contact_email: st.contact_email.trim(), send_via: st.via === "Other" ? st.via_other.trim() || "Other" : st.via };
+  };
+  d.querySelector("#inv-copy").onclick = () => copyText(emailText(asRequest()), toast, "Copied. Paste it into an email.");
+
+  // Monthly retainer: saved on the campaign; a daily job makes the request on that day.
+  const ret = { on: c.retainer_amount > 0 && c.retainer_day > 0 };
+  const retSum = () => { d.querySelector("#inv-ret-sum").textContent = ret.on ? `Monthly retainer · ${money(c.retainer_amount, cur0)} on day ${c.retainer_day}${c.retainer_until ? ` until ${day(c.retainer_until)}` : ""}` : "Monthly retainer…"; };
+  f.ret_on.checked = ret.on; f.ret_amt.value = c.retainer_amount ?? ""; f.ret_day.value = c.retainer_day ?? ""; f.ret_until.value = c.retainer_until ?? "";
+  if (ret.on) d.querySelector(".inv-ret").open = true;
+  retSum();
+  d.querySelector(".inv-ret").addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); d.querySelector("#inv-ret-save").click(); } });
+  d.querySelector("#inv-ret-save").onclick = async () => {
+    const on = f.ret_on.checked, amt = num(f.ret_amt.value), dayN = parseInt(f.ret_day.value, 10);
+    if (on && (!(amt > 0) || !(dayN >= 1 && dayN <= 28))) { fail("For a monthly invoice, enter the amount and a day from 1 to 28."); return; }
+    fail("");
+    if (on && !(await confirmDialog({ title: "Invoice every month?", body: `On day ${dayN} of each month the OS sends finance a request for ${money(amt, cur0)} while the campaign is active${f.ret_until.value ? ` (until ${day(f.ret_until.value)})` : ""}.`, confirm: "Turn on" }))) return;
+    const patch = on ? { retainer_amount: amt, retainer_day: dayN, retainer_until: f.ret_until.value || null } : { retainer_amount: null, retainer_day: null, retainer_until: null };
+    const b = d.querySelector("#inv-ret-save"); b.disabled = true;
+    const { error } = await sb.from("campaigns").update(patch).eq("id", c.id);
+    b.disabled = false;
+    if (error) { fail(error.message); return; }
+    Object.assign(c, patch); ret.on = on; retSum();
+    toast(on ? `Monthly invoice set: ${money(amt, cur0)} on day ${dayN} of each month while the campaign is active` : "Monthly invoicing is off");
+  };
+
+  let sending = false;
   f.onsubmit = async (e) => {
     if (e.submitter?.value !== "ok") return;
     e.preventDefault();
     const amount = num(f.amount.value);
-    if (!amount || amount <= 0) { err.hidden = false; err.textContent = "Enter the amount to invoice."; return; }
-    const ls = lines.map((l, i) => ({ market: l.market, amount: num(d.querySelector(`[data-line="${i}"]`)?.value) })).filter((l) => l.amount);
-    if (ls.length > 1 && Math.abs(ls.reduce((t, l) => t + l.amount, 0) - amount) > 0.5) { err.hidden = false; err.textContent = `The market lines add up to ${money(ls.reduce((t, l) => t + l.amount, 0), f.cur.value)}, not ${money(amount, f.cur.value)}.`; return; }
-    const btn = f.querySelector("[value=ok]"); btn.disabled = true;
-    const ent = f.entity_id ? ents.find((x) => x.id === f.entity_id.value) ?? null : null;
+    if (!amount || amount <= 0) { fail("Enter the amount to invoice."); return; }
+    const alloc = regionList(Object.fromEntries(regionKeys().map((r) => [r, num(st.alloc[r]) ?? 0])));
+    if (alloc.length && Math.abs(alloc.reduce((t, x) => t + x.amount, 0) - amount) > 0.5) { fail(`The allocation adds up to ${money(alloc.reduce((t, x) => t + x.amount, 0), f.cur.value)}, not ${money(amount, f.cur.value)}.`); return; }
+    fail("");
+    if (sending) return;
+    const btn = f.querySelector("[value=ok]"); btn.disabled = true; sending = true;
+    const ent = entOf(), x = asRequest();
+    const lines = st.allocTouched ? [] : splitByMarket(mrows, regionOf, budget, amount).lines;
+    const viaName = x.send_via, portal = viaName && viaName !== "E-MAIL";
     const { error } = await sb.from("invoice_requests").insert({
-      campaign_id: c.id, amount, currency: f.cur.value, po_number: f.po.value.trim() || null,
-      client: f.client.value.trim() || null, client_entity_id: ent?.id ?? null,
-      invoicing_entity: ent ? ent.legal_name : (f.entity?.value.trim() || null), lines: ls.length > 1 ? ls : [],
-      uses_portal: f.portal.checked, portal_name: f.portal.checked ? f.portalname.value.trim() || null : null, notes: f.notes.value.trim() || null,
+      campaign_id: c.id, amount, currency: f.cur.value, po_number: st.po.trim() || null,
+      client: c.client || x.client || null, client_entity_id: ent?.id ?? null,
+      invoicing_entity: ent ? ent.legal_name : (st.entity.trim() || null), lines: lines.length > 1 ? lines : [],
+      uses_portal: !!portal, portal_name: portal ? viaName : null, send_via: viaName || null,
+      client_po: x.client_po || null, notes: f.notes.value.trim() || null,
+      responsible: x.responsible || null, artist: c.artist ?? null, song: c.song ?? null, label_type: x.label_type || null, territory: x.territory || null, project: x.project || null,
+      contact_name: x.contact_name || null, contact_email: x.contact_email || null, allocation: alloc.length ? alloc : null,
     });
-    btn.disabled = false;
-    if (error) { err.hidden = false; err.textContent = error.message; return; }
-    // The campaign learns the company too (it syncs to the sheet's Invoicing Entity column).
-    if (ent && !c.client_entity_id) await sb.from("campaigns").update({ client_entity_id: ent.id }).eq("id", c.id);
-    d.close(); d.remove(); toast(ent || f.entity?.value.trim() ? "Invoice request sent to finance" : "Invoice request sent. Pick the invoicing company when you know it (or send the vendor form)."); onDone?.();
+    // Stays disabled after a success (the dialog closes), so a second click can't send a second request.
+    if (error) { btn.disabled = false; sending = false; fail(error.message); return; }
+    // The campaign learns what was filled in here (company, label, market, contact); it syncs to the sheet's columns.
+    const learn = {};
+    if (ent && !c.client_entity_id) learn.client_entity_id = ent.id;
+    if (st.touched.has("label") && st.label && !c.label_type) learn.label_type = st.label;
+    if (st.touched.has("territory") && st.territory && !c.client_market) learn.client_market = `Stellar ${st.territory}`;
+    if (st.touched.has("contact_name") && st.contact_name.trim() && !c.client_contact_name) learn.client_contact_name = st.contact_name.trim();
+    if (st.touched.has("contact_email") && st.contact_email.trim() && !c.client_contact_email) learn.client_contact_email = st.contact_email.trim();
+    if (Object.keys(learn).length) await sb.from("campaigns").update(learn).eq("id", c.id);
+    d.close(); d.remove(); toast(ent || st.entity.trim() ? "Invoice request sent to finance" : "Invoice request sent. Pick the invoicing company when you know it (or send the vendor form)."); onDone?.();
   };
   d.onclose = () => d.remove();
   d.showModal();
@@ -140,7 +326,7 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
         <div class="inv-list">${list.map((r) => `<button type="button" class="inv-item${r.id === st.sel ? " on" : ""}" data-sel="${r.id}">
             <span class="inv-item-top"><span class="muted small">${refOf(r)} · ${esc(ago(r.requested_at))}</span>${statusPill(r)}</span>
             <b>${esc(r.client || "No client")}</b><span class="inv-item-sub">${esc(name(r))}</span>
-            <span class="inv-item-bot"><span class="muted small">${r.invoice_number ? `#${esc(r.invoice_number)}` : r.uses_portal ? "Supplier portal" : "Email"}${r.due_date && r.status === "invoiced" ? ` · due ${esc(day(r.due_date))}` : ""}</span><b>${money(r.amount, r.currency)}</b></span>
+            <span class="inv-item-bot"><span class="muted small">${r.invoice_number ? `#${esc(r.invoice_number)}` : esc(r.send_via || (r.uses_portal ? "Supplier portal" : "Email"))}${r.due_date && r.status === "invoiced" ? ` · due ${esc(day(r.due_date))}` : ""}</span><b>${money(r.amount, r.currency)}</b></span>
           </button>`).join("")}</div>
         <div class="inv-detail" id="inv-detail">${sel ? detailHtml(sel) : ""}</div>
       </div>`}`;
@@ -153,6 +339,7 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
   function detailHtml(r) {
     const c = camps[r.campaign_id], canFin = who.finance, mine = r.requested_by === who.email;
     const field = (k, v) => (v ? `<div><dt>${k}</dt><dd>${v}</dd></div>` : "");
+    const sn = splitNotes(r);
     return `<div class="inv-card">
       <div class="inv-d-head"><div><span class="muted small">${refOf(r)}</span><h2>${esc(r.client || "No client")}</h2><a href="#/c/${esc(r.campaign_id)}" class="small">${esc(name(r))}</a></div>${statusPill(r)}</div>
       <div class="inv-amount">${money(r.amount, r.currency)}</div>
@@ -164,18 +351,25 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
           if ((canFin || mine) && r.status !== "cancelled" && opts.length) return field("Invoicing company", `<select id="inv-ent" aria-label="Invoicing company"><option value="">Pick the company${r.invoicing_entity ? ` (they wrote: ${esc(r.invoicing_entity)})` : ""}</option>${opts.map((x) => `<option value="${x.id}">${esc(x.legal_name)}${[x.city, x.country].filter(Boolean).length ? ` (${esc([x.city, x.country].filter(Boolean).join(", "))})` : ""}${(x.economic_numbers ?? []).length ? ` · e-conomic ${esc(x.economic_numbers.join(", "))}` : ""}</option>`).join("")}</select>`);
           return field("Invoicing company", r.invoicing_entity ? esc(r.invoicing_entity) : `<span class="inv-warn">Not known yet: send the vendor form from the campaign page</span>`);
         })()}
-        ${field("PO number", esc(r.po_number))}
-        ${field("Client market", esc((c?.client_market ?? "").replace(/^Stellar /, "")))}
-        ${field("Delivery", r.uses_portal ? `Supplier portal${r.portal_name ? `: ${esc(r.portal_name)}` : ""}` : "Email from e-conomic")}
-        ${field("Requested by", `${esc(r.requested_by)} · ${esc(day(r.requested_at))}`)}
+        ${field("Campaign responsible", esc(r.responsible))}
+        ${field("Client PO", esc(sn.clientPo))}
+        ${field("Our PO", esc(r.po_number))}
+        ${field("Major / Indie / Other", esc(r.label_type))}
+        ${field("Client territory", esc(r.territory || (c?.client_market ?? "").replace(/^Stellar /, "")))}
+        ${field("Budget allocation", esc(allocText(r.allocation)))}
+        ${field("Project", esc(r.project))}
+        ${field("Client contact", [r.contact_name, r.contact_email].filter(Boolean).map(esc).join(" · "))}
+        ${field("Invoice to be sent through", r.send_via ? esc(r.send_via) : r.uses_portal ? `Supplier portal${r.portal_name ? `: ${esc(r.portal_name)}` : ""}` : "Email from e-conomic")}
+        ${field("Requested by", `${esc(byWho(r.requested_by))} · ${esc(day(r.requested_at))}`)}
         ${field("Invoice", r.invoice_number ? `#${esc(r.invoice_number)} · ${esc(day(r.invoice_date))}` : "")}
         ${field("Due", r.due_date && r.status !== "requested" ? `${esc(day(r.due_date))}${overdue(r) ? ' <span class="inv-pill overdue">Overdue</span>' : ""}` : "")}
         ${field("Paid", r.paid_on ? `${esc(day(r.paid_on))}${r.paid_amount != null && Number(r.paid_amount) !== Number(r.amount) ? ` · ${money(r.paid_amount, r.currency)}` : ""}` : "")}
       </dl>
       ${r.lines?.length ? `<div class="inv-d-lines"><b class="small">Invoice lines</b>${r.lines.map((l) => `<div><span>Social campaign – ${esc(c?.song ?? c?.artist ?? "")}${c?.song ? ` (${esc(c.artist)})` : ""}, ${esc(l.market)}</span><b>${money(l.amount, r.currency)}</b></div>`).join("")}</div>` : ""}
-      ${r.notes ? `<div class="inv-note"><b class="small">Notes from ${esc(r.requested_by.split("@")[0])}</b><p>${esc(r.notes)}</p></div>` : ""}
+      ${sn.notes ? `<div class="inv-note"><b class="small">Notes from ${esc(byWho(r.requested_by).split("@")[0])}</b><p>${esc(sn.notes)}</p></div>` : ""}
       ${r.finance_note ? `<div class="inv-note fin"><b class="small">Finance</b><p>${esc(r.finance_note)}</p></div>` : ""}
       <div class="inv-actions">
+        <div class="inv-do-row"><button type="button" class="link-btn small" id="inv-copy-email">Copy as email</button></div>
         ${canFin && r.status === "requested" ? `
           <form class="inv-do" id="inv-mark">
             <b>Sent from e-conomic?</b> <span class="muted small">Record it here once the invoice has gone out.</span>
@@ -206,6 +400,10 @@ export async function renderInvoices(app, sb, { isCurrent, go, toast }) {
   }
 
   function bindDetail(r) {
+    app.querySelector("#inv-copy-email")?.addEventListener("click", () => {
+      const e = entOf(r.client_entity_id), sn = splitNotes(r);
+      copyText(emailText({ ...r, client_po: sn.clientPo, client: e?.legal_name ?? r.invoicing_entity ?? r.client }), toast, "Copied. Paste it into an email.");
+    });
     app.querySelector("#inv-ent")?.addEventListener("change", async (e) => {
       const ent = entOf(e.target.value);
       if (!ent) return;

@@ -5,10 +5,10 @@
 // whose "Invoicing Entity" is its name or another spelling.
 // Routes: #/clients (companies), #/clients/co/<company id>, #/clients/<client id> (team). Team only; the client-facing
 // share function never reads these tables.
-import { confirmDialog } from "./dialog.js?v=20261125c";
-import { esc, flag, regionName } from "./report.js?v=20261125c";
-import { statusPill } from "./invoices.js?v=20261125c";
-import { statusLabel } from "./sheet-lists.js?v=20261125c";
+import { confirmDialog } from "./dialog.js?v=20261126a";
+import { esc, flag, regionName } from "./report.js?v=20261126a";
+import { statusPill } from "./invoices.js?v=20261126a";
+import { statusLabel } from "./sheet-lists.js?v=20261126a";
 
 export const MARKETS = ["West", "Central", "East"];
 const TYPES = ["Major", "Indie", "Other"];
@@ -205,7 +205,7 @@ async function clientDialog(sb, data, client = null) {
 async function loadMoneyData(sb) {
   const [camps, inv, fx, sheet] = await Promise.all([
     sb.from("campaigns").select("id,client_id,client_entity_id,po_number,artist,song,status,start_date,budget,currency,invoiced"),
-    sb.from("invoice_requests").select("id,ref,campaign_id,client_entity_id,status,amount,currency,invoice_number,due_date,paid_at,requested_at"),
+    sb.from("invoice_requests").select("id,ref,campaign_id,client_entity_id,status,amount,currency,invoice_number,due_date,paid_on,requested_at"),
     sb.from("fx_rates").select("currency,per_usd"),
     loadSheetRows(sb),
   ]);

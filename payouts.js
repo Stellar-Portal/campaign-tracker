@@ -1,7 +1,7 @@
 // Payouts: the PayPal payout sheet, built into each campaign (team only; clients never see it).
 // "Pay with PayPal" sends the ticked "Posted · to pay" creators as one PayPal batch through the paypal-payouts function;
 // every payment carries the campaign's PO number, and payout_payments keeps where each one stands.
-import { confirmDialog } from "./dialog.js?v=20261125c";
+import { confirmDialog } from "./dialog.js?v=20261126a";
 // A campaign has sections (a set of deliverables, e.g. "20x Edits" at $50 each) and one row per creator:
 // who sources and pays them, videos, price, status (contacted → waiting for draft → drafted →
 // waiting to post → posted (to pay) → paid) and their posting progress, read from the tracker's posts.

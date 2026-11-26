@@ -1,14 +1,14 @@
-import { confirmDialog } from "./dialog.js?v=20261125c";
+import { confirmDialog } from "./dialog.js?v=20261126a";
 // Creator roster: the creators Stellar works with, each with topline numbers from their recent
 // TikTok videos (ScrapeCreators, refreshed weekly by the roster Edge Function) and, on request,
 // audience insights and contact details (Influencers.club, 1 credit per creator, kept 60 days).
 //
 // Routes: #/roster · #/creator/<creator id>
-import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261125c";
-import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261125c";
-import { openCreatorImport } from "./creator-import.js?v=20261125c";
-import { COUNTRIES } from "./countries.js?v=20261125c";
-import { copyDetailsLink } from "./payouts.js?v=20261125c";
+import { esc, flag, regionName, ago, compact, big } from "./report.js?v=20261126a";
+import { PLATFORMS, PLATFORM_ORDER, platformOf, detectPlatform } from "./platforms.js?v=20261126a";
+import { openCreatorImport } from "./creator-import.js?v=20261126a";
+import { COUNTRIES } from "./countries.js?v=20261126a";
+import { copyDetailsLink } from "./payouts.js?v=20261126a";
 
 const SORTS = {
   added: ["Recently added", (c) => c.roster_added_at ?? "", -1],
@@ -16,6 +16,7 @@ const SORTS = {
   views: ["Highest median views", (c) => c.profile_stats?.median_views ?? -1, -1],
   engagement: ["Highest engagement", (c) => c.profile_stats?.engagement ?? -1, -1],
   campaigns: ["Most campaigns with us", (c) => c._campaigns ?? 0, -1],
+  cost: ["Cost per 1K views (lowest first)", (c) => c._cp1k ?? Infinity, 1],
   name: ["Name A–Z", (c) => (c.display_name || c.username || "").toLowerCase(), 1],
 };
 const st = { q: "", country: "", platform: "", sort: "added", addPlatform: "tiktok" };   // kept while moving between pages
@@ -81,15 +82,17 @@ async function renderList(app, sb, ctx, { listId, mode, base }) {
   const inList = new Set(members.filter((m) => m.list_id === listId).map((m) => m.creator_id));
   const creators = list ? all.filter((c) => inList.has(c.id)) : all;
   const ids = creators.map((c) => c.id);
-  const [posts, insights] = await Promise.all([
+  const [posts, insights, cards] = await Promise.all([
     ids.length ? sb.from("posts").select("creator_id,campaign_id").in("creator_id", ids) : { data: [] },
     sb.from("creator_insights").select("handle,platform,fetched_at,error"),
+    sb.from("creator_scorecard").select("creator_id,cost_per_1k_views_usd"),   // team only: what we pay per 1K views
   ]);
   if (!isCurrent()) return;
   const camps = {};
   for (const p of posts.data ?? []) (camps[p.creator_id] ??= new Set()).add(p.campaign_id);
+  const cp1k = Object.fromEntries((cards.data ?? []).filter((r) => r.cost_per_1k_views_usd != null).map((r) => [r.creator_id, Number(r.cost_per_1k_views_usd)]));
   const unlocked = new Set((insights.data ?? []).filter((x) => !x.error).map((x) => `${x.platform}:${x.handle}`));
-  for (const c of all) { c.platform ??= "tiktok"; c._campaigns = camps[c.id]?.size ?? 0; c._insights = unlocked.has(`${c.platform}:${String(c.username).toLowerCase()}`); }
+  for (const c of all) { c.platform ??= "tiktok"; c._campaigns = camps[c.id]?.size ?? 0; c._cp1k = cp1k[c.id]; c._insights = unlocked.has(`${c.platform}:${String(c.username).toLowerCase()}`); }
   const count = (lid) => members.filter((m) => m.list_id === lid).length;
   const platformsUsed = PLATFORM_ORDER.filter((p) => creators.some((c) => c.platform === p));
   const countries = [...new Set(creators.map((c) => c.country_code).filter(Boolean))].sort((a, b) => regionName(a).localeCompare(regionName(b)));
@@ -631,13 +634,14 @@ async function renderCreator(app, sb, ctx, id) {
   const { data: c, error } = await sb.from("creators").select("*").eq("id", id).maybeSingle();
   if (!isCurrent()) return;
   if (error || !c) { app.innerHTML = `<div class="panel"><p>This creator doesn't exist.</p><p><a href="#/roster">Back to the roster</a></p></div>`; return; }
-  const [postsRes, insRes, listsRes, myListsRes, paidRes, linkRes] = await Promise.all([
+  const [postsRes, insRes, listsRes, myListsRes, paidRes, linkRes, cardRes] = await Promise.all([
     sb.from("posts").select("campaign_id,tiktok_video_id,published_at,campaign:campaigns(id,artist,song,status)").eq("creator_id", id),
     sb.from("creator_insights").select("*").eq("platform", c.platform ?? "tiktok").eq("handle", String(c.username).toLowerCase()).maybeSingle(),
     sb.from("roster_lists").select("id,name").order("created_at"),
     sb.from("roster_list_members").select("list_id").eq("creator_id", id),
     sb.from("payout_payments").select("id,campaign_id,amount,currency,po_number,status,env,created_at,campaign:campaigns(artist,song)").eq("creator_id", id).order("created_at", { ascending: false }).limit(50),
     sb.from("creator_detail_links").select("created_at,created_by,expires_at,used_at").eq("creator_id", id).order("created_at", { ascending: false }).limit(1),
+    sb.from("creator_scorecard").select("*").eq("creator_id", id).maybeSingle(),
   ]);
   const allLists = listsRes.data ?? [];
   const mine = new Set((myListsRes.data ?? []).map((m) => m.list_id));
@@ -708,6 +712,7 @@ async function renderCreator(app, sb, ctx, id) {
       ${tile(c.platform === "twitch" ? "Broadcasts per week" : "Posts per week", perWeek(s.posts_per_week), null, s.last_post ? `last ${ago(s.last_post)}` : "")}
     </div>
     <div id="cr-cmp"></div>
+    ${workWithUs(cardRes.data)}
     <p class="muted small ro-basis">${s.sample ? `Based on their ${s.sample} most recent ${c.platform === "instagram" ? "posts" : c.platform === "twitch" ? "broadcasts" : "videos"}${c.platform === "tiktok" ? " (pinned videos left out)" : ""}.` : c.platform === "twitter" ? "X numbers come from the profile only." : "No recent posts found yet."}</p>
 
     <div class="ro-cols">
@@ -854,6 +859,21 @@ function bindPayDetails(app, sb, ctx, c) {
     await copyDetailsLink(sb, c.id, ctx.toast);
     box.querySelector("#cr-link-msg").textContent = "Link copied just now. Earlier links stop working.";
   };
+}
+
+// "Work with us": what this creator has done for Stellar and what it cost. Team pages only; empty figures are left out.
+function workWithUs(k) {
+  if (!k || !(k.campaigns > 0)) return "";
+  const usd = (v) => new Intl.NumberFormat("en", { style: "currency", currency: "USD", maximumFractionDigits: v < 10 ? 2 : 0 }).format(v);
+  const t = [];
+  t.push(tile("Stellar campaigns", String(k.campaigns), null, k.last_campaign_at ? `latest ${ago(k.last_campaign_at)}` : ""));
+  if (k.videos > 0) t.push(tile("Videos", big(Number(k.videos)), Number(k.videos)));
+  if (k.views > 0) t.push(tile("Views", big(Number(k.views)), Number(k.views)));
+  if (k.paid_total_usd > 0) t.push(tile("Paid", usd(Number(k.paid_total_usd)), null, k.paid_fx_missing ? "some payments not converted" : ""));
+  if (k.cost_per_1k_views_usd != null) t.push(tile("Cost per 1K views", usd(Number(k.cost_per_1k_views_usd))));
+  if (k.drafts_sent > 0) t.push(tile("Drafts sent", String(k.drafts_sent), null, k.change_rate != null ? `${Math.round(Number(k.change_rate) * 100)}% needed changes` : ""));
+  if (k.avg_days_draft_to_post != null) t.push(tile("Draft to post", `${Math.round(Number(k.avg_days_draft_to_post) * 10) / 10} days`, null, "on average"));
+  return `<section class="ro-work" aria-label="Work with us"><h3 class="ro-h3" style="margin:18px 0 0">Work with us</h3><div class="stats ro-stats" style="margin-top:10px">${t.join("")}</div></section>`;
 }
 
 function tile(label, value, exact, sub = "") {
